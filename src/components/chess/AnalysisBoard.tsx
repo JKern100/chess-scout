@@ -1,7 +1,8 @@
 "use client";
 
 import { Chess } from "chess.js";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { evaluateBestMove, evaluatePositionShallow, type EngineScore } from "@/lib/engine/engineService";
 import type { ChessBoardCoreState } from "./ChessBoardCore";
 
 type Strategy = "proportional" | "random";
@@ -15,6 +16,10 @@ type Props = {
   setShowArrow: (v: boolean) => void;
   showMoveTable: boolean;
   setShowMoveTable: (v: boolean) => void;
+  showEngineBest: boolean;
+  setShowEngineBest: (v: boolean) => void;
+  engineBestMove: { uci: string; san: string | null } | null;
+  setEngineBestMove: (m: { uci: string; san: string | null } | null) => void;
   opponentStatsBusy: boolean;
   opponentStats: {
     totalCountOpponent: number;
@@ -46,11 +51,20 @@ export function AnalysisBoard(props: Props) {
     setShowArrow,
     showMoveTable,
     setShowMoveTable,
+    showEngineBest,
+    setShowEngineBest,
+    engineBestMove,
+    setEngineBestMove,
     opponentStats,
     setOpponentStats,
     opponentStatsBusy,
     setOpponentStatsBusy,
   } = props;
+
+  const engineReqIdRef = useRef(0);
+  const engineColumnReqIdRef = useRef(0);
+  const [showEngineColumn, setShowEngineColumn] = useState(false);
+  const [engineMoveEval, setEngineMoveEval] = useState<Record<string, string>>({});
 
   function playTableMove(uci: string) {
     try {
@@ -136,6 +150,56 @@ export function AnalysisBoard(props: Props) {
     };
   }, [opponentUsername, showArrow, showMoveTable, state.fen, setOpponentStatsBusy, setOpponentStats]);
 
+  useEffect(() => {
+    if (!showEngineBest) {
+      setEngineBestMove(null);
+      return;
+    }
+
+    setEngineBestMove(null);
+
+    let cancelled = false;
+    const reqId = (engineReqIdRef.current += 1);
+
+    const timeout = window.setTimeout(() => {
+      void evaluateBestMove(state.fen)
+        .then((res) => {
+          if (cancelled) return;
+          if (engineReqIdRef.current !== reqId) return;
+
+          const uci = res.bestMoveUci;
+          if (!uci) {
+            setEngineBestMove(null);
+            return;
+          }
+
+          let san: string | null = null;
+          try {
+            const chess = new Chess(state.fen);
+            const from = uci.slice(0, 2);
+            const to = uci.slice(2, 4);
+            const promotion = uci.length > 4 ? uci.slice(4) : undefined;
+            const played = chess.move({ from, to, promotion: (promotion as any) ?? undefined });
+            san = played?.san ?? null;
+          } catch {
+            san = null;
+          }
+
+          setEngineBestMove({ uci, san });
+        })
+        .catch(() => {
+          if (cancelled) return;
+          if (engineReqIdRef.current !== reqId) return;
+          setEngineBestMove(null);
+        });
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [showEngineBest, state.fen, setEngineBestMove]);
+
   const userColor = state.playerSide === "white" ? "w" : "b";
   const opponentColor = userColor === "w" ? "b" : "w";
   const isOppToMove = state.game.turn() === opponentColor;
@@ -145,6 +209,93 @@ export function AnalysisBoard(props: Props) {
     if (isOppToMove) return { total: opponentStats.totalCountOpponent, moves: opponentStats.movesOpponent as MoveRow[] };
     return { total: opponentStats.totalCountAgainst, moves: opponentStats.movesAgainst as MoveRow[] };
   }, [opponentStats, isOppToMove]);
+
+  const visibleMovesKey = useMemo(() => {
+    return nextMoveList.moves
+      .slice(0, 12)
+      .map((m) => String(m.uci))
+      .join("|");
+  }, [nextMoveList.moves]);
+
+  function formatEngineScore(score: EngineScore | null) {
+    if (!score) return "—";
+
+    if (score.type === "mate") {
+      const n = Math.trunc(score.value);
+      if (!Number.isFinite(n) || n === 0) return "#0";
+      return n > 0 ? `#${n}` : `#${n}`;
+    }
+
+    // Stockfish returns centipawns for the side to move in the evaluated position.
+    // We want perspective of the side to move in the current position, so flip sign after applying a move.
+    const cp = score.value;
+    if (!Number.isFinite(cp)) return "—";
+    const pawns = cp / 100;
+    if (Math.abs(pawns) < 0.05) return "≈0.0";
+    const fixed = pawns.toFixed(1);
+    return pawns > 0 ? `+${fixed}` : fixed;
+  }
+
+  useEffect(() => {
+    if (!showMoveTable || !showEngineColumn) {
+      setEngineMoveEval({});
+      return;
+    }
+
+    // Clear immediately on any position/move-list change so values don't hang around.
+    setEngineMoveEval({});
+
+    let cancelled = false;
+    const reqId = (engineColumnReqIdRef.current += 1);
+
+    const timeout = window.setTimeout(() => {
+      const moves = nextMoveList.moves.slice(0, 12);
+
+      void (async () => {
+        const out: Record<string, string> = {};
+
+        for (const m of moves) {
+          if (cancelled) return;
+          if (engineColumnReqIdRef.current !== reqId) return;
+
+          try {
+            const base = new Chess(state.fen);
+            const from = m.uci.slice(0, 2);
+            const to = m.uci.slice(2, 4);
+            const promotion = m.uci.length > 4 ? m.uci.slice(4) : undefined;
+            const played = base.move({ from, to, promotion: (promotion as any) ?? undefined });
+            if (!played) {
+              out[m.uci] = "—";
+              continue;
+            }
+
+            const score = await evaluatePositionShallow(base.fen());
+            // Score is from perspective of the side-to-move AFTER applying the move, so invert.
+            const flipped: EngineScore | null =
+              score?.type === "cp"
+                ? { type: "cp", value: -score.value }
+                : score?.type === "mate"
+                  ? { type: "mate", value: -score.value }
+                  : null;
+
+            out[m.uci] = formatEngineScore(flipped);
+          } catch {
+            out[m.uci] = "—";
+          }
+
+          if (!cancelled && engineColumnReqIdRef.current === reqId) {
+            // Progressive updates feel more responsive.
+            setEngineMoveEval((prev) => ({ ...prev, [m.uci]: out[m.uci]! }));
+          }
+        }
+      })();
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [showMoveTable, showEngineColumn, state.fen, visibleMovesKey, nextMoveList.moves]);
 
   function formatGameCount(value: number) {
     const n = Number(value);
@@ -157,25 +308,25 @@ export function AnalysisBoard(props: Props) {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-wrap items-center gap-3">
+      <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            className="inline-flex h-11 items-center justify-center rounded-xl bg-zinc-900 px-4 text-sm font-medium text-white hover:bg-zinc-800"
+            className="inline-flex h-9 items-center justify-center rounded-xl bg-zinc-900 px-3 text-[10px] font-medium text-white hover:bg-zinc-800"
             onClick={state.reset}
           >
             Reset
           </button>
           <button
             type="button"
-            className="inline-flex h-11 items-center justify-center rounded-xl border border-zinc-200 bg-white px-4 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+            className="inline-flex h-9 items-center justify-center rounded-xl border border-zinc-200 bg-white px-3 text-[10px] font-medium text-zinc-900 hover:bg-zinc-50"
             onClick={() => state.undoPlies(1)}
           >
             Undo
           </button>
           <button
             type="button"
-            className="inline-flex h-11 items-center justify-center rounded-xl border border-zinc-200 bg-white px-4 text-sm font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
+            className="inline-flex h-9 items-center justify-center rounded-xl border border-zinc-200 bg-white px-3 text-[10px] font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
             onClick={() => state.undoPlies(2)}
             disabled={state.fenHistory.length <= 2}
           >
@@ -183,25 +334,34 @@ export function AnalysisBoard(props: Props) {
           </button>
           <button
             type="button"
-            className="inline-flex h-11 items-center justify-center rounded-xl border border-zinc-200 bg-white px-4 text-sm font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
+            className="inline-flex h-9 items-center justify-center rounded-xl border border-zinc-200 bg-white px-3 text-[10px] font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
             onClick={() => state.redoPlies(1)}
             disabled={state.redoFens.length === 0}
           >
             Redo
           </button>
-          <div className="ml-auto text-sm text-zinc-600">
+          <div className="ml-auto text-[10px] text-zinc-600">
             Turn: <span className="font-medium text-zinc-900">{state.game.turn() === "w" ? "White" : "Black"}</span>
           </div>
         </div>
 
-        <div className="mt-4 grid gap-3 md:grid-cols-2">
+        {showEngineBest ? (
+          <div className="mt-3 text-[10px] text-zinc-700">
+            Engine best:{" "}
+            <span className="font-medium text-zinc-900">
+              {engineBestMove ? `${engineBestMove.san ?? engineBestMove.uci}` : "—"}
+            </span>
+          </div>
+        ) : null}
+
+        <div className="mt-3 grid gap-2 md:grid-cols-2">
           <div className="flex flex-col gap-1">
-            <label className="text-sm font-medium text-zinc-900" htmlFor="analysis-opp-username">
+            <label className="text-[10px] font-medium text-zinc-900" htmlFor="analysis-opp-username">
               Opponent (Lichess username)
             </label>
             <input
               id="analysis-opp-username"
-              className="h-11 rounded-xl border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none focus:border-zinc-400"
+              className="h-9 rounded-xl border border-zinc-200 bg-white px-3 text-[10px] text-zinc-900 outline-none focus:border-zinc-400"
               value={opponentUsername}
               onChange={(e) => setOpponentUsername(e.target.value)}
               placeholder="opponent_username"
@@ -209,16 +369,34 @@ export function AnalysisBoard(props: Props) {
           </div>
 
           <div className="flex flex-col gap-2">
-            <label className="text-sm font-medium text-zinc-900">Overlays</label>
-            <label className="inline-flex items-center gap-2 text-sm text-zinc-700">
+            <label className="text-[10px] font-medium text-zinc-900">Overlays</label>
+            <label className="inline-flex items-center gap-2 text-[10px] text-zinc-700">
               <input type="checkbox" checked={showArrow} onChange={(e) => setShowArrow(e.target.checked)} />
               Show candidate arrows
             </label>
-            <label className="inline-flex items-center gap-2 text-sm text-zinc-700">
+            <label className="inline-flex items-center gap-2 text-[10px] text-zinc-700">
+              <input
+                type="checkbox"
+                checked={showEngineBest}
+                onChange={(e) => setShowEngineBest(e.target.checked)}
+              />
+              Display engine’s best move
+            </label>
+            <label className="inline-flex items-center gap-2 text-[10px] text-zinc-700">
               <input type="checkbox" checked={showMoveTable} onChange={(e) => setShowMoveTable(e.target.checked)} />
               Show move table
             </label>
-            <div className="text-sm text-zinc-700">
+            {showMoveTable ? (
+              <label className="inline-flex items-center gap-2 text-[10px] text-zinc-700">
+                <input
+                  type="checkbox"
+                  checked={showEngineColumn}
+                  onChange={(e) => setShowEngineColumn(e.target.checked)}
+                />
+                Show engine eval column
+              </label>
+            ) : null}
+            <div className="text-[10px] text-zinc-700">
               Depth remaining (approx):{" "}
               <span className="font-medium text-zinc-900">
                 {opponentStats?.depthRemaining == null ? "—" : String(opponentStats.depthRemaining)}
@@ -228,14 +406,17 @@ export function AnalysisBoard(props: Props) {
         </div>
 
         {showMoveTable ? (
-          <div className="mt-4 grid gap-2">
+          <div className="mt-3 grid gap-2">
             {opponentStatsBusy ? (
-              <div className="text-sm text-zinc-600">Loading…</div>
+              <div className="text-[10px] text-zinc-600">Loading…</div>
             ) : nextMoveList.moves?.length ? (
               <div className="grid gap-2">
-                <div className="grid grid-cols-[80px_80px_1fr_56px] gap-2 text-xs font-medium text-zinc-500">
+                <div
+                  className={`grid ${showEngineColumn ? "grid-cols-[72px_68px_64px_1fr_44px]" : "grid-cols-[72px_68px_1fr_44px]"} gap-2 text-[10px] font-medium text-zinc-500`}
+                >
                   <div>Move</div>
                   <div>Games</div>
+                  {showEngineColumn ? <div>Engine</div> : null}
                   <div>Results</div>
                   <div className="text-right">%</div>
                 </div>
@@ -246,16 +427,28 @@ export function AnalysisBoard(props: Props) {
                   const lossPct = (m.loss / total) * 100;
                   const freq = nextMoveList.total > 0 ? m.played_count / nextMoveList.total : 0;
                   const freqPct = Math.round(freq * 100);
+                  const isEngine = Boolean(engineBestMove?.uci && engineBestMove.uci === m.uci);
+                  const evalLabel = showEngineColumn ? (engineMoveEval[m.uci] ?? "…") : null;
 
                   return (
                     <button
                       key={m.uci}
                       type="button"
-                      className="grid grid-cols-[80px_80px_1fr_56px] items-center gap-2 rounded-lg px-1 py-1 text-left hover:bg-zinc-50"
+                      className={`grid ${showEngineColumn ? "grid-cols-[72px_68px_64px_1fr_44px]" : "grid-cols-[72px_68px_1fr_44px]"} items-center gap-2 rounded-lg px-1 py-0.5 text-left hover:bg-zinc-50 ${isEngine ? "ring-1 ring-violet-200" : ""}`}
                       onClick={() => playTableMove(m.uci)}
                     >
-                      <div className="text-sm font-medium text-zinc-900">{m.san ?? m.uci}</div>
-                      <div className="text-sm font-medium text-zinc-700">{formatGameCount(m.played_count)}</div>
+                      <div className="flex items-center gap-2 text-[10px] font-medium text-zinc-900">
+                        <span>{m.san ?? m.uci}</span>
+                        {isEngine ? (
+                          <span className="rounded-md bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700">
+                            ENGINE
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="text-[10px] font-medium text-zinc-700">{formatGameCount(m.played_count)}</div>
+                      {showEngineColumn ? (
+                        <div className="text-[10px] font-medium text-zinc-500">{evalLabel}</div>
+                      ) : null}
                       <div className="h-3 overflow-hidden rounded-full border border-zinc-200 bg-zinc-100">
                         <div className="flex h-full w-full">
                           <div className="h-full bg-emerald-500" style={{ width: `${winPct}%` }} />
@@ -263,24 +456,24 @@ export function AnalysisBoard(props: Props) {
                           <div className="h-full bg-rose-500" style={{ width: `${lossPct}%` }} />
                         </div>
                       </div>
-                      <div className="text-right text-sm font-medium text-zinc-700">{freqPct}%</div>
+                      <div className="text-right text-[10px] font-medium text-zinc-700">{freqPct}%</div>
                     </button>
                   );
                 })}
-                <div className="text-xs text-zinc-500">Showing top 12 moves.</div>
+                <div className="text-[10px] text-zinc-500">Showing top 12 moves.</div>
               </div>
             ) : (
-              <div className="text-sm text-zinc-600">No data for this position.</div>
+              <div className="text-[10px] text-zinc-600">No data for this position.</div>
             )}
           </div>
         ) : null}
 
-        {state.status ? <div className="mt-3 text-sm text-zinc-600">{state.status}</div> : null}
+        {state.status ? <div className="mt-2 text-[10px] text-zinc-600">{state.status}</div> : null}
       </div>
 
-      <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
-        <div className="text-sm font-medium text-zinc-900">Moves</div>
-        <div className="mt-3 grid gap-1 text-sm text-zinc-700">
+      <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+        <div className="text-[10px] font-medium text-zinc-900">Moves</div>
+        <div className="mt-2 grid gap-1 text-[10px] text-zinc-700">
           {state.game.history().length ? (
             <div className="whitespace-pre-wrap break-words">
               {state.game.history().map((m, idx) => (

@@ -3,11 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "dev:clean": "rmdir /s /q .next 2>nul & next dev --port 3002",
+    "dev": "next dev --port 3002",
+    "clean": "node scripts/clean-next.mjs",
+    "dev:clean": "node scripts/ensure-port-free.mjs && npm run clean && next dev --port 3002",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "postinstall": "node scripts/copy-stockfish.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.8.0",
@@ -16,7 +18,8 @@
     "next": "^15.0.0",
     "react": "19.2.3",
     "react-chessboard": "^5.8.6",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "stockfish": "^17.1.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

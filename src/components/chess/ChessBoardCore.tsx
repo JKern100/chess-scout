@@ -29,6 +29,12 @@ export type ChessBoardCoreState = {
 type Props = {
   initialFen?: string;
   arrows?: any[] | ((state: ChessBoardCoreState) => any[]);
+  squareStyles?: Record<string, React.CSSProperties> | ((state: ChessBoardCoreState) => Record<string, React.CSSProperties>);
+  specialArrow?:
+    | { startSquare: string; endSquare: string; intensity?: number }
+    | ((state: ChessBoardCoreState) => { startSquare: string; endSquare: string; intensity?: number } | null);
+  aboveBoard?: React.ReactNode | ((state: ChessBoardCoreState) => React.ReactNode);
+  belowBoard?: React.ReactNode | ((state: ChessBoardCoreState) => React.ReactNode);
   onPieceDrop: (args: any, state: ChessBoardCoreState) => boolean;
   underBoard?: React.ReactNode;
   children: (state: ChessBoardCoreState) => React.ReactNode;
@@ -36,7 +42,7 @@ type Props = {
 
 const PLAYER_SIDE_STORAGE_KEY = "chessscout_player_side";
 
-export function ChessBoardCore({ initialFen, arrows, onPieceDrop, underBoard, children }: Props) {
+export function ChessBoardCore({ initialFen, arrows, squareStyles, specialArrow, aboveBoard, belowBoard, onPieceDrop, underBoard, children }: Props) {
   const initialGame = useMemo(() => {
     const g = new Chess();
     if (initialFen) {
@@ -59,6 +65,65 @@ export function ChessBoardCore({ initialFen, arrows, onPieceDrop, underBoard, ch
   const [boardWidth, setBoardWidth] = useState<number>(400);
   const fen = game.fen();
 
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const audioUnlockedRef = useRef(false);
+
+  function ensureAudioUnlocked() {
+    if (audioUnlockedRef.current) return;
+    if (typeof window === "undefined") return;
+
+    const Ctx = (window as any).AudioContext ?? (window as any).webkitAudioContext;
+    if (!Ctx) return;
+
+    if (!audioCtxRef.current) {
+      audioCtxRef.current = new Ctx();
+    }
+
+    const ctx = audioCtxRef.current;
+    if (!ctx) return;
+
+    // Try to resume; if it works we consider audio unlocked.
+    void ctx.resume().then(() => {
+      audioUnlockedRef.current = true;
+    });
+  }
+
+  function playMoveClick() {
+    if (typeof window === "undefined") return;
+    if (!audioUnlockedRef.current) return;
+
+    const ctx = audioCtxRef.current;
+    if (!ctx) return;
+
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    // Short percussive click.
+    osc.type = "square";
+    osc.frequency.setValueAtTime(880, now);
+    osc.frequency.exponentialRampToValueAtTime(220, now + 0.03);
+
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.18, now + 0.005);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.045);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start(now);
+    osc.stop(now + 0.05);
+
+    osc.onended = () => {
+      try {
+        osc.disconnect();
+        gain.disconnect();
+      } catch {
+        // ignore
+      }
+    };
+  }
+
   useEffect(() => {
     try {
       const saved = window.localStorage.getItem(PLAYER_SIDE_STORAGE_KEY);
@@ -68,6 +133,18 @@ export function ChessBoardCore({ initialFen, arrows, onPieceDrop, underBoard, ch
     } catch {
       // ignore
     }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const unlock = () => ensureAudioUnlocked();
+    window.addEventListener("pointerdown", unlock, { passive: true });
+    window.addEventListener("keydown", unlock);
+    return () => {
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("keydown", unlock);
+    };
   }, []);
 
   function setPlayerSide(side: Side) {
@@ -97,6 +174,7 @@ export function ChessBoardCore({ initialFen, arrows, onPieceDrop, underBoard, ch
     setFenHistory((prev) => {
       const last = prev[prev.length - 1];
       if (last === nextFen) return prev;
+      playMoveClick();
       return [...prev, nextFen];
     });
     setRedoFens([]);
@@ -212,23 +290,65 @@ export function ChessBoardCore({ initialFen, arrows, onPieceDrop, underBoard, ch
   };
 
   const resolvedArrows = typeof arrows === "function" ? arrows(state) : (arrows ?? []);
+  const resolvedSquareStyles = typeof squareStyles === "function" ? squareStyles(state) : (squareStyles ?? {});
+  const resolvedSpecialArrow =
+    typeof specialArrow === "function" ? specialArrow(state) : (specialArrow ?? null);
+  const resolvedAboveBoard = typeof aboveBoard === "function" ? aboveBoard(state) : (aboveBoard ?? null);
+  const resolvedBelowBoard = typeof belowBoard === "function" ? belowBoard(state) : (belowBoard ?? null);
+
+  const boardId = "chessscout-board";
+  const specialMarkerEnd = resolvedSpecialArrow
+    ? `url(#${boardId}-arrowhead-0-${resolvedSpecialArrow.startSquare}-${resolvedSpecialArrow.endSquare})`
+    : null;
+
+  const specialIntensity = (() => {
+    const v = Number(resolvedSpecialArrow?.intensity ?? 0);
+    if (!Number.isFinite(v)) return 0;
+    return Math.max(0, Math.min(1, v));
+  })();
+
+  const glowStrong = (0.55 + specialIntensity * 0.45).toFixed(3);
+  const glowMid = (0.42 + specialIntensity * 0.38).toFixed(3);
+  const glowSoft = (0.30 + specialIntensity * 0.30).toFixed(3);
 
   return (
-    <div className="grid gap-6 md:grid-cols-[420px_1fr]">
+    <div className="grid gap-7 md:grid-cols-[420px_1fr]">
       <div className="flex flex-col gap-3">
+        {resolvedAboveBoard ? <div>{resolvedAboveBoard}</div> : null}
         <div
           ref={boardContainerRef}
-          className="flex justify-center rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm"
+          data-chessscout-board={boardId}
+          className="flex justify-center rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm"
         >
+          {specialMarkerEnd ? (
+            <style>{`
+              [data-chessscout-board="${boardId}"] svg path[marker-end="${specialMarkerEnd}"] {
+                filter:
+                  drop-shadow(0 0 2px rgba(34, 197, 94, ${glowStrong}))
+                  drop-shadow(0 0 10px rgba(34, 197, 94, ${glowMid}))
+                  drop-shadow(0 0 22px rgba(34, 197, 94, ${glowSoft}));
+                stroke-linecap: round;
+              }
+
+              [data-chessscout-board="${boardId}"] svg marker[id^="${boardId}-arrowhead-0-"] polygon {
+                filter:
+                  drop-shadow(0 0 2px rgba(34, 197, 94, ${glowStrong}))
+                  drop-shadow(0 0 10px rgba(34, 197, 94, ${glowMid}))
+                  drop-shadow(0 0 22px rgba(34, 197, 94, ${glowSoft}));
+              }
+            `}</style>
+          ) : null}
           <Chessboard
             options={{
+              id: boardId,
               position: fen,
               onPieceDrop: (args: any) => onPieceDrop(args, state),
               boardOrientation: playerSide,
               animationDurationInMs: 150,
               showNotation: false,
               allowDrawingArrows: false,
-              arrows: resolvedArrows as any,
+              arrows: resolvedArrows,
+              squareStyles: resolvedSquareStyles,
               boardStyle: {
                 width: boardWidth,
                 height: boardWidth,
@@ -246,6 +366,8 @@ export function ChessBoardCore({ initialFen, arrows, onPieceDrop, underBoard, ch
             }}
           />
         </div>
+
+        {resolvedBelowBoard ? <div>{resolvedBelowBoard}</div> : null}
 
         {underBoard}
       </div>
