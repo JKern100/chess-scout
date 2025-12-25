@@ -145,6 +145,15 @@ export function PlayBoard({ initialFen }: Props) {
     return `${Math.round(clamped * 100)}%`;
   }
 
+  function formatGameCount(value: number) {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n <= 0) return "0";
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 10_000) return `${Math.round(n / 1_000)}K`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+    return String(Math.round(n));
+  }
+
   function buildOpponentCommentary(params: {
     username: string;
     moveLabel: string;
@@ -588,8 +597,9 @@ export function PlayBoard({ initialFen }: Props) {
                   <div className="text-sm text-zinc-600">Loading…</div>
                 ) : nextMoveList.moves?.length ? (
                   <div className="grid gap-2">
-                    <div className="grid grid-cols-[80px_1fr_56px] gap-2 text-xs font-medium text-zinc-500">
+                    <div className="grid grid-cols-[80px_80px_1fr_56px] gap-2 text-xs font-medium text-zinc-500">
                       <div>Move</div>
+                      <div>Games</div>
                       <div>Results</div>
                       <div className="text-right">%</div>
                     </div>
@@ -605,10 +615,13 @@ export function PlayBoard({ initialFen }: Props) {
                       return (
                         <div
                           key={m.uci}
-                          className="grid grid-cols-[80px_1fr_56px] items-center gap-2"
+                          className="grid grid-cols-[80px_80px_1fr_56px] items-center gap-2"
                         >
                           <div className="text-sm font-medium text-zinc-900">
                             {m.san ?? m.uci}
+                          </div>
+                          <div className="text-sm font-medium text-zinc-700">
+                            {formatGameCount(m.played_count)}
                           </div>
                           <div className="h-3 overflow-hidden rounded-full border border-zinc-200 bg-zinc-100">
                             <div className="flex h-full w-full">

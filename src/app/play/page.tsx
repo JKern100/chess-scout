@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { PlayBoard } from "@/components/chess/PlayBoard";
+import { PlayBoardModes } from "@/components/chess/PlayBoardModes";
 
 export default function PlayPage() {
   return (
@@ -29,7 +29,7 @@ export default function PlayPage() {
           </p>
         </header>
 
-        <PlayBoard />
+        <PlayBoardModes />
       </main>
     </div>
   );
