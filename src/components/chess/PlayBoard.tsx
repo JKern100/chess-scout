@@ -24,6 +24,8 @@ export function PlayBoard({ initialFen }: Props) {
   }, [initialFen]);
 
   const [game, setGame] = useState<Chess>(initialGame);
+  const [fenHistory, setFenHistory] = useState<string[]>(() => [initialGame.fen()]);
+  const [redoFens, setRedoFens] = useState<string[]>([]);
   const [playerSide, setPlayerSide] = useState<Side>("white");
   const [status, setStatus] = useState<string | null>(null);
   const [simulateOpponent, setSimulateOpponent] = useState(false);
@@ -40,10 +42,102 @@ export function PlayBoard({ initialFen }: Props) {
   } | null>(null);
   const [simBusy, setSimBusy] = useState(false);
   const [opponentCommentary, setOpponentCommentary] = useState<string | null>(null);
+  const [simWarmStatus, setSimWarmStatus] = useState<"idle" | "warming" | "warm" | "error">("idle");
+  const [simWarmMeta, setSimWarmMeta] = useState<{ status: string; buildMs: number; maxGames: number } | null>(
+    null
+  );
+  const [showOpponentArrow, setShowOpponentArrow] = useState(false);
+  const [showOpponentMoveTable, setShowOpponentMoveTable] = useState(false);
+  const [opponentStats, setOpponentStats] = useState<{
+    totalCountOpponent: number;
+    totalCountAgainst: number;
+    movesOpponent: Array<{
+      uci: string;
+      san: string | null;
+      played_count: number;
+      win: number;
+      loss: number;
+      draw: number;
+    }>;
+    movesAgainst: Array<{
+      uci: string;
+      san: string | null;
+      played_count: number;
+      win: number;
+      loss: number;
+      draw: number;
+    }>;
+  } | null>(null);
+  const [opponentStatsBusy, setOpponentStatsBusy] = useState(false);
   const boardContainerRef = useRef<HTMLDivElement | null>(null);
   const [boardWidth, setBoardWidth] = useState<number>(400);
 
   const squareSize = Math.floor(boardWidth / 8);
+
+  function loadGameFromFen(fen: string) {
+    const g = new Chess();
+    try {
+      g.load(fen);
+    } catch {
+      return null;
+    }
+    return g;
+  }
+
+  function commitGame(next: Chess) {
+    const nextFen = next.fen();
+    setGame(next);
+    setFenHistory((prev) => {
+      const last = prev[prev.length - 1];
+      if (last === nextFen) return prev;
+      return [...prev, nextFen];
+    });
+    setRedoFens([]);
+  }
+
+  function undoPlies(count: number) {
+    setStatus(null);
+    setFenHistory((prev) => {
+      if (prev.length <= 1) return prev;
+
+      const clamped = Math.max(1, Math.min(count, prev.length - 1));
+      const nextHistory = prev.slice(0, prev.length - clamped);
+      const removed = prev.slice(prev.length - clamped);
+
+      setRedoFens((r) => [...removed.reverse(), ...r]);
+
+      const targetFen = nextHistory[nextHistory.length - 1];
+      if (targetFen) {
+        const g = loadGameFromFen(targetFen);
+        if (g) setGame(g);
+      }
+
+      return nextHistory;
+    });
+  }
+
+  function redoPlies(count: number) {
+    setStatus(null);
+    setRedoFens((prevRedo) => {
+      if (prevRedo.length === 0) return prevRedo;
+
+      const clamped = Math.max(1, Math.min(count, prevRedo.length));
+      const toApply = prevRedo.slice(0, clamped);
+      const remaining = prevRedo.slice(clamped);
+
+      setFenHistory((h) => {
+        const next = [...h, ...toApply];
+        const targetFen = next[next.length - 1];
+        if (targetFen) {
+          const g = loadGameFromFen(targetFen);
+          if (g) setGame(g);
+        }
+        return next;
+      });
+
+      return remaining;
+    });
+  }
 
   function formatPct(n: number) {
     if (!Number.isFinite(n)) return "0%";
@@ -111,6 +205,7 @@ export function PlayBoard({ initialFen }: Props) {
     fen: string;
     username: string;
     mode: "proportional" | "random";
+    prefetch?: boolean;
   }) {
     const res = await fetch("/api/sim/next-move", {
       method: "POST",
@@ -122,6 +217,7 @@ export function PlayBoard({ initialFen }: Props) {
         mode: params.mode,
         max_games: 2000,
         max_depth: 16,
+        prefetch: params.prefetch ?? false,
       }),
     });
     const json = await res.json();
@@ -130,6 +226,105 @@ export function PlayBoard({ initialFen }: Props) {
     }
     return json as any;
   }
+
+  async function fetchOpponentStats(params: { fen: string; username: string }) {
+    const json = await requestOpponentMove({
+      fen: params.fen,
+      username: params.username,
+      mode: "proportional",
+      prefetch: false,
+    });
+    const moves = Array.isArray(json?.moves) ? (json.moves as any[]) : [];
+    const movesAgainst = Array.isArray(json?.moves_against) ? (json.moves_against as any[]) : [];
+    const normalized = moves.map((m) => ({
+      uci: String(m.uci),
+      san: (m.san as string | null) ?? null,
+      played_count: Number(m.played_count ?? 0),
+      win: Number(m.win ?? 0),
+      loss: Number(m.loss ?? 0),
+      draw: Number(m.draw ?? 0),
+    }));
+    const normalizedAgainst = movesAgainst.map((m) => ({
+      uci: String(m.uci),
+      san: (m.san as string | null) ?? null,
+      played_count: Number(m.played_count ?? 0),
+      win: Number(m.win ?? 0),
+      loss: Number(m.loss ?? 0),
+      draw: Number(m.draw ?? 0),
+    }));
+    return {
+      totalCountOpponent: Number(json?.available_total_count ?? 0),
+      totalCountAgainst: Number(json?.available_against_total_count ?? 0),
+      movesOpponent: normalized,
+      movesAgainst: normalizedAgainst,
+    };
+  }
+
+  useEffect(() => {
+    if (!simulateOpponent) return;
+    const trimmed = opponentUsername.trim();
+    if (!trimmed) return;
+
+    let cancelled = false;
+    setSimWarmStatus("warming");
+
+    void requestOpponentMove({
+      fen: new Chess().fen(),
+      username: trimmed,
+      mode: opponentMode,
+      prefetch: true,
+    })
+      .then((json) => {
+        if (cancelled) return;
+        setSimWarmMeta({
+          status: String(json?.cache?.status ?? ""),
+          buildMs: Number(json?.cache?.build_ms ?? 0),
+          maxGames: Number(json?.cache?.max_games ?? 0),
+        });
+        setSimWarmStatus("warm");
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setSimWarmStatus("error");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [simulateOpponent, opponentUsername, opponentMode]);
+
+  useEffect(() => {
+    if (!simulateOpponent) {
+      setOpponentStats(null);
+      return;
+    }
+    const trimmed = opponentUsername.trim();
+    if (!trimmed) {
+      setOpponentStats(null);
+      return;
+    }
+
+    if (!showOpponentArrow && !showOpponentMoveTable) {
+      return;
+    }
+
+    let cancelled = false;
+    setOpponentStatsBusy(true);
+
+    void fetchOpponentStats({ fen: game.fen(), username: trimmed })
+      .then((stats) => {
+        if (cancelled) return;
+        setOpponentStats(stats);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setOpponentStatsBusy(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [simulateOpponent, opponentUsername, showOpponentArrow, showOpponentMoveTable, game]);
 
   async function maybePlayOpponentReply(nextGame: Chess) {
     if (!simulateOpponent) return;
@@ -205,7 +400,7 @@ export function PlayBoard({ initialFen }: Props) {
       );
 
       setStatus(null);
-      setGame(reply);
+      commitGame(reply);
     } finally {
       setSimBusy(false);
     }
@@ -253,7 +448,7 @@ export function PlayBoard({ initialFen }: Props) {
         return false;
       }
 
-      setGame(next);
+      commitGame(next);
       void maybePlayOpponentReply(next);
       return true;
     } catch {
@@ -272,13 +467,21 @@ export function PlayBoard({ initialFen }: Props) {
       }
     }
     setGame(g);
+    setFenHistory([g.fen()]);
+    setRedoFens([]);
+    setOpponentCommentary(null);
   }
 
   function undo() {
-    setStatus(null);
-    safeGameMutate((g) => {
-      g.undo();
-    });
+    undoPlies(1);
+  }
+
+  function undoFullMove() {
+    undoPlies(2);
+  }
+
+  function redo() {
+    redoPlies(1);
   }
 
   function flipSide() {
@@ -287,6 +490,34 @@ export function PlayBoard({ initialFen }: Props) {
 
   const fen = game.fen();
   const isGameOver = game.isGameOver();
+
+  const userColor = playerSide === "white" ? "w" : "b";
+  const opponentColor = userColor === "w" ? "b" : "w";
+  const isOppToMove = game.turn() === opponentColor;
+
+  const nextMoveList = useMemo(() => {
+    if (!opponentStats) return { total: 0, moves: [] as NonNullable<typeof opponentStats>["movesOpponent"] };
+    if (isOppToMove) return { total: opponentStats.totalCountOpponent, moves: opponentStats.movesOpponent };
+    return { total: opponentStats.totalCountAgainst, moves: opponentStats.movesAgainst };
+  }, [opponentStats, isOppToMove]);
+
+  const opponentArrow = useMemo(() => {
+    if (!simulateOpponent) return [];
+    if (!showOpponentArrow) return [];
+    const trimmed = opponentUsername.trim();
+    if (!trimmed) return [];
+    const first = nextMoveList.moves?.[0];
+    if (!first?.uci) return [];
+    const uci = String(first.uci);
+    if (uci.length < 4) return [];
+    return [
+      {
+        startSquare: uci.slice(0, 2),
+        endSquare: uci.slice(2, 4),
+        color: "rgba(37, 99, 235, 0.9)",
+      },
+    ];
+  }, [simulateOpponent, showOpponentArrow, opponentUsername, nextMoveList]);
 
   const outcome = (() => {
     if (!isGameOver) return null;
@@ -300,33 +531,121 @@ export function PlayBoard({ initialFen }: Props) {
 
   return (
     <div className="grid gap-6 md:grid-cols-[420px_1fr]">
-      <div
-        ref={boardContainerRef}
-        className="flex justify-center rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm"
-      >
-        <Chessboard
-          options={{
-            position: fen,
-            onPieceDrop,
-            boardOrientation: playerSide,
-            animationDurationInMs: 150,
-            showNotation: false,
-            boardStyle: {
-              width: boardWidth,
-              height: boardWidth,
-              display: "grid",
-              gridTemplateColumns: `repeat(8, ${squareSize}px)`,
-              gridTemplateRows: `repeat(8, ${squareSize}px)`,
-              gap: 0,
-              lineHeight: 0,
-            },
-            squareStyle: {
-              width: squareSize,
-              height: squareSize,
-              lineHeight: 0,
-            },
-          }}
-        />
+      <div className="flex flex-col gap-3">
+        <div
+          ref={boardContainerRef}
+          className="flex justify-center rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm"
+        >
+          <Chessboard
+            options={{
+              position: fen,
+              onPieceDrop,
+              boardOrientation: playerSide,
+              animationDurationInMs: 150,
+              showNotation: false,
+              allowDrawingArrows: false,
+              arrows: opponentArrow as any,
+              boardStyle: {
+                width: boardWidth,
+                height: boardWidth,
+                display: "grid",
+                gridTemplateColumns: `repeat(8, ${squareSize}px)`,
+                gridTemplateRows: `repeat(8, ${squareSize}px)`,
+                gap: 0,
+                lineHeight: 0,
+              },
+              squareStyle: {
+                width: squareSize,
+                height: squareSize,
+                lineHeight: 0,
+              },
+            }}
+          />
+        </div>
+
+        <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+          <div className="flex flex-col gap-3">
+            <label className="inline-flex items-center gap-2 text-sm text-zinc-700">
+              <input
+                type="checkbox"
+                checked={showOpponentArrow}
+                onChange={(e) => setShowOpponentArrow(e.target.checked)}
+              />
+              Show most common next move
+            </label>
+
+            <button
+              type="button"
+              className="inline-flex h-10 items-center justify-center rounded-xl border border-zinc-200 bg-white px-4 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+              onClick={() => setShowOpponentMoveTable((v) => !v)}
+            >
+              {showOpponentMoveTable ? "Hide opponent moves" : "Show opponent moves"}
+            </button>
+
+            {showOpponentMoveTable ? (
+              <div className="grid gap-2">
+                {opponentStatsBusy ? (
+                  <div className="text-sm text-zinc-600">Loading…</div>
+                ) : nextMoveList.moves?.length ? (
+                  <div className="grid gap-2">
+                    <div className="grid grid-cols-[80px_1fr_56px] gap-2 text-xs font-medium text-zinc-500">
+                      <div>Move</div>
+                      <div>Results</div>
+                      <div className="text-right">%</div>
+                    </div>
+                    {nextMoveList.moves.slice(0, 12).map((m) => {
+                      const total = Math.max(1, m.played_count);
+                      const winPct = (m.win / total) * 100;
+                      const drawPct = (m.draw / total) * 100;
+                      const lossPct = (m.loss / total) * 100;
+                      const freq =
+                        nextMoveList.total > 0 ? m.played_count / nextMoveList.total : 0;
+                      const freqPct = Math.round(freq * 100);
+
+                      return (
+                        <div
+                          key={m.uci}
+                          className="grid grid-cols-[80px_1fr_56px] items-center gap-2"
+                        >
+                          <div className="text-sm font-medium text-zinc-900">
+                            {m.san ?? m.uci}
+                          </div>
+                          <div className="h-3 overflow-hidden rounded-full border border-zinc-200 bg-zinc-100">
+                            <div className="flex h-full w-full">
+                              <div
+                                className="h-full bg-emerald-500"
+                                style={{ width: `${winPct}%` }}
+                                title={`Win: ${m.win}`}
+                              />
+                              <div
+                                className="h-full bg-zinc-300"
+                                style={{ width: `${drawPct}%` }}
+                                title={`Draw: ${m.draw}`}
+                              />
+                              <div
+                                className="h-full bg-rose-500"
+                                style={{ width: `${lossPct}%` }}
+                                title={`Loss: ${m.loss}`}
+                              />
+                            </div>
+                          </div>
+                          <div className="text-right text-sm font-medium text-zinc-700">
+                            {freqPct}%
+                          </div>
+                        </div>
+                      );
+                    })}
+                    <div className="text-xs text-zinc-500">
+                      Showing top 12 moves.
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-sm text-zinc-600">No data for this position.</div>
+                )}
+              </div>
+            ) : null}
+          </div>
+        </div>
       </div>
 
       <div className="flex flex-col gap-4">
@@ -345,6 +664,22 @@ export function PlayBoard({ initialFen }: Props) {
               onClick={undo}
             >
               Undo
+            </button>
+            <button
+              type="button"
+              className="inline-flex h-11 items-center justify-center rounded-xl border border-zinc-200 bg-white px-4 text-sm font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
+              onClick={undoFullMove}
+              disabled={fenHistory.length <= 2}
+            >
+              Undo full move
+            </button>
+            <button
+              type="button"
+              className="inline-flex h-11 items-center justify-center rounded-xl border border-zinc-200 bg-white px-4 text-sm font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
+              onClick={redo}
+              disabled={redoFens.length === 0}
+            >
+              Redo
             </button>
             <button
               type="button"
@@ -413,6 +748,22 @@ export function PlayBoard({ initialFen }: Props) {
             </div>
 
             <div className="grid gap-2 text-sm text-zinc-700">
+              {simulateOpponent ? (
+                <div>
+                  Cache: <span className="font-medium text-zinc-900">
+                    {simWarmStatus === "warming"
+                      ? "Warming…"
+                      : simWarmStatus === "warm"
+                        ? "Warm"
+                        : simWarmStatus === "error"
+                          ? "Error"
+                          : "—"}
+                  </span>
+                  {simWarmStatus === "warm" && simWarmMeta ? (
+                    <span className="text-zinc-600"> {`(${simWarmMeta.status || "?"}, build ${Math.round(simWarmMeta.buildMs)}ms, ${simWarmMeta.maxGames} games)`}</span>
+                  ) : null}
+                </div>
+              ) : null}
               <div>
                 Depth remaining (approx):{" "}
                 <span className="font-medium text-zinc-900">

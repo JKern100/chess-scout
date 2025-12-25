@@ -17,21 +17,12 @@ type PositionStats = {
   moves: Map<string, MoveStats>;
 };
 
-type AnyMoveStats = {
-  uci: string;
-  count: number;
-};
-
-type AnyPositionStats = {
-  moves: Map<string, AnyMoveStats>;
-};
-
 type CachedStats = {
   builtAtMs: number;
   maxGames: number;
   buildMs: number;
   opponentMap: Map<string, PositionStats>;
-  allMovesMap: Map<string, AnyPositionStats>;
+  againstOpponentMap: Map<string, PositionStats>;
 };
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
@@ -117,11 +108,11 @@ function applyUciMove(chess: Chess, uci: string) {
 function computeOpponentMoveDepth(params: {
   startFenKey: string;
   opponentMap: Map<string, PositionStats>;
-  allMovesMap: Map<string, AnyPositionStats>;
+  againstOpponentMap: Map<string, PositionStats>;
   maxOpponentMoves: number;
   maxPlies: number;
 }): number {
-  const { startFenKey, opponentMap, allMovesMap, maxOpponentMoves, maxPlies } = params;
+  const { startFenKey, opponentMap, againstOpponentMap, maxOpponentMoves, maxPlies } = params;
 
   let opponentMoves = 0;
   let fenKey = startFenKey;
@@ -147,10 +138,9 @@ function computeOpponentMoveDepth(params: {
       fenKey = normalizeFen(chess.fen());
       continue;
     }
-
-    const allPos = allMovesMap.get(fenKey);
-    if (!allPos) return opponentMoves;
-    const replyMoves = Array.from(allPos.moves.values()).sort((a, b) => b.count - a.count);
+    const againstPos = againstOpponentMap.get(fenKey);
+    if (!againstPos) return opponentMoves;
+    const replyMoves = Array.from(againstPos.moves.values()).sort((a, b) => b.count - a.count);
     const bestReply = replyMoves[0];
     if (!bestReply) return opponentMoves;
     const playedReply = applyUciMove(chess, bestReply.uci);
@@ -200,7 +190,7 @@ async function getOrBuildStats(params: {
   }
 
   const opponentMap = new Map<string, PositionStats>();
-  const allMovesMap = new Map<string, AnyPositionStats>();
+  const againstOpponentMap = new Map<string, PositionStats>();
 
   for (const row of games ?? []) {
     const pgn = (row as any)?.pgn as string | undefined;
@@ -226,28 +216,34 @@ async function getOrBuildStats(params: {
       const moveColor = mv?.color as "w" | "b" | undefined;
 
       const allUci = `${mv.from}${mv.to}${mv.promotion ? mv.promotion : ""}`;
-      let anyPos = allMovesMap.get(fenKey);
-      if (!anyPos) {
-        anyPos = { moves: new Map() };
-        allMovesMap.set(fenKey, anyPos);
-      }
-      let anyMove = anyPos.moves.get(allUci);
-      if (!anyMove) {
-        anyMove = { uci: allUci, count: 0 };
-        anyPos.moves.set(allUci, anyMove);
-      }
-      anyMove.count += 1;
 
       const played = replay.move({ from: mv.from, to: mv.to, promotion: mv.promotion });
       if (!played) break;
 
-      if (moveColor !== oppColor) continue;
-
       const uci = allUci;
-      let pos = opponentMap.get(fenKey);
+
+      if (moveColor === oppColor) {
+        let pos = opponentMap.get(fenKey);
+        if (!pos) {
+          pos = { moves: new Map() };
+          opponentMap.set(fenKey, pos);
+        }
+
+        let s = pos.moves.get(uci);
+        if (!s) {
+          s = { uci, san: mv.san, count: 0, win: 0, loss: 0, draw: 0 };
+          pos.moves.set(uci, s);
+        }
+
+        s.count += 1;
+        updateOutcome(s, oppColor, result);
+        continue;
+      }
+
+      let pos = againstOpponentMap.get(fenKey);
       if (!pos) {
         pos = { moves: new Map() };
-        opponentMap.set(fenKey, pos);
+        againstOpponentMap.set(fenKey, pos);
       }
 
       let s = pos.moves.get(uci);
@@ -266,7 +262,7 @@ async function getOrBuildStats(params: {
     maxGames: params.maxGames,
     buildMs: Date.now() - buildStart,
     opponentMap,
-    allMovesMap,
+    againstOpponentMap,
   };
 
   statsCache.set(key, built);
@@ -298,6 +294,7 @@ export async function POST(request: Request) {
   const mode = (String(body?.mode ?? "proportional") as Mode) ?? "proportional";
   const maxGames = Math.min(Math.max(Number(body?.max_games ?? 500), 1), 2000);
   const maxDepth = Math.min(Math.max(Number(body?.max_depth ?? 16), 1), 40);
+  const prefetch = Boolean(body?.prefetch);
 
   if (!username) {
     return NextResponse.json({ error: "username is required" }, { status: 400 });
@@ -327,17 +324,40 @@ export async function POST(request: Request) {
   }
 
   const positionMap = cached.opponentMap;
-  const allMovesMap = cached.allMovesMap;
+  const againstOpponentMap = cached.againstOpponentMap;
+
+  if (prefetch) {
+    return NextResponse.json({
+      cache: {
+        status: cacheStatus,
+        max_games: cached.maxGames,
+        age_ms: Date.now() - cached.builtAtMs,
+        build_ms: cached.buildMs,
+      },
+      position: startFenKey,
+      mode,
+      available_count: 0,
+      available_total_count: 0,
+      depth_remaining: 0,
+      move: null,
+      moves: [],
+      prefetched: true,
+    });
+  }
 
   const startPos = positionMap.get(startFenKey);
   const availableMoves = startPos ? Array.from(startPos.moves.values()) : [];
   const availableTotalCount = availableMoves.reduce((sum, m) => sum + (m.count ?? 0), 0);
 
+  const againstPos = againstOpponentMap.get(startFenKey);
+  const againstMoves = againstPos ? Array.from(againstPos.moves.values()) : [];
+  const againstTotalCount = againstMoves.reduce((sum, m) => sum + (m.count ?? 0), 0);
+
   const picked = sampleMove(availableMoves, mode);
   const depthRemaining = computeOpponentMoveDepth({
     startFenKey,
     opponentMap: positionMap,
-    allMovesMap,
+    againstOpponentMap,
     maxOpponentMoves: maxDepth,
     maxPlies: Math.max(8, maxDepth * 2),
   });
@@ -353,6 +373,8 @@ export async function POST(request: Request) {
     mode,
     available_count: availableMoves.length,
     available_total_count: availableTotalCount,
+    available_against_count: againstMoves.length,
+    available_against_total_count: againstTotalCount,
     depth_remaining: depthRemaining,
     move: picked
       ? {
@@ -365,6 +387,17 @@ export async function POST(request: Request) {
         }
       : null,
     moves: availableMoves
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 30)
+      .map((m) => ({
+        uci: m.uci,
+        san: m.san ?? null,
+        played_count: m.count,
+        win: m.win,
+        loss: m.loss,
+        draw: m.draw,
+      })),
+    moves_against: againstMoves
       .sort((a, b) => b.count - a.count)
       .slice(0, 30)
       .map((m) => ({
