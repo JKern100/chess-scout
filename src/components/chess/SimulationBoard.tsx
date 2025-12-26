@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ChessBoardCoreState } from "./ChessBoardCore";
 
 type Strategy = "proportional" | "random";
@@ -18,7 +18,7 @@ type Props = {
   mode: Strategy;
   setMode: (m: Strategy) => void;
   opponentUsername: string;
-  setOpponentUsername: (s: string) => void;
+  filtersKey: string;
   simBusy: boolean;
   opponentCommentary: string | null;
   lastOpponentMove: { uci: string; san: string | null } | null;
@@ -53,7 +53,7 @@ export function SimulationBoard(props: Props) {
   const {
     state,
     opponentUsername,
-    setOpponentUsername,
+    filtersKey,
     mode,
     setMode,
     simBusy,
@@ -92,6 +92,10 @@ export function SimulationBoard(props: Props) {
 
   const lastAutoKeyRef = useRef<string | null>(null);
 
+  const [stageProgress, setStageProgress] = useState(0);
+  const stageTimerRef = useRef<number | null>(null);
+  const stageStartRef = useRef<number | null>(null);
+
   const turn = state.game.turn();
   const isPlayersTurn =
     (state.playerSide === "white" && turn === "w") || (state.playerSide === "black" && turn === "b");
@@ -105,7 +109,7 @@ export function SimulationBoard(props: Props) {
     if (clocksEnabled && clockPaused) return;
     if (!isOpponentsTurn) return;
 
-    const key = `${state.fen}|${turn}|${opponentUsername}|${mode}`;
+    const key = `${state.fen}|${turn}|${opponentUsername}|${mode}|${filtersKey}`;
     if (lastAutoKeyRef.current === key) return;
     lastAutoKeyRef.current = key;
 
@@ -115,6 +119,7 @@ export function SimulationBoard(props: Props) {
     state.isGameOver,
     simBusy,
     opponentUsername,
+    filtersKey,
     clocksEnabled,
     clockPaused,
     clockExpired,
@@ -123,6 +128,37 @@ export function SimulationBoard(props: Props) {
     mode,
     onOpponentMoveNow,
   ]);
+
+  useEffect(() => {
+    if (stageTimerRef.current) {
+      window.clearInterval(stageTimerRef.current);
+      stageTimerRef.current = null;
+    }
+
+    if (simWarmStatus === "warming") {
+      stageStartRef.current = Date.now();
+      setStageProgress((p) => (p > 0 && p < 0.9 ? p : 0.12));
+      stageTimerRef.current = window.setInterval(() => {
+        const start = stageStartRef.current ?? Date.now();
+        const elapsed = Date.now() - start;
+        const eased = 1 - Math.exp(-elapsed / 2200);
+        const next = Math.min(0.92, 0.12 + eased * 0.8);
+        setStageProgress(next);
+      }, 120);
+      return () => {
+        if (stageTimerRef.current) window.clearInterval(stageTimerRef.current);
+        stageTimerRef.current = null;
+      };
+    }
+
+    if (simWarmStatus === "warm") {
+      setStageProgress(1);
+    } else if (simWarmStatus === "error") {
+      setStageProgress(1);
+    } else {
+      setStageProgress(0);
+    }
+  }, [simWarmStatus]);
 
   return (
     <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
@@ -294,20 +330,7 @@ export function SimulationBoard(props: Props) {
           <div className="text-[10px] font-medium text-zinc-900">Opponent simulation</div>
         </div>
 
-        <div className="grid gap-3 md:grid-cols-2">
-          <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-medium text-zinc-900" htmlFor="sim-opp-username">
-              Opponent (Lichess username)
-            </label>
-            <input
-              id="sim-opp-username"
-              className="h-9 rounded-xl border border-zinc-200 bg-white px-3 text-[10px] text-zinc-900 outline-none focus:border-zinc-400"
-              value={opponentUsername}
-              onChange={(e) => setOpponentUsername(e.target.value)}
-              placeholder="opponent_username"
-            />
-          </div>
-
+        <div className="grid gap-3">
           <div className="flex flex-col gap-1">
             <label className="text-[10px] font-medium text-zinc-900" htmlFor="sim-opp-mode">
               Move selection
@@ -330,22 +353,43 @@ export function SimulationBoard(props: Props) {
               Out of opponent history — engine is now playing for the opponent.
             </div>
           ) : null}
-          <div>
-            Cache:{" "}
-            <span className="font-medium text-zinc-900">
-              {simWarmStatus === "warming"
-                ? "Warming…"
-                : simWarmStatus === "warm"
-                  ? "Warm"
-                  : simWarmStatus === "error"
-                    ? "Error"
-                    : "—"}
-            </span>
+          <div className="grid gap-1">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <span className="font-medium text-zinc-900">
+                  {simWarmStatus === "warming" ? "Staging games for analysis..." : "Staging"}
+                </span>
+                {simWarmStatus === "warm" ? (
+                  <span className="text-zinc-600"> (ready)</span>
+                ) : simWarmStatus === "error" ? (
+                  <span className="text-zinc-600"> (error)</span>
+                ) : null}
+              </div>
+              <div className="text-zinc-600">
+                {simWarmStatus === "warming"
+                  ? "working…"
+                  : simWarmStatus === "warm"
+                    ? "complete"
+                    : simWarmStatus === "error"
+                      ? "failed"
+                      : "—"}
+              </div>
+            </div>
+
+            <div className="h-2 w-full overflow-hidden rounded-full border border-zinc-200 bg-white">
+              <div
+                className={
+                  simWarmStatus === "error" ? "h-full bg-rose-500" : "h-full bg-zinc-900"
+                }
+                style={{ width: `${Math.round((stageProgress || 0) * 100)}%` }}
+              />
+            </div>
+
             {simWarmStatus === "warm" && simWarmMeta ? (
-              <span className="text-zinc-600">{` (${simWarmMeta.status || "?"}, build ${Math.round(simWarmMeta.buildMs)}ms, ${simWarmMeta.maxGames} games)`}</span>
+              <div className="text-zinc-600">{`(${simWarmMeta.status || "?"}, build ${Math.round(simWarmMeta.buildMs)}ms, ${simWarmMeta.maxGames} games)`}</div>
             ) : null}
             {simWarmStatus === "error" ? (
-              <span className="text-zinc-600"> (could not load games; are you signed in?)</span>
+              <div className="text-zinc-600">could not load games; are you signed in?</div>
             ) : null}
           </div>
           <div>

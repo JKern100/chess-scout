@@ -1,7 +1,18 @@
 import Link from "next/link";
 import { PlayBoardModes } from "@/components/chess/PlayBoardModes";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { redirect } from "next/navigation";
 
-export default function PlayPage() {
+export default async function PlayPage() {
+  const supabase = await createSupabaseServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/");
+  }
+
   return (
     <div className="min-h-screen bg-zinc-50">
       <main className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-6 py-10 text-[10px]">
@@ -17,7 +28,7 @@ export default function PlayPage() {
               <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">Play</h1>
             </div>
             <Link
-              href="/"
+              href="/dashboard"
               className="inline-flex h-9 items-center justify-center rounded-xl border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-900 hover:bg-zinc-50"
             >
               Back

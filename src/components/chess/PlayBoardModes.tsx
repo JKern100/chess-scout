@@ -2,7 +2,7 @@
 
 import { Chess } from "chess.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { getBestMoveForPlay } from "@/lib/engine/engineService";
+import { getBestMoveForPlay, type EngineScore } from "@/lib/engine/engineService";
 import { AnalysisBoard } from "./AnalysisBoard";
 import { ChessBoardCore, type ChessBoardCoreState } from "./ChessBoardCore";
 import { SimulationBoard } from "./SimulationBoard";
@@ -27,6 +27,21 @@ type TimeControlPreset = {
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function formatEvalForDisplay(score: EngineScore | null) {
+  if (!score) return "—";
+  if (score.type === "mate") {
+    const n = Math.trunc(score.value);
+    if (!Number.isFinite(n)) return "—";
+    return `#${n}`;
+  }
+  const cp = Number(score.value);
+  if (!Number.isFinite(cp)) return "—";
+  const pawns = cp / 100;
+  const fixed = pawns.toFixed(1);
+  if (Math.abs(pawns) < 0.05) return "0.0";
+  return pawns > 0 ? `+${fixed}` : fixed;
 }
 
 function formatClock(ms: number) {
@@ -76,6 +91,17 @@ export function PlayBoardModes({ initialFen }: Props) {
   const [mode, setMode] = useState<Mode>("simulation");
 
   const [opponentUsername, setOpponentUsername] = useState<string>("");
+  const [availableOpponents, setAvailableOpponents] = useState<Array<{ platform: string; username: string }>>([]);
+  const [filterSpeeds, setFilterSpeeds] = useState<Array<"bullet" | "blitz" | "rapid" | "classical" | "correspondence">>([
+    "bullet",
+    "blitz",
+    "rapid",
+    "classical",
+    "correspondence",
+  ]);
+  const [filterRated, setFilterRated] = useState<"any" | "rated" | "casual">("any");
+  const [filterFromDate, setFilterFromDate] = useState<string>("");
+  const [filterToDate, setFilterToDate] = useState<string>("");
   const [opponentMode, setOpponentMode] = useState<Strategy>("proportional");
   const [depthRemaining, setDepthRemaining] = useState<number | null>(null);
   const [lastOpponentMove, setLastOpponentMove] = useState<{ uci: string; san: string | null } | null>(null);
@@ -85,6 +111,7 @@ export function PlayBoardModes({ initialFen }: Props) {
   const [simWarmStatus, setSimWarmStatus] = useState<"idle" | "warming" | "warm" | "error">("idle");
   const [simWarmMeta, setSimWarmMeta] = useState<{ status: string; buildMs: number; maxGames: number } | null>(null);
   const [simError, setSimError] = useState<string | null>(null);
+  const [simGamesLeft, setSimGamesLeft] = useState<number | null>(null);
 
   const [engineTakeover, setEngineTakeover] = useState(false);
   const [engineTakeoverFlash, setEngineTakeoverFlash] = useState(false);
@@ -99,6 +126,90 @@ export function PlayBoardModes({ initialFen }: Props) {
       return () => window.clearTimeout(id);
     }
   }, [engineTakeover]);
+
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem("chessscout.opponent.lichess") ?? "";
+      if (stored.trim()) setOpponentUsername(stored.trim());
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem("chessscout.opponentFilters") ?? "";
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as any;
+      const speeds = Array.isArray(parsed?.speeds) ? (parsed.speeds as any[]) : [];
+      const nextSpeeds = speeds
+        .map((s) => String(s))
+        .filter((s) => ["bullet", "blitz", "rapid", "classical", "correspondence"].includes(s)) as Array<
+        "bullet" | "blitz" | "rapid" | "classical" | "correspondence"
+      >;
+
+      setFilterSpeeds(
+        nextSpeeds.length > 0
+          ? nextSpeeds
+          : ["bullet", "blitz", "rapid", "classical", "correspondence"]
+      );
+
+      const rated = String(parsed?.rated ?? "any");
+      setFilterRated(rated === "rated" ? "rated" : rated === "casual" ? "casual" : "any");
+
+      setFilterFromDate(typeof parsed?.from === "string" ? parsed.from : "");
+      setFilterToDate(typeof parsed?.to === "string" ? parsed.to : "");
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/opponents")
+      .then((r) => r.json())
+      .then((json) => {
+        if (cancelled) return;
+        const rows = Array.isArray(json?.opponents) ? (json.opponents as any[]) : [];
+        const out = rows
+          .map((o) => ({ platform: String(o?.platform ?? "lichess"), username: String(o?.username ?? "").trim() }))
+          .filter((o) => o.username);
+        setAvailableOpponents(out);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setAvailableOpponents([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("chessscout.opponent.lichess", opponentUsername.trim());
+    } catch {
+      // ignore
+    }
+  }, [opponentUsername]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        "chessscout.opponentFilters",
+        JSON.stringify({ speeds: filterSpeeds, rated: filterRated, from: filterFromDate, to: filterToDate })
+      );
+    } catch {
+      // ignore
+    }
+  }, [filterSpeeds, filterRated, filterFromDate, filterToDate]);
+
+  useEffect(() => {
+    if (availableOpponents.length === 0) return;
+    const current = opponentUsername.trim().toLowerCase();
+    if (current && availableOpponents.some((o) => o.username.toLowerCase() === current)) return;
+    setOpponentUsername(availableOpponents[0]?.username ?? "");
+  }, [availableOpponents, opponentUsername]);
 
   const timeControls: TimeControlPreset[] = useMemo(
     () => [
@@ -224,12 +335,40 @@ export function PlayBoardModes({ initialFen }: Props) {
   const [analysisShowArrow, setAnalysisShowArrow] = useState(true);
   const [analysisShowMoveTable, setAnalysisShowMoveTable] = useState(false);
   const [analysisShowEngineBest, setAnalysisShowEngineBest] = useState(false);
+  const [analysisShowEval, setAnalysisShowEval] = useState(false);
   const [analysisEngineBestUci, setAnalysisEngineBestUci] = useState<string | null>(null);
   const [analysisEngineBestSan, setAnalysisEngineBestSan] = useState<string | null>(null);
   const [analysisStats, setAnalysisStats] = useState<Stats | null>(null);
   const [analysisStatsBusy, setAnalysisStatsBusy] = useState(false);
 
+  const [analysisEval, setAnalysisEval] = useState<EngineScore | null>(null);
+
+  useEffect(() => {
+    if (mode !== "analysis") {
+      setAnalysisEval(null);
+      return;
+    }
+    if (!analysisShowEval) {
+      setAnalysisEval(null);
+      return;
+    }
+  }, [mode, analysisShowEval]);
+
   const opponentSource = engineTakeover ? "engine" : "history";
+
+  function formatCompactCount(value: number | null) {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n <= 0) return "0";
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 10_000) return `${Math.round(n / 1_000)}K`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+    return String(Math.round(n));
+  }
+
+  const filtersKey = useMemo(() => {
+    const speedsKey = [...filterSpeeds].sort().join(",");
+    return `${speedsKey}|${filterRated}|${filterFromDate}|${filterToDate}`;
+  }, [filterSpeeds, filterRated, filterFromDate, filterToDate]);
 
   const opponentSourceIndicator = useMemo(() => {
     if (mode !== "simulation") return null;
@@ -242,19 +381,31 @@ export function PlayBoardModes({ initialFen }: Props) {
       : `${baseClass} bg-zinc-200 text-zinc-700`;
 
     return (
-      <span className={className} title={opponentSource === "history" ? "Opponent history" : "Engine"} aria-label={opponentSource === "history" ? "Opponent history" : "Engine"}>
-        {opponentSource === "history" ? (
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
-            <path d="M12 2c-4.97 0-9 1.79-9 4v12c0 2.21 4.03 4 9 4s9-1.79 9-4V6c0-2.21-4.03-4-9-4zm0 2c3.87 0 7 .99 7 2s-3.13 2-7 2-7-.99-7-2 3.13-2 7-2zm0 16c-3.87 0-7-.99-7-2v-2.11C6.45 16.53 9.08 17 12 17s5.55-.47 7-1.11V18c0 1.01-3.13 2-7 2zm0-5c-3.87 0-7-.99-7-2v-2.11C6.45 11.53 9.08 12 12 12s5.55-.47 7-1.11V13c0 1.01-3.13 2-7 2z" />
-          </svg>
-        ) : (
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
-            <path d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.1 7.1 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 13.9 1h-3.8a.5.5 0 0 0-.49.42l-.36 2.54c-.58.23-1.12.54-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.7 7.48a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94L2.82 14.52a.5.5 0 0 0-.12.64l1.92 3.32c.13.22.4.31.64.22l2.39-.96c.5.4 1.05.71 1.63.94l.36 2.54c.04.24.25.42.49.42h3.8c.24 0 .45-.18.49-.42l.36-2.54c.58-.23 1.12-.54 1.63-.94l2.39.96c.24.09.51 0 .64-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.5A3.5 3.5 0 1 1 12 8a3.5 3.5 0 0 1 0 7.5z" />
-          </svg>
-        )}
+      <span className="inline-flex items-center gap-1">
+        <span
+          className={className}
+          title={opponentSource === "history" ? "Opponent history" : "Engine"}
+          aria-label={opponentSource === "history" ? "Opponent history" : "Engine"}
+        >
+          {opponentSource === "history" ? (
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
+              <path d="M12 2c-4.97 0-9 1.79-9 4v12c0 2.21 4.03 4 9 4s9-1.79 9-4V6c0-2.21-4.03-4-9-4zm0 2c3.87 0 7 .99 7 2s-3.13 2-7 2-7-.99-7-2 3.13-2 7-2zm0 16c-3.87 0-7-.99-7-2v-2.11C6.45 16.53 9.08 17 12 17s5.55-.47 7-1.11V18c0 1.01-3.13 2-7 2zm0-5c-3.87 0-7-.99-7-2v-2.11C6.45 11.53 9.08 12 12 12s5.55-.47 7-1.11V13c0 1.01-3.13 2-7 2z" />
+            </svg>
+          ) : (
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
+              <path d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.1 7.1 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 13.9 1h-3.8a.5.5 0 0 0-.49.42l-.36 2.54c-.58.23-1.12.54-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.7 7.48a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94L2.82 14.52a.5.5 0 0 0-.12.64l1.92 3.32c.13.22.4.31.64.22l2.39-.96c.5.4 1.05.71 1.63.94l.36 2.54c.04.24.25.42.49.42h3.8c.24 0 .45-.18.49-.42l.36-2.54c.58-.23 1.12-.54 1.63-.94l2.39.96c.24.09.51 0 .64-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.5A3.5 3.5 0 1 1 12 8a3.5 3.5 0 0 1 0 7.5z" />
+            </svg>
+          )}
+        </span>
+
+        {opponentSource === "history" && simGamesLeft != null ? (
+          <span className="text-[10px] font-medium text-zinc-600" title="Games available at this position">
+            {formatCompactCount(simGamesLeft)}
+          </span>
+        ) : null}
       </span>
     );
-  }, [engineTakeoverFlash, mode, opponentSource, opponentUsername]);
+  }, [engineTakeoverFlash, mode, opponentSource, opponentUsername, simGamesLeft]);
 
   const handleSetEngineBestMove = useCallback((next: { uci: string; san: string | null } | null) => {
     setAnalysisEngineBestUci(next?.uci ?? null);
@@ -275,8 +426,11 @@ export function PlayBoardModes({ initialFen }: Props) {
         username: params.username,
         fen: params.fen,
         mode: params.mode,
-        max_games: 2000,
         max_depth: 16,
+        speeds: filterSpeeds,
+        rated: filterRated,
+        from: filterFromDate || null,
+        to: filterToDate || null,
         prefetch: params.prefetch ?? false,
       }),
     });
@@ -322,7 +476,7 @@ export function PlayBoardModes({ initialFen }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [opponentUsername, opponentMode]);
+  }, [opponentUsername, opponentMode, filtersKey]);
 
   async function playOpponentNow(state: ChessBoardCoreState, fenOverride?: string) {
     const trimmed = opponentUsername.trim();
@@ -353,6 +507,7 @@ export function PlayBoardModes({ initialFen }: Props) {
     setSimError(null);
     try {
       const json = await requestOpponentMove({ fen, username: trimmed, mode: opponentMode });
+      setSimGamesLeft(Number.isFinite(Number(json?.available_total_count)) ? Number(json.available_total_count) : null);
       setDepthRemaining(typeof json?.depth_remaining === "number" ? (json.depth_remaining as number) : null);
 
       const move = json?.move as any;
@@ -360,6 +515,7 @@ export function PlayBoardModes({ initialFen }: Props) {
         setLastOpponentMove(null);
         setOpponentCommentary(null);
         setEngineTakeover(true);
+        setSimGamesLeft(0);
 
         const bestUci = await getBestMoveForPlay(fen);
         if (!bestUci) {
@@ -392,7 +548,7 @@ export function PlayBoardModes({ initialFen }: Props) {
         setLastOpponentMove({ uci: bestUci, san: played.san ?? null });
         setOpponentCommentary("Out of opponent history — engine is now playing for the opponent.");
         state.setStatus(null);
-        state.commitGame(reply);
+        state.commitGame(reply, played.san ?? null);
         return;
       }
 
@@ -425,10 +581,11 @@ export function PlayBoardModes({ initialFen }: Props) {
         `${trimmed} plays ${(move.san as string | null) ?? move.uci}. Switch to Analysis Mode to explore alternatives.`
       );
       state.setStatus(null);
-      state.commitGame(reply);
+      state.commitGame(reply, played.san ?? null);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Opponent simulation failed";
       setSimError(msg);
+      setSimGamesLeft(null);
       state.setStatus(
         msg.toLowerCase().includes("unauthorized")
           ? "You need to sign in to use opponent simulation. Go back to the home page and sign in first."
@@ -451,7 +608,7 @@ export function PlayBoardModes({ initialFen }: Props) {
         const next = new Chess(state.fen);
         const move = next.move({ from: sourceSquare, to: targetSquare, promotion: "q" });
         if (!move) return false;
-        state.commitGame(next);
+        state.commitGame(next, move.san ?? null);
         return true;
       } catch {
         return false;
@@ -483,7 +640,7 @@ export function PlayBoardModes({ initialFen }: Props) {
         else setBlackMs((t) => t + incrementMs);
       }
 
-      state.commitGame(next);
+      state.commitGame(next, move.san ?? null);
       void playOpponentNow(state, next.fen());
       return true;
     } catch {
@@ -516,24 +673,118 @@ export function PlayBoardModes({ initialFen }: Props) {
   );
 
   const underBoard = (
-    <div className="rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm">
-      <div className="flex items-center justify-between gap-4">
-        <div className="text-[10px] font-medium text-zinc-900">Mode</div>
-        <div className="inline-flex overflow-hidden rounded-xl border border-zinc-200 bg-white">
-          <button
-            type="button"
-            className={`h-8 px-3 text-[10px] font-medium ${mode === "simulation" ? "bg-zinc-900 text-white" : "text-zinc-900 hover:bg-zinc-50"}`}
-            onClick={() => setMode("simulation")}
-          >
-            Game Simulation
-          </button>
-          <button
-            type="button"
-            className={`h-8 px-3 text-[10px] font-medium ${mode === "analysis" ? "bg-zinc-900 text-white" : "text-zinc-900 hover:bg-zinc-50"}`}
-            onClick={() => setMode("analysis")}
-          >
-            Analysis
-          </button>
+    <div className="grid gap-3">
+      <div className="rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm">
+        <div className="grid gap-2">
+          <div className="flex items-center justify-between gap-4">
+            <div className="text-[10px] font-medium text-zinc-900">Opponent</div>
+            <select
+              className="h-8 min-w-[180px] rounded-xl border border-zinc-200 bg-white px-3 text-[10px] text-zinc-900 outline-none focus:border-zinc-400 disabled:opacity-60"
+              value={opponentUsername}
+              onChange={(e) => setOpponentUsername(e.target.value)}
+              disabled={availableOpponents.length === 0}
+            >
+              {availableOpponents.length === 0 ? <option value="">No imported opponents</option> : null}
+              {availableOpponents.map((o) => (
+                <option key={`${o.platform}:${o.username}`} value={o.username}>
+                  {o.username}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="grid gap-2">
+            <div className="text-[10px] font-medium text-zinc-900">Time Control</div>
+
+            <div className="flex flex-wrap items-center gap-2 text-[10px] text-zinc-700">
+              {(["bullet", "blitz", "rapid", "classical", "correspondence"] as const).map((s) => {
+                const checked = filterSpeeds.includes(s);
+                return (
+                  <label key={s} className="inline-flex items-center gap-1.5">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(e) => {
+                        const on = e.target.checked;
+                        setFilterSpeeds((prev) => {
+                          if (on) return prev.includes(s) ? prev : [...prev, s];
+                          return prev.filter((x) => x !== s);
+                        });
+                      }}
+                    />
+                    {s}
+                  </label>
+                );
+              })}
+            </div>
+
+            <div className="grid gap-2">
+              <div className="flex items-center gap-2">
+                <div className="text-[10px] font-medium text-zinc-900">Mode</div>
+                <select
+                  id="opp-filter-rated"
+                  className="h-8 rounded-xl border border-zinc-200 bg-white px-3 text-[10px] text-zinc-900 outline-none focus:border-zinc-400"
+                  value={filterRated}
+                  onChange={(e) => setFilterRated(e.target.value as any)}
+                >
+                  <option value="any">All</option>
+                  <option value="rated">Rated</option>
+                  <option value="casual">Casual</option>
+                </select>
+              </div>
+
+              <div className="text-[10px] font-medium text-zinc-900">Date Range</div>
+              <div className="grid gap-2 md:grid-cols-2">
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-medium text-zinc-900" htmlFor="opp-filter-from">
+                    From
+                  </label>
+                  <input
+                    id="opp-filter-from"
+                    type="date"
+                    className="h-8 rounded-xl border border-zinc-200 bg-white px-3 text-[10px] text-zinc-900 outline-none focus:border-zinc-400"
+                    value={filterFromDate}
+                    onChange={(e) => setFilterFromDate(e.target.value)}
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-medium text-zinc-900" htmlFor="opp-filter-to">
+                    To
+                  </label>
+                  <input
+                    id="opp-filter-to"
+                    type="date"
+                    className="h-8 rounded-xl border border-zinc-200 bg-white px-3 text-[10px] text-zinc-900 outline-none focus:border-zinc-400"
+                    value={filterToDate}
+                    onChange={(e) => setFilterToDate(e.target.value)}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm">
+        <div className="flex items-center justify-between gap-4">
+          <div className="text-[10px] font-medium text-zinc-900">Mode</div>
+          <div className="inline-flex overflow-hidden rounded-xl border border-zinc-200 bg-white">
+            <button
+              type="button"
+              className={`h-8 px-3 text-[10px] font-medium ${mode === "simulation" ? "bg-zinc-900 text-white" : "text-zinc-900 hover:bg-zinc-50"}`}
+              onClick={() => setMode("simulation")}
+            >
+              Game Simulation
+            </button>
+            <button
+              type="button"
+              className={`h-8 px-3 text-[10px] font-medium ${mode === "analysis" ? "bg-zinc-900 text-white" : "text-zinc-900 hover:bg-zinc-50"}`}
+              onClick={() => setMode("analysis")}
+            >
+              Analysis
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -543,6 +794,19 @@ export function PlayBoardModes({ initialFen }: Props) {
     <ChessBoardCore
       initialFen={initialFen}
       aboveBoard={(state) => {
+        if (mode === "analysis") {
+          if (!analysisShowEval) return null;
+          const text = formatEvalForDisplay(analysisEval);
+
+          return (
+            <div className="flex justify-end">
+              <div className="inline-flex items-center rounded-full bg-zinc-100 px-3 py-1 text-[12px] font-semibold text-zinc-900">
+                <span className="font-mono tabular-nums">{text}</span>
+              </div>
+            </div>
+          );
+        }
+
         if (mode !== "simulation") return null;
 
         if (!clocksEnabled) {
@@ -745,10 +1009,13 @@ export function PlayBoardModes({ initialFen }: Props) {
             <AnalysisBoard
               state={state}
               opponentUsername={opponentUsername}
-              setOpponentUsername={setOpponentUsername}
+              filtersKey={filtersKey}
               requestOpponentMove={requestOpponentMove}
               showArrow={analysisShowArrow}
               setShowArrow={setAnalysisShowArrow}
+              showEval={analysisShowEval}
+              setShowEval={setAnalysisShowEval}
+              onEvalChange={setAnalysisEval}
               showMoveTable={analysisShowMoveTable}
               setShowMoveTable={setAnalysisShowMoveTable}
               showEngineBest={analysisShowEngineBest}
@@ -773,7 +1040,7 @@ export function PlayBoardModes({ initialFen }: Props) {
             mode={opponentMode}
             setMode={setOpponentMode}
             opponentUsername={opponentUsername}
-            setOpponentUsername={setOpponentUsername}
+            filtersKey={filtersKey}
             simBusy={simBusy}
             opponentCommentary={opponentCommentary}
             lastOpponentMove={lastOpponentMove}

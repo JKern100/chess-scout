@@ -10,7 +10,9 @@ export type ChessBoardCoreState = {
   game: Chess;
   fen: string;
   fenHistory: string[];
+  moveHistory: string[];
   redoFens: string[];
+  redoMoves: string[];
   playerSide: Side;
   setPlayerSide: (side: Side) => void;
   status: string | null;
@@ -19,7 +21,7 @@ export type ChessBoardCoreState = {
   outcome: string | null;
   squareSize: number;
   boardWidth: number;
-  commitGame: (next: Chess) => void;
+  commitGame: (next: Chess, lastSan?: string | null) => void;
   reset: () => void;
   undoPlies: (count: number) => void;
   redoPlies: (count: number) => void;
@@ -57,7 +59,9 @@ export function ChessBoardCore({ initialFen, arrows, squareStyles, specialArrow,
 
   const [game, setGame] = useState<Chess>(initialGame);
   const [fenHistory, setFenHistory] = useState<string[]>(() => [initialGame.fen()]);
+  const [moveHistory, setMoveHistory] = useState<string[]>(() => []);
   const [redoFens, setRedoFens] = useState<string[]>([]);
+  const [redoMoves, setRedoMoves] = useState<string[]>([]);
   const [playerSide, setPlayerSideState] = useState<Side>("white");
   const [status, setStatus] = useState<string | null>(null);
 
@@ -168,9 +172,13 @@ export function ChessBoardCore({ initialFen, arrows, squareStyles, specialArrow,
     return g;
   }
 
-  function commitGame(next: Chess) {
+  function commitGame(next: Chess, lastSan?: string | null) {
     const nextFen = next.fen();
     setGame(next);
+    setMoveHistory((prevMoves) => {
+      const san = typeof lastSan === "string" && lastSan.trim() ? lastSan.trim() : null;
+      return san ? [...prevMoves, san] : prevMoves;
+    });
     setFenHistory((prev) => {
       const last = prev[prev.length - 1];
       if (last === nextFen) return prev;
@@ -178,50 +186,56 @@ export function ChessBoardCore({ initialFen, arrows, squareStyles, specialArrow,
       return [...prev, nextFen];
     });
     setRedoFens([]);
+    setRedoMoves([]);
   }
 
   function undoPlies(count: number) {
     setStatus(null);
-    setFenHistory((prev) => {
-      if (prev.length <= 1) return prev;
+    if (fenHistory.length <= 1) return;
 
-      const clamped = Math.max(1, Math.min(count, prev.length - 1));
-      const nextHistory = prev.slice(0, prev.length - clamped);
-      const removed = prev.slice(prev.length - clamped);
+    const clamped = Math.max(1, Math.min(count, fenHistory.length - 1));
+    const nextFenHistory = fenHistory.slice(0, fenHistory.length - clamped);
+    const removedFens = fenHistory.slice(fenHistory.length - clamped);
 
-      setRedoFens((r) => [...removed.reverse(), ...r]);
+    const nextMoveHistory = moveHistory.slice(0, moveHistory.length - clamped);
+    const removedMoves = moveHistory.slice(moveHistory.length - clamped);
 
-      const targetFen = nextHistory[nextHistory.length - 1];
-      if (targetFen) {
-        const g = loadGameFromFen(targetFen);
-        if (g) setGame(g);
-      }
+    setFenHistory(nextFenHistory);
+    setRedoFens([...removedFens, ...redoFens]);
+    setMoveHistory(nextMoveHistory);
+    setRedoMoves([...removedMoves, ...redoMoves]);
 
-      return nextHistory;
-    });
+    const targetFen = nextFenHistory[nextFenHistory.length - 1];
+    if (targetFen) {
+      const g = loadGameFromFen(targetFen);
+      if (g) setGame(g);
+    }
   }
 
   function redoPlies(count: number) {
     setStatus(null);
-    setRedoFens((prevRedo) => {
-      if (prevRedo.length === 0) return prevRedo;
+    if (redoFens.length === 0) return;
 
-      const clamped = Math.max(1, Math.min(count, prevRedo.length));
-      const toApply = prevRedo.slice(0, clamped);
-      const remaining = prevRedo.slice(clamped);
+    const clamped = Math.max(1, Math.min(count, redoFens.length));
+    const toApplyFens = redoFens.slice(0, clamped);
+    const remainingFens = redoFens.slice(clamped);
 
-      setFenHistory((h) => {
-        const next = [...h, ...toApply];
-        const targetFen = next[next.length - 1];
-        if (targetFen) {
-          const g = loadGameFromFen(targetFen);
-          if (g) setGame(g);
-        }
-        return next;
-      });
+    const toApplyMoves = redoMoves.slice(0, clamped);
+    const remainingMoves = redoMoves.slice(clamped);
 
-      return remaining;
-    });
+    const nextFenHistory = [...fenHistory, ...toApplyFens];
+    const nextMoveHistory = [...moveHistory, ...toApplyMoves];
+
+    setRedoFens(remainingFens);
+    setRedoMoves(remainingMoves);
+    setFenHistory(nextFenHistory);
+    setMoveHistory(nextMoveHistory);
+
+    const targetFen = nextFenHistory[nextFenHistory.length - 1];
+    if (targetFen) {
+      const g = loadGameFromFen(targetFen);
+      if (g) setGame(g);
+    }
   }
 
   function reset() {
@@ -236,7 +250,9 @@ export function ChessBoardCore({ initialFen, arrows, squareStyles, specialArrow,
     }
     setGame(g);
     setFenHistory([g.fen()]);
+    setMoveHistory([]);
     setRedoFens([]);
+    setRedoMoves([]);
   }
 
   useEffect(() => {
@@ -273,7 +289,9 @@ export function ChessBoardCore({ initialFen, arrows, squareStyles, specialArrow,
     game,
     fen,
     fenHistory,
+    moveHistory,
     redoFens,
+    redoMoves,
     playerSide,
     setPlayerSide,
     status,

@@ -2,6 +2,8 @@ import { Chess } from "chess.js";
 
 export type MoveSelectionStrategy = "proportional" | "random";
 
+export type LichessSpeed = "bullet" | "blitz" | "rapid" | "classical" | "correspondence";
+
 export type MoveStats = {
   uci: string;
   san?: string;
@@ -19,6 +21,7 @@ export type OpponentModel = {
   builtAtMs: number;
   buildMs: number;
   maxGames: number;
+  maxGamesCap: number | null;
   opponentMap: Map<string, PositionStats>;
   againstOpponentMap: Map<string, PositionStats>;
 };
@@ -95,6 +98,67 @@ function inferOpponentColorFromPgn(pgn: string, opponentUsername: string): "w" |
 function inferResultFromPgn(pgn: string): "1-0" | "0-1" | "1/2-1/2" | "*" {
   const m = pgn.match(/^\[Result\s+\"(1-0|0-1|1\/2-1\/2|\*)\"\]$/m);
   return (m?.[1] as any) ?? "*";
+}
+
+function getPgnTagValue(pgn: string, tag: string): string | null {
+  const re = new RegExp(`^\\[${tag}\\s+\\"([^\\"]*)\\"\\]$`, "mi");
+  const m = pgn.match(re);
+  const raw = (m?.[1] ?? "").trim();
+  return raw ? raw : null;
+}
+
+function inferSpeedFromPgn(pgn: string): LichessSpeed | null {
+  const speedTag = getPgnTagValue(pgn, "Speed");
+  if (speedTag) {
+    const s = speedTag.trim().toLowerCase();
+    if (["bullet", "blitz", "rapid", "classical", "correspondence"].includes(s)) return s as LichessSpeed;
+  }
+
+  const event = (getPgnTagValue(pgn, "Event") ?? "").toLowerCase();
+  if (event.includes("bullet")) return "bullet";
+  if (event.includes("blitz")) return "blitz";
+  if (event.includes("rapid")) return "rapid";
+  if (event.includes("classical")) return "classical";
+  if (event.includes("correspondence")) return "correspondence";
+  return null;
+}
+
+function inferRatedFromPgn(pgn: string): boolean | null {
+  const ratedTag = getPgnTagValue(pgn, "Rated");
+  if (ratedTag) {
+    const v = ratedTag.trim().toLowerCase();
+    if (["true", "yes", "1"].includes(v)) return true;
+    if (["false", "no", "0"].includes(v)) return false;
+  }
+
+  const event = (getPgnTagValue(pgn, "Event") ?? "").toLowerCase();
+  if (event.includes("rated")) return true;
+  if (event.includes("casual")) return false;
+  return null;
+}
+
+function parseDateRangeIso(params: { from: string | null; to: string | null }): {
+  fromIso: string | null;
+  toIso: string | null;
+} {
+  const fromRaw = params.from?.trim() ? params.from.trim() : null;
+  const toRaw = params.to?.trim() ? params.to.trim() : null;
+
+  const isDateOnly = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s);
+
+  const fromIso = fromRaw
+    ? isDateOnly(fromRaw)
+      ? `${fromRaw}T00:00:00.000Z`
+      : new Date(fromRaw).toISOString()
+    : null;
+
+  const toIso = toRaw
+    ? isDateOnly(toRaw)
+      ? `${toRaw}T23:59:59.999Z`
+      : new Date(toRaw).toISOString()
+    : null;
+
+  return { fromIso, toIso };
 }
 
 function updateOutcome(stats: MoveStats, oppColor: "w" | "b", result: string) {
@@ -174,8 +238,20 @@ function computeOpponentMoveDepth(params: {
   return opponentMoves;
 }
 
-function getCacheKey(params: { profileId: string; platform: string; username: string }) {
-  return `${params.profileId}:${params.platform}:${params.username.toLowerCase()}`;
+function getCacheKey(params: {
+  profileId: string;
+  platform: string;
+  username: string;
+  speeds: LichessSpeed[];
+  rated: "any" | "rated" | "casual";
+  from: string | null;
+  to: string | null;
+  maxGamesCap: number | null;
+}) {
+  const speedsKey = [...params.speeds].sort().join(",");
+  const rangeKey = `${params.from ?? ""}:${params.to ?? ""}`;
+  const capKey = params.maxGamesCap == null ? "all" : String(params.maxGamesCap);
+  return `${params.profileId}:${params.platform}:${params.username.toLowerCase()}:${speedsKey}:${params.rated}:${rangeKey}:${capKey}`;
 }
 
 export async function getOrBuildOpponentModel(params: {
@@ -183,17 +259,42 @@ export async function getOrBuildOpponentModel(params: {
   profileId: string;
   platform: string;
   username: string;
-  maxGames: number;
+  maxGamesCap?: number | null;
+  speeds?: LichessSpeed[];
+  rated?: "any" | "rated" | "casual";
+  from?: string | null;
+  to?: string | null;
 }): Promise<{ model: OpponentModel; cache: CacheMeta }> {
+  const speeds = (params.speeds ?? []) as LichessSpeed[];
+  const rated = (params.rated ?? "any") as "any" | "rated" | "casual";
+  const { fromIso, toIso } = parseDateRangeIso({ from: params.from ?? null, to: params.to ?? null });
+
+  const envCapRaw = process.env.OPPONENT_MAX_GAMES;
+  const envCap = envCapRaw != null ? Number(envCapRaw) : null;
+  const requestedCap = params.maxGamesCap == null ? null : Number(params.maxGamesCap);
+  const maxGamesCap =
+    Number.isFinite(envCap) && (envCap as number) > 0
+      ? Number.isFinite(requestedCap) && (requestedCap as number) > 0
+        ? Math.min(envCap as number, requestedCap as number)
+        : (envCap as number)
+      : Number.isFinite(requestedCap) && (requestedCap as number) > 0
+        ? (requestedCap as number)
+        : null;
+
   const key = getCacheKey({
     profileId: params.profileId,
     platform: params.platform,
     username: params.username,
+    speeds,
+    rated,
+    from: fromIso,
+    to: toIso,
+    maxGamesCap,
   });
 
   const cached = statsCache.get(key);
   const now = Date.now();
-  if (cached && now - cached.builtAtMs < CACHE_TTL_MS && cached.maxGames >= params.maxGames) {
+  if (cached && now - cached.builtAtMs < CACHE_TTL_MS) {
     return {
       model: cached,
       cache: {
@@ -207,17 +308,38 @@ export async function getOrBuildOpponentModel(params: {
 
   const buildStart = Date.now();
 
-  const { data: games, error } = await params.supabase
-    .from("games")
-    .select("pgn")
-    .eq("profile_id", params.profileId)
-    .eq("platform", params.platform)
-    .eq("username", params.username)
-    .order("played_at", { ascending: false })
-    .limit(params.maxGames);
+  const batchSize = 500;
+  let offset = 0;
+  let fetchedTotal = 0;
+  const games: Array<{ pgn: string; played_at: string | null }> = [];
 
-  if (error) {
-    throw error;
+  for (;;) {
+    if (maxGamesCap != null && fetchedTotal >= maxGamesCap) break;
+    const remaining = maxGamesCap == null ? batchSize : Math.min(batchSize, maxGamesCap - fetchedTotal);
+    if (remaining <= 0) break;
+
+    let query = params.supabase
+      .from("games")
+      .select("pgn, played_at")
+      .eq("profile_id", params.profileId)
+      .eq("platform", params.platform)
+      .eq("username", params.username)
+      .order("played_at", { ascending: false });
+
+    if (fromIso) query = query.gte("played_at", fromIso);
+    if (toIso) query = query.lte("played_at", toIso);
+
+    const { data, error } = await query.range(offset, offset + remaining - 1);
+    if (error) throw error;
+
+    const rows = (data ?? []) as Array<{ pgn: string; played_at: string | null }>;
+    if (rows.length === 0) break;
+
+    games.push(...rows);
+    fetchedTotal += rows.length;
+    offset += rows.length;
+
+    if (rows.length < remaining) break;
   }
 
   const opponentMap = new Map<string, PositionStats>();
@@ -226,6 +348,19 @@ export async function getOrBuildOpponentModel(params: {
   for (const row of games ?? []) {
     const pgn = (row as any)?.pgn as string | undefined;
     if (!pgn) continue;
+
+    if (speeds.length > 0) {
+      const gameSpeed = inferSpeedFromPgn(pgn);
+      if (gameSpeed && !speeds.includes(gameSpeed)) continue;
+    }
+
+    if (rated !== "any") {
+      const isRated = inferRatedFromPgn(pgn);
+      if (isRated !== null) {
+        if (rated === "rated" && !isRated) continue;
+        if (rated === "casual" && isRated) continue;
+      }
+    }
 
     const oppColor = inferOpponentColorFromPgn(pgn, params.username);
     if (!oppColor) continue;
@@ -291,23 +426,26 @@ export async function getOrBuildOpponentModel(params: {
     }
   }
 
-  const built: OpponentModel = {
+  const buildMs = Date.now() - buildStart;
+
+  const model: OpponentModel = {
     builtAtMs: now,
-    maxGames: params.maxGames,
-    buildMs: Date.now() - buildStart,
+    buildMs,
+    maxGames: games.length,
+    maxGamesCap,
     opponentMap,
     againstOpponentMap,
   };
 
-  statsCache.set(key, built);
+  statsCache.set(key, model);
 
   return {
-    model: built,
+    model,
     cache: {
       status: "miss",
-      max_games: built.maxGames,
+      max_games: model.maxGames,
       age_ms: 0,
-      build_ms: built.buildMs,
+      build_ms: model.buildMs,
     },
   };
 }

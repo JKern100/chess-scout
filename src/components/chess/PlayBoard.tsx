@@ -48,6 +48,7 @@ export function PlayBoard({ initialFen }: Props) {
   );
   const [showOpponentArrow, setShowOpponentArrow] = useState(false);
   const [showOpponentMoveTable, setShowOpponentMoveTable] = useState(false);
+  const [opponentMovesTab, setOpponentMovesTab] = useState<"moves" | "tab2">("moves");
   const [opponentStats, setOpponentStats] = useState<{
     totalCountOpponent: number;
     totalCountAgainst: number;
@@ -224,7 +225,6 @@ export function PlayBoard({ initialFen }: Props) {
         username: params.username,
         fen: params.fen,
         mode: params.mode,
-        max_games: 2000,
         max_depth: 16,
         prefetch: params.prefetch ?? false,
       }),
@@ -586,79 +586,115 @@ export function PlayBoard({ initialFen }: Props) {
             <button
               type="button"
               className="inline-flex h-10 items-center justify-center rounded-xl border border-zinc-200 bg-white px-4 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
-              onClick={() => setShowOpponentMoveTable((v) => !v)}
+              onClick={() => {
+                setShowOpponentMoveTable((v) => {
+                  const next = !v;
+                  if (next) setOpponentMovesTab("moves");
+                  return next;
+                });
+              }}
             >
               {showOpponentMoveTable ? "Hide opponent moves" : "Show opponent moves"}
             </button>
-
-            {showOpponentMoveTable ? (
-              <div className="grid gap-2">
-                {opponentStatsBusy ? (
-                  <div className="text-sm text-zinc-600">Loading…</div>
-                ) : nextMoveList.moves?.length ? (
-                  <div className="grid gap-2">
-                    <div className="grid grid-cols-[80px_80px_1fr_56px] gap-2 text-xs font-medium text-zinc-500">
-                      <div>Move</div>
-                      <div>Games</div>
-                      <div>Results</div>
-                      <div className="text-right">%</div>
-                    </div>
-                    {nextMoveList.moves.slice(0, 12).map((m) => {
-                      const total = Math.max(1, m.played_count);
-                      const winPct = (m.win / total) * 100;
-                      const drawPct = (m.draw / total) * 100;
-                      const lossPct = (m.loss / total) * 100;
-                      const freq =
-                        nextMoveList.total > 0 ? m.played_count / nextMoveList.total : 0;
-                      const freqPct = Math.round(freq * 100);
-
-                      return (
-                        <div
-                          key={m.uci}
-                          className="grid grid-cols-[80px_80px_1fr_56px] items-center gap-2"
-                        >
-                          <div className="text-sm font-medium text-zinc-900">
-                            {m.san ?? m.uci}
-                          </div>
-                          <div className="text-sm font-medium text-zinc-700">
-                            {formatGameCount(m.played_count)}
-                          </div>
-                          <div className="h-3 overflow-hidden rounded-full border border-zinc-200 bg-zinc-100">
-                            <div className="flex h-full w-full">
-                              <div
-                                className="h-full bg-emerald-500"
-                                style={{ width: `${winPct}%` }}
-                                title={`Win: ${m.win}`}
-                              />
-                              <div
-                                className="h-full bg-zinc-300"
-                                style={{ width: `${drawPct}%` }}
-                                title={`Draw: ${m.draw}`}
-                              />
-                              <div
-                                className="h-full bg-rose-500"
-                                style={{ width: `${lossPct}%` }}
-                                title={`Loss: ${m.loss}`}
-                              />
-                            </div>
-                          </div>
-                          <div className="text-right text-sm font-medium text-zinc-700">
-                            {freqPct}%
-                          </div>
-                        </div>
-                      );
-                    })}
-                    <div className="text-xs text-zinc-500">
-                      Showing top 12 moves.
-                    </div>
-                  </div>
-                ) : (
-                  <div className="text-sm text-zinc-600">No data for this position.</div>
-                )}
-              </div>
-            ) : null}
           </div>
         </div>
+
+        {showOpponentMoveTable ? (
+          <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-sm font-medium text-zinc-900">Opponent moves</div>
+              <div className="inline-flex overflow-hidden rounded-xl border border-zinc-200 bg-white">
+                <button
+                  type="button"
+                  className={
+                    opponentMovesTab === "moves"
+                      ? "h-9 px-3 text-sm font-medium text-zinc-900"
+                      : "h-9 px-3 text-sm font-medium text-zinc-600 hover:text-zinc-900"
+                  }
+                  onClick={() => setOpponentMovesTab("moves")}
+                >
+                  Moves
+                </button>
+                <div className="h-9 w-px bg-zinc-200" />
+                <button
+                  type="button"
+                  className={
+                    opponentMovesTab === "tab2"
+                      ? "h-9 px-3 text-sm font-medium text-zinc-900"
+                      : "h-9 px-3 text-sm font-medium text-zinc-600 hover:text-zinc-900"
+                  }
+                  onClick={() => setOpponentMovesTab("tab2")}
+                >
+                  Tab 2
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-3">
+              {opponentMovesTab === "moves" ? (
+                <div className="grid gap-2">
+                  {opponentStatsBusy ? (
+                    <div className="text-sm text-zinc-600">Loading…</div>
+                  ) : nextMoveList.moves?.length ? (
+                    <div className="grid gap-2">
+                      <div className="grid grid-cols-[80px_80px_1fr_56px] gap-2 text-xs font-medium text-zinc-500">
+                        <div>Move</div>
+                        <div>Games</div>
+                        <div>Results</div>
+                        <div className="text-right">%</div>
+                      </div>
+                      {nextMoveList.moves.slice(0, 12).map((m) => {
+                        const total = Math.max(1, m.played_count);
+                        const winPct = (m.win / total) * 100;
+                        const drawPct = (m.draw / total) * 100;
+                        const lossPct = (m.loss / total) * 100;
+                        const freq = nextMoveList.total > 0 ? m.played_count / nextMoveList.total : 0;
+                        const freqPct = Math.round(freq * 100);
+
+                        return (
+                          <div
+                            key={m.uci}
+                            className="grid grid-cols-[80px_80px_1fr_56px] items-center gap-2"
+                          >
+                            <div className="text-sm font-medium text-zinc-900">{m.san ?? m.uci}</div>
+                            <div className="text-sm font-medium text-zinc-700">
+                              {formatGameCount(m.played_count)}
+                            </div>
+                            <div className="h-3 overflow-hidden rounded-full border border-zinc-200 bg-zinc-100">
+                              <div className="flex h-full w-full">
+                                <div
+                                  className="h-full bg-emerald-500"
+                                  style={{ width: `${winPct}%` }}
+                                  title={`Win: ${m.win}`}
+                                />
+                                <div
+                                  className="h-full bg-zinc-300"
+                                  style={{ width: `${drawPct}%` }}
+                                  title={`Draw: ${m.draw}`}
+                                />
+                                <div
+                                  className="h-full bg-rose-500"
+                                  style={{ width: `${lossPct}%` }}
+                                  title={`Loss: ${m.loss}`}
+                                />
+                              </div>
+                            </div>
+                            <div className="text-right text-sm font-medium text-zinc-700">{freqPct}%</div>
+                          </div>
+                        );
+                      })}
+                      <div className="text-xs text-zinc-500">Showing top 12 moves.</div>
+                    </div>
+                  ) : (
+                    <div className="text-sm text-zinc-600">No data for this position.</div>
+                  )}
+                </div>
+              ) : (
+                <div className="min-h-16" />
+              )}
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <div className="flex flex-col gap-4">

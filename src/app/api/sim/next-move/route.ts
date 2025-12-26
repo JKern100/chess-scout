@@ -1,12 +1,6 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import {
-  getNextMoveOptions,
-  getOrBuildOpponentModel,
-  normalizeFen,
-  selectMove,
-  type MoveSelectionStrategy,
-} from "@/server/opponentModel";
+import { normalizeFen, type MoveSelectionStrategy } from "@/server/opponentModel";
 
 type Mode = MoveSelectionStrategy;
 
@@ -33,9 +27,21 @@ export async function POST(request: Request) {
   const username = String(body?.username ?? "").trim();
   const fen = String(body?.fen ?? "").trim();
   const mode = (String(body?.mode ?? "proportional") as Mode) ?? "proportional";
-  const maxGames = Math.min(Math.max(Number(body?.max_games ?? 500), 1), 2000);
   const maxDepth = Math.min(Math.max(Number(body?.max_depth ?? 16), 1), 40);
   const prefetch = Boolean(body?.prefetch);
+
+  const speedsRaw = Array.isArray(body?.speeds) ? (body.speeds as any[]) : [];
+  const speeds = speedsRaw
+    .map((s) => String(s))
+    .filter((s) => ["bullet", "blitz", "rapid", "classical", "correspondence"].includes(s)) as Array<
+    "bullet" | "blitz" | "rapid" | "classical" | "correspondence"
+  >;
+
+  const ratedRaw = String(body?.rated ?? "any");
+  const rated = ratedRaw === "rated" ? "rated" : ratedRaw === "casual" ? "casual" : "any";
+
+  const from = typeof body?.from === "string" ? String(body.from) : null;
+  const to = typeof body?.to === "string" ? String(body.to) : null;
 
   if (!username) {
     return NextResponse.json({ error: "username is required" }, { status: 400 });
@@ -47,24 +53,64 @@ export async function POST(request: Request) {
 
   const startFenKey = normalizeFen(fen);
 
-  let model: Awaited<ReturnType<typeof getOrBuildOpponentModel>>["model"];
-  let cache: Awaited<ReturnType<typeof getOrBuildOpponentModel>>["cache"];
-  try {
-    const res = await getOrBuildOpponentModel({
-      supabase,
-      profileId: user.id,
-      platform,
-      username,
-      maxGames,
+  const cache = { status: "db", max_games: 0, age_ms: 0, build_ms: 0 };
+
+  async function fetchMoves(params: {
+    fenKey: string;
+    isOpponentMove: boolean;
+  }): Promise<
+    Array<{ uci: string; san: string | null; played_count: number; win: number; loss: number; draw: number }>
+  > {
+    const { data, error } = await supabase.rpc("get_opponent_position_moves", {
+      in_platform: platform,
+      in_username: username,
+      in_fen: params.fenKey,
+      in_is_opponent_move: params.isOpponentMove,
+      in_speeds: speeds.length ? speeds : null,
+      in_rated: rated,
+      in_from: from ? new Date(from).toISOString() : null,
+      in_to: to ? new Date(to).toISOString() : null,
     });
-    model = res.model;
-    cache = res.cache;
-  } catch (e) {
-    const message = e instanceof Error ? e.message : "Failed to load opponent games";
-    return NextResponse.json({ error: message }, { status: 500 });
+
+    if (error) {
+      throw error;
+    }
+
+    const rows = Array.isArray(data) ? (data as any[]) : [];
+    return rows.map((m) => ({
+      uci: String(m?.uci ?? ""),
+      san: m?.san != null ? String(m.san) : null,
+      played_count: Number(m?.played_count ?? 0),
+      win: Number(m?.win ?? 0),
+      loss: Number(m?.loss ?? 0),
+      draw: Number(m?.draw ?? 0),
+    })).filter((m) => m.uci);
+  }
+
+  function pickMove(
+    moves: Array<{ uci: string; san: string | null; played_count: number; win: number; loss: number; draw: number }>
+  ) {
+    if (moves.length === 0) return null;
+    if (mode === "random") {
+      return moves[Math.floor(Math.random() * moves.length)] ?? null;
+    }
+    const total = moves.reduce((s, m) => s + m.played_count, 0);
+    if (total <= 0) return moves[0] ?? null;
+    let r = Math.random() * total;
+    for (const m of moves) {
+      r -= m.played_count;
+      if (r <= 0) return m;
+    }
+    return moves[moves.length - 1] ?? null;
   }
 
   if (prefetch) {
+    // Warm path: prime PostgREST / DB caches by issuing a cheap query.
+    try {
+      await fetchMoves({ fenKey: startFenKey, isOpponentMove: true });
+    } catch {
+      // ignore
+    }
     return NextResponse.json({
       cache,
       position: startFenKey,
@@ -81,45 +127,35 @@ export async function POST(request: Request) {
     });
   }
 
-  const options = getNextMoveOptions({ model, fen, maxDepth });
-  const picked = selectMove({ moves: options.opponent.moves, strategy: mode });
+  const [movesOpponent, movesAgainst] = await Promise.all([
+    fetchMoves({ fenKey: startFenKey, isOpponentMove: true }),
+    fetchMoves({ fenKey: startFenKey, isOpponentMove: false }),
+  ]);
+
+  const availableTotalCount = movesOpponent.reduce((s, m) => s + m.played_count, 0);
+  const availableAgainstTotalCount = movesAgainst.reduce((s, m) => s + m.played_count, 0);
+  const picked = pickMove(movesOpponent);
 
   return NextResponse.json({
     cache,
     position: startFenKey,
     mode,
-    available_count: options.opponent.moves.length,
-    available_total_count: options.opponent.totalCount,
-    available_against_count: options.againstOpponent.moves.length,
-    available_against_total_count: options.againstOpponent.totalCount,
-    depth_remaining: options.depthRemaining,
+    available_count: movesOpponent.length,
+    available_total_count: availableTotalCount,
+    available_against_count: movesAgainst.length,
+    available_against_total_count: availableAgainstTotalCount,
+    depth_remaining: 0,
     move: picked
       ? {
           uci: picked.uci,
-          san: picked.san ?? null,
-          played_count: picked.count,
-          win: picked.win,
-          loss: picked.loss,
-          draw: picked.draw,
+          san: (picked as any).san ?? null,
+          played_count: (picked as any).played_count ?? 0,
+          win: (picked as any).win ?? 0,
+          loss: (picked as any).loss ?? 0,
+          draw: (picked as any).draw ?? 0,
         }
       : null,
-    moves: options.opponent.moves.slice(0, 30)
-      .map((m) => ({
-        uci: m.uci,
-        san: m.san ?? null,
-        played_count: m.count,
-        win: m.win,
-        loss: m.loss,
-        draw: m.draw,
-      })),
-    moves_against: options.againstOpponent.moves.slice(0, 30)
-      .map((m) => ({
-        uci: m.uci,
-        san: m.san ?? null,
-        played_count: m.count,
-        win: m.win,
-        loss: m.loss,
-        draw: m.draw,
-      })),
+    moves: movesOpponent.slice(0, 30),
+    moves_against: movesAgainst.slice(0, 30),
   });
 }

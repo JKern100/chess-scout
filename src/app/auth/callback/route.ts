@@ -6,7 +6,7 @@ export async function GET(request: NextRequest) {
   const code = url.searchParams.get("code");
   const tokenHash = url.searchParams.get("token_hash");
   const type = url.searchParams.get("type");
-  const next = url.searchParams.get("next") ?? "/";
+  const next = url.searchParams.get("next") ?? "/dashboard";
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;

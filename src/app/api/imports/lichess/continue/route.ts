@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { fetchLichessGamesBatch } from "@/server/services/lichess";
+import { fetchLichessUserRatingsSnapshot } from "@/server/services/lichess";
+import { buildOpponentMoveEventsFromGame, upsertOpponentMoveEvents } from "@/server/openingTree";
 
 const BATCH_MAX = 200;
 
@@ -80,6 +82,31 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: updateErr.message }, { status: 500 });
       }
 
+      if (updated?.target_type === "opponent") {
+        try {
+          const ratings = await fetchLichessUserRatingsSnapshot({ username: updated.username });
+          await supabase.from("opponent_profiles").upsert(
+            {
+              profile_id: user.id,
+              platform: updated.platform,
+              username: updated.username,
+              ratings,
+              fetched_at: new Date().toISOString(),
+            },
+            { onConflict: "profile_id,platform,username" }
+          );
+        } catch {
+          // best-effort
+        }
+
+        await supabase
+          .from("opponents")
+          .update({ last_refreshed_at: new Date().toISOString() })
+          .eq("user_id", user.id)
+          .eq("platform", updated.platform)
+          .eq("username", updated.username);
+      }
+
       return NextResponse.json({ import: updated, batchCount: 0 });
     }
 
@@ -98,13 +125,32 @@ export async function POST(request: Request) {
         onConflict: "platform,platform_game_id",
         ignoreDuplicates: true,
       })
-      .select("id");
+      .select("platform_game_id, played_at, pgn");
 
     if (upsertErr) {
       throw upsertErr;
     }
 
     const insertedCount = upserted?.length ?? 0;
+
+    if (insertedCount > 0 && imp.target_type === "opponent") {
+      try {
+        const events = (upserted ?? []).flatMap((g: any) =>
+          buildOpponentMoveEventsFromGame({
+            profileId: user.id,
+            platform: "lichess",
+            username: imp.username,
+            platformGameId: String(g?.platform_game_id ?? ""),
+            playedAt: (g?.played_at as string | null) ?? null,
+            pgn: String(g?.pgn ?? ""),
+          })
+        );
+
+        await upsertOpponentMoveEvents({ supabase, rows: events });
+      } catch {
+        // best-effort
+      }
+    }
 
     const nextUntilMs = batch.oldestGameAtMs !== null ? batch.oldestGameAtMs - 1 : null;
 
@@ -141,6 +187,31 @@ export async function POST(request: Request) {
 
     if (updateErr) {
       return NextResponse.json({ error: updateErr.message }, { status: 500 });
+    }
+
+    if (updated?.status === "complete" && updated?.target_type === "opponent") {
+      try {
+        const ratings = await fetchLichessUserRatingsSnapshot({ username: updated.username });
+        await supabase.from("opponent_profiles").upsert(
+          {
+            profile_id: user.id,
+            platform: updated.platform,
+            username: updated.username,
+            ratings,
+            fetched_at: new Date().toISOString(),
+          },
+          { onConflict: "profile_id,platform,username" }
+        );
+      } catch {
+        // best-effort
+      }
+
+      await supabase
+        .from("opponents")
+        .update({ last_refreshed_at: new Date().toISOString() })
+        .eq("user_id", user.id)
+        .eq("platform", updated.platform)
+        .eq("username", updated.username);
     }
 
     return NextResponse.json({

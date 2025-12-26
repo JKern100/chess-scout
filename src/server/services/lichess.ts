@@ -5,6 +5,18 @@ type LichessGameJson = {
   pgn?: string;
 };
 
+type LichessUserPerfJson = {
+  rating?: number;
+  games?: number;
+  prov?: boolean;
+};
+
+type LichessUserProfileJson = {
+  id?: string;
+  username?: string;
+  perfs?: Record<string, LichessUserPerfJson | undefined>;
+};
+
 export type LichessFetchResult = {
   games: Array<{
     platformGameId: string;
@@ -81,4 +93,48 @@ export async function fetchLichessGamesBatch(params: {
     oldestGameAtMs: oldest,
     newestGameAtMs: newest,
   };
+}
+
+export type LichessRatingsSnapshot = Record<
+  string,
+  {
+    rating: number | null;
+    games: number | null;
+    prov: boolean | null;
+  }
+>;
+
+export async function fetchLichessUserRatingsSnapshot(params: {
+  username: string;
+}): Promise<LichessRatingsSnapshot> {
+  const { username } = params;
+
+  const url = new URL(`https://lichess.org/api/user/${encodeURIComponent(username)}`);
+
+  const res = await fetch(url.toString(), {
+    headers: {
+      accept: "application/json",
+    },
+    cache: "no-store",
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Lichess API error (${res.status}): ${text || res.statusText}`);
+  }
+
+  const json = (await res.json().catch(() => null)) as LichessUserProfileJson | null;
+  const perfs = json?.perfs ?? {};
+
+  const out: LichessRatingsSnapshot = {};
+  for (const [key, perf] of Object.entries(perfs)) {
+    if (!perf) continue;
+    out[key] = {
+      rating: typeof perf.rating === "number" ? perf.rating : null,
+      games: typeof perf.games === "number" ? perf.games : null,
+      prov: typeof perf.prov === "boolean" ? perf.prov : null,
+    };
+  }
+
+  return out;
 }

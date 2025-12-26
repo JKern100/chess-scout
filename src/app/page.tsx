@@ -2,6 +2,7 @@ import { AuthPanel } from "@/components/auth/AuthPanel";
 import { ImportPanel } from "@/components/imports/ImportPanel";
 import { ConnectAccountPanel } from "@/components/profile/ConnectAccountPanel";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { redirect } from "next/navigation";
 
 export default async function Home() {
   const supabase = await createSupabaseServerClient();
@@ -9,13 +10,11 @@ export default async function Home() {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const { data: profile } = user
-    ? await supabase
-        .from("profiles")
-        .select("id, chess_platform, chess_username, is_pro, analyses_remaining")
-        .eq("id", user.id)
-        .maybeSingle()
-    : { data: null };
+  if (user) {
+    redirect("/dashboard");
+  }
+
+  const { data: profile } = { data: null };
 
   return (
     <div className="min-h-screen bg-zinc-50">
@@ -38,7 +37,7 @@ export default async function Home() {
               Sign in with an email magic link.
             </div>
             <div className="mt-5">
-              <AuthPanel userEmail={user?.email} />
+              <AuthPanel />
             </div>
           </div>
 

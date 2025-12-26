@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { fetchLichessUserRatingsSnapshot } from "@/server/services/lichess";
 
 const DEFAULT_OPPONENT_TTL_DAYS = 14;
 
@@ -69,6 +70,22 @@ export async function POST(request: Request) {
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  try {
+    const ratings = await fetchLichessUserRatingsSnapshot({ username });
+    await supabase.from("opponent_profiles").upsert(
+      {
+        profile_id: user.id,
+        platform,
+        username,
+        ratings,
+        fetched_at: new Date().toISOString(),
+      },
+      { onConflict: "profile_id,platform,username" }
+    );
+  } catch {
+    // best-effort
   }
 
   return NextResponse.json({ import: importRow });
