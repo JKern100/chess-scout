@@ -26,6 +26,7 @@ export type ChessBoardCoreState = {
   undoPlies: (count: number) => void;
   redoPlies: (count: number) => void;
   loadGameFromFen: (fen: string) => Chess | null;
+  hydrateFromFenAndMoves: (startingFen: string, movesSan: string[]) => void;
 };
 
 type Props = {
@@ -189,6 +190,37 @@ export function ChessBoardCore({ initialFen, arrows, squareStyles, specialArrow,
     setRedoMoves([]);
   }
 
+  function hydrateFromFenAndMoves(startingFen: string, movesSan: string[]) {
+    setStatus(null);
+    const g = new Chess();
+    try {
+      g.load(startingFen);
+    } catch {
+      return;
+    }
+
+    const sanitized = Array.isArray(movesSan) ? movesSan.map((m) => String(m ?? "").trim()).filter((m) => m) : [];
+    const applied: string[] = [];
+    const fens: string[] = [g.fen()];
+
+    for (const san of sanitized) {
+      try {
+        const played = g.move(san, { sloppy: true } as any);
+        if (!played) break;
+        applied.push(String(played.san ?? san));
+        fens.push(g.fen());
+      } catch {
+        break;
+      }
+    }
+
+    setGame(g);
+    setFenHistory(fens);
+    setMoveHistory(applied);
+    setRedoFens([]);
+    setRedoMoves([]);
+  }
+
   function undoPlies(count: number) {
     setStatus(null);
     if (fenHistory.length <= 1) return;
@@ -305,6 +337,7 @@ export function ChessBoardCore({ initialFen, arrows, squareStyles, specialArrow,
     undoPlies,
     redoPlies,
     loadGameFromFen,
+    hydrateFromFenAndMoves,
   };
 
   const resolvedArrows = typeof arrows === "function" ? arrows(state) : (arrows ?? []);

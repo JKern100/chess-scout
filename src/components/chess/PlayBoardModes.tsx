@@ -2,6 +2,7 @@
 
 import { Chess } from "chess.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { getBestMoveForPlay, type EngineScore } from "@/lib/engine/engineService";
 import { AnalysisBoard } from "./AnalysisBoard";
 import { ChessBoardCore, type ChessBoardCoreState } from "./ChessBoardCore";
@@ -14,6 +15,57 @@ type Props = {
 type Mode = "simulation" | "analysis";
 
 type Strategy = "proportional" | "random";
+
+type SavedLine = {
+  id: string;
+  starting_fen: string;
+  moves_san: string[];
+  final_fen: string;
+  name: string;
+  notes: string | null;
+};
+
+function SavedLineHydrator(props: {
+  state: ChessBoardCoreState;
+  savedLineId: string;
+  enabled: boolean;
+  onLoaded: (name: string) => void;
+  onError: (msg: string) => void;
+}) {
+  const { state, savedLineId, enabled, onLoaded, onError } = props;
+  const lastAppliedIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!enabled) return;
+    if (lastAppliedIdRef.current === savedLineId) return;
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const res = await fetch(`/api/saved-lines?id=${encodeURIComponent(savedLineId)}`, { cache: "no-store" });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(String((json as any)?.error ?? "Failed to load saved line"));
+        const sl = (json as any)?.saved_line as SavedLine | undefined;
+        if (!sl || !sl.starting_fen) throw new Error("Saved line not found");
+        if (cancelled) return;
+
+        state.hydrateFromFenAndMoves(sl.starting_fen, Array.isArray(sl.moves_san) ? sl.moves_san : []);
+        lastAppliedIdRef.current = savedLineId;
+        onLoaded(sl.name);
+      } catch (e) {
+        if (cancelled) return;
+        lastAppliedIdRef.current = savedLineId;
+        onError(e instanceof Error ? e.message : "Failed to load saved line");
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, savedLineId, state, onLoaded, onError]);
+
+  return null;
+}
 
 type TimeControlCategory = "bullet" | "blitz" | "rapid" | "classical";
 
@@ -88,7 +140,11 @@ type Stats = {
 };
 
 export function PlayBoardModes({ initialFen }: Props) {
+  const searchParams = useSearchParams();
   const [mode, setMode] = useState<Mode>("simulation");
+
+  const savedLineId = searchParams.get("saved_line_id");
+  const modeParam = searchParams.get("mode");
 
   const [opponentUsername, setOpponentUsername] = useState<string>("");
   const [availableOpponents, setAvailableOpponents] = useState<Array<{ platform: string; username: string }>>([]);
@@ -108,6 +164,23 @@ export function PlayBoardModes({ initialFen }: Props) {
   const [simBusy, setSimBusy] = useState(false);
   const [opponentCommentary, setOpponentCommentary] = useState<string | null>(null);
 
+  const [savedLinePopup, setSavedLinePopup] = useState<{ savedLineId: string; message: string } | null>(null);
+  const [ackedSavedLineId, setAckedSavedLineId] = useState<string | null>(null);
+
+  const showSavedLinePopup = useCallback(
+    (message: string) => {
+      if (!savedLineId) return;
+      if (ackedSavedLineId === savedLineId) return;
+      setSavedLinePopup({ savedLineId, message });
+    },
+    [ackedSavedLineId, savedLineId]
+  );
+
+  const dismissSavedLinePopup = useCallback(() => {
+    setSavedLinePopup(null);
+    if (savedLineId) setAckedSavedLineId(savedLineId);
+  }, [savedLineId]);
+
   const [simWarmStatus, setSimWarmStatus] = useState<"idle" | "warming" | "warm" | "error">("idle");
   const [simWarmMeta, setSimWarmMeta] = useState<{ status: string; buildMs: number; maxGames: number } | null>(null);
   const [simError, setSimError] = useState<string | null>(null);
@@ -126,6 +199,12 @@ export function PlayBoardModes({ initialFen }: Props) {
       return () => window.clearTimeout(id);
     }
   }, [engineTakeover]);
+
+  useEffect(() => {
+    if (modeParam === "analysis" || modeParam === "simulation") {
+      setMode(modeParam);
+    }
+  }, [modeParam]);
 
   useEffect(() => {
     try {
@@ -790,6 +869,29 @@ export function PlayBoardModes({ initialFen }: Props) {
     </div>
   );
 
+  const underBoardWithToast = (
+    <div className="grid gap-3">
+      {savedLinePopup ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
+          <div className="w-full max-w-sm rounded-2xl border border-zinc-200 bg-white p-4 shadow-lg">
+            <div className="text-sm font-medium text-zinc-900">Saved line loaded</div>
+            <div className="mt-2 text-xs leading-5 text-zinc-700">{savedLinePopup.message}</div>
+            <div className="mt-4 flex justify-end">
+              <button
+                type="button"
+                onClick={dismissSavedLinePopup}
+                className="inline-flex h-9 items-center justify-center rounded-xl bg-zinc-900 px-4 text-xs font-medium text-white hover:bg-zinc-800"
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {underBoard}
+    </div>
+  );
+
   return (
     <ChessBoardCore
       initialFen={initialFen}
@@ -990,47 +1092,52 @@ export function PlayBoardModes({ initialFen }: Props) {
           seen.add(key);
           deduped.push(a);
         }
-
         return deduped;
       }}
+      underBoard={underBoardWithToast}
       onPieceDrop={onPieceDrop}
-      underBoard={underBoard}
     >
       {(state) => {
-        if (mode === "simulation") {
-          simMetaRef.current.turn = state.game.turn();
-          simMetaRef.current.isGameOver = state.isGameOver;
-          if (clocksEnabled && clockExpired && !state.isGameOver) {
-            state.setStatus("Time expired (training mode).");
-          }
-        }
+        const shouldHydrateSavedLine = Boolean(savedLineId && mode === "analysis");
+
         if (mode === "analysis") {
           return (
-            <AnalysisBoard
-              state={state}
-              opponentUsername={opponentUsername}
-              filtersKey={filtersKey}
-              requestOpponentMove={requestOpponentMove}
-              showArrow={analysisShowArrow}
-              setShowArrow={setAnalysisShowArrow}
-              showEval={analysisShowEval}
-              setShowEval={setAnalysisShowEval}
-              onEvalChange={setAnalysisEval}
-              showMoveTable={analysisShowMoveTable}
-              setShowMoveTable={setAnalysisShowMoveTable}
-              showEngineBest={analysisShowEngineBest}
-              setShowEngineBest={setAnalysisShowEngineBest}
-              engineBestMove={
-                analysisEngineBestUci
-                  ? { uci: analysisEngineBestUci, san: analysisEngineBestSan }
-                  : null
-              }
-              setEngineBestMove={handleSetEngineBestMove}
-              opponentStatsBusy={analysisStatsBusy}
-              opponentStats={analysisStats}
-              setOpponentStats={setAnalysisStats}
-              setOpponentStatsBusy={setAnalysisStatsBusy}
-            />
+            <>
+              {savedLineId ? (
+                <SavedLineHydrator
+                  state={state}
+                  savedLineId={savedLineId}
+                  enabled={shouldHydrateSavedLine}
+                  onLoaded={(name) => showSavedLinePopup(`Loaded from Saved Line: ${name}`)}
+                  onError={(msg) => showSavedLinePopup(msg)}
+                />
+              ) : null}
+              <AnalysisBoard
+                state={state}
+                opponentUsername={opponentUsername}
+                filtersKey={filtersKey}
+                requestOpponentMove={requestOpponentMove}
+                showArrow={analysisShowArrow}
+                setShowArrow={setAnalysisShowArrow}
+                showEval={analysisShowEval}
+                setShowEval={setAnalysisShowEval}
+                onEvalChange={setAnalysisEval}
+                showMoveTable={analysisShowMoveTable}
+                setShowMoveTable={setAnalysisShowMoveTable}
+                showEngineBest={analysisShowEngineBest}
+                setShowEngineBest={setAnalysisShowEngineBest}
+                engineBestMove={
+                  analysisEngineBestUci
+                    ? { uci: analysisEngineBestUci, san: analysisEngineBestSan }
+                    : null
+                }
+                setEngineBestMove={handleSetEngineBestMove}
+                opponentStatsBusy={analysisStatsBusy}
+                opponentStats={analysisStats}
+                setOpponentStats={setAnalysisStats}
+                setOpponentStatsBusy={setAnalysisStatsBusy}
+              />
+            </>
           );
         }
 

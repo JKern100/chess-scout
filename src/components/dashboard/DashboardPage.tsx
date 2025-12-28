@@ -513,8 +513,7 @@ export function DashboardPage({ initialOpponents }: Props) {
                             {savedLines.map((sl) => (
                               <div
                                 key={sl.id}
-                                className="flex items-start gap-3 rounded-lg border border-zinc-200 bg-zinc-50 p-2 opacity-70"
-                                title="Open line (coming soon)"
+                                className="flex items-start gap-3 rounded-lg border border-zinc-200 bg-zinc-50 p-2"
                               >
                                 <div className="w-[56px] shrink-0 overflow-hidden rounded-md border border-zinc-200 bg-white">
                                   <Chessboard
@@ -552,6 +551,14 @@ export function DashboardPage({ initialOpponents }: Props) {
                                       {sl.notes}
                                     </div>
                                   ) : null}
+                                  <div className="mt-2 flex items-center justify-end">
+                                    <Link
+                                      href={`/play?mode=analysis&saved_line_id=${encodeURIComponent(sl.id)}`}
+                                      className="inline-flex h-7 items-center justify-center rounded-lg bg-zinc-900 px-2.5 text-[10px] font-semibold text-white hover:bg-zinc-800"
+                                    >
+                                      Analyze
+                                    </Link>
+                                  </div>
                                 </div>
                               </div>
                             ))}

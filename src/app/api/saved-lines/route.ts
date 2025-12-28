@@ -46,8 +46,26 @@ export async function GET(request: Request) {
   }
 
   const url = new URL(request.url);
+  const id = url.searchParams.get("id");
   const opponent_platform_raw = url.searchParams.get("opponent_platform");
   const opponent_username_raw = url.searchParams.get("opponent_username");
+
+  if (id) {
+    const { data, error } = await supabase
+      .from("saved_lines")
+      .select(
+        "id, opponent_id, opponent_platform, opponent_username, mode, platform, starting_fen, moves_san, final_fen, name, notes, saved_at"
+      )
+      .eq("user_id", user.id)
+      .eq("id", id)
+      .single();
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json({ saved_line: data as unknown as SavedLineRow });
+  }
 
   const opponent_platform: ChessPlatform | null =
     opponent_platform_raw === "lichess"
