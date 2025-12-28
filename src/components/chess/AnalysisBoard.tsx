@@ -74,26 +74,11 @@ export function AnalysisBoard(props: Props) {
   const [engineMoveEval, setEngineMoveEval] = useState<Record<string, string>>({});
   const [moveTableTab, setMoveTableTab] = useState<"moves" | "tab2">("moves");
 
-  const [saveLineOpen, setSaveLineOpen] = useState(false);
-  const [saveLineName, setSaveLineName] = useState<string>("");
-  const [saveLineNotes, setSaveLineNotes] = useState<string>("");
-  const [saveLineBusy, setSaveLineBusy] = useState(false);
-  const [saveLineToast, setSaveLineToast] = useState<string | null>(null);
-
-  const allMoves = useMemo(() => {
-    return [...state.moveHistory, ...state.redoMoves];
-  }, [state.moveHistory, state.redoMoves]);
-
-  const selectedPly = state.moveHistory.length - 1;
-
-  function goToPly(ply: number) {
-    const targetLen = ply + 1;
-    const currentLen = state.moveHistory.length;
-    const delta = targetLen - currentLen;
-    if (delta === 0) return;
-    if (delta > 0) state.redoPlies(delta);
-    else state.undoPlies(-delta);
-  }
+  useEffect(() => {
+    if (!showArrow) return;
+    onEvalChange(null);
+    return;
+  }, [showArrow, onEvalChange]);
 
   useEffect(() => {
     if (!showEval) {
@@ -380,63 +365,6 @@ export function AnalysisBoard(props: Props) {
     if (showMoveTable) setMoveTableTab("moves");
   }, [showMoveTable]);
 
-  useEffect(() => {
-    if (!saveLineToast) return;
-    const t = window.setTimeout(() => setSaveLineToast(null), 2000);
-    return () => window.clearTimeout(t);
-  }, [saveLineToast]);
-
-  function buildDefaultLineName() {
-    const opp = opponentUsername.trim() ? opponentUsername.trim() : "Opponent";
-    const date = new Date();
-    const yyyy = date.getFullYear();
-    const mm = String(date.getMonth() + 1).padStart(2, "0");
-    const dd = String(date.getDate()).padStart(2, "0");
-    return `vs ${opp} — ${yyyy}-${mm}-${dd}`;
-  }
-
-  async function submitSaveLine() {
-    if (saveLineBusy) return;
-    const name = saveLineName.trim();
-    if (!name) return;
-
-    const startingFen = state.fenHistory[0] ?? new Chess().fen();
-    const movesSan = [...state.moveHistory];
-    const finalFen = state.fen;
-
-    setSaveLineBusy(true);
-    try {
-      const res = await fetch("/api/saved-lines", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          mode: "analysis",
-          platform: opponentUsername.trim() ? "lichess" : null,
-          opponent_platform: opponentUsername.trim() ? "lichess" : null,
-          opponent_username: opponentUsername.trim() ? opponentUsername.trim() : null,
-          starting_fen: startingFen,
-          moves_san: movesSan,
-          final_fen: finalFen,
-          name,
-          notes: saveLineNotes.trim() ? saveLineNotes : null,
-        }),
-      });
-
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        const msg = String((json as any)?.error ?? "Could not save line");
-        throw new Error(msg);
-      }
-
-      setSaveLineOpen(false);
-      setSaveLineToast("Line saved!");
-    } catch {
-      setSaveLineToast("Could not save line");
-    } finally {
-      setSaveLineBusy(false);
-    }
-  }
-
   function formatGameCount(value: number) {
     const n = Number(value);
     if (!Number.isFinite(n) || n <= 0) return "0";
@@ -598,13 +526,13 @@ export function AnalysisBoard(props: Props) {
                         <button
                           key={m.uci}
                           type="button"
-                          className={`grid ${showEngineColumn ? "grid-cols-[72px_68px_64px_1fr_44px]" : "grid-cols-[72px_68px_1fr_44px]"} items-center gap-2 rounded-lg px-1 py-0.5 text-left hover:bg-zinc-50 ${isEngine ? "ring-1 ring-violet-200" : ""}`}
+                          className={`grid ${showEngineColumn ? "grid-cols-[72px_68px_64px_1fr_44px]" : "grid-cols-[72px_68px_1fr_44px]"} items-center gap-2 rounded-lg px-1 py-0.5 text-left hover:bg-zinc-50 ${isEngine ? "ring-1 ring-emerald-200" : ""}`}
                           onClick={() => playTableMove(m.uci)}
                         >
                           <div className="flex items-center gap-2 text-[10px] font-medium text-zinc-900">
                             <span>{m.san ?? m.uci}</span>
                             {isEngine ? (
-                              <span className="rounded-md bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700">
+                              <span className="rounded-md bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">
                                 ENGINE
                               </span>
                             ) : null}
@@ -636,149 +564,6 @@ export function AnalysisBoard(props: Props) {
           </div>
         </div>
       ) : null}
-
-      {saveLineOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <button
-            type="button"
-            className="absolute inset-0 bg-black/40"
-            onClick={() => (saveLineBusy ? null : setSaveLineOpen(false))}
-            aria-label="Close save line dialog"
-          />
-          <div className="relative w-full max-w-lg rounded-2xl border border-zinc-200 bg-white p-4 shadow-xl">
-            <div className="text-sm font-medium text-zinc-900">Save Line</div>
-
-            <div className="mt-3 grid gap-3">
-              <div className="grid gap-1">
-                <label className="text-[10px] font-medium text-zinc-900">Line name</label>
-                <input
-                  className="h-9 rounded-xl border border-zinc-200 bg-white px-3 text-[10px] text-zinc-900 outline-none focus:border-zinc-400"
-                  value={saveLineName}
-                  onChange={(e) => setSaveLineName(e.target.value)}
-                  placeholder="Line name"
-                />
-              </div>
-
-              <div className="grid gap-1">
-                <label className="text-[10px] font-medium text-zinc-900">Notes</label>
-                <textarea
-                  className="min-h-24 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-[10px] text-zinc-900 outline-none focus:border-zinc-400"
-                  value={saveLineNotes}
-                  onChange={(e) => setSaveLineNotes(e.target.value)}
-                  placeholder="Optional notes"
-                />
-              </div>
-            </div>
-
-            <div className="mt-4 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                className="inline-flex h-9 items-center justify-center rounded-xl border border-zinc-200 bg-white px-3 text-[10px] font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
-                onClick={() => setSaveLineOpen(false)}
-                disabled={saveLineBusy}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="inline-flex h-9 items-center justify-center rounded-xl bg-zinc-900 px-3 text-[10px] font-medium text-white hover:bg-zinc-800 disabled:opacity-60"
-                onClick={() => void submitSaveLine()}
-                disabled={saveLineBusy || !saveLineName.trim()}
-              >
-                {saveLineBusy ? "Saving…" : "Save"}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
-        <div className="text-[10px] font-medium text-zinc-900">Moves so Far</div>
-        <div className="mt-2 grid gap-2 text-[10px] text-zinc-700">
-          <div className="flex items-center justify-between">
-            <button
-              type="button"
-              className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-2 py-1 text-[10px] font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
-              disabled={state.moveHistory.length === 0}
-              onClick={() => state.undoPlies(1)}
-            >
-              Prev
-            </button>
-            <button
-              type="button"
-              className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-2 py-1 text-[10px] font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
-              disabled={state.redoMoves.length === 0}
-              onClick={() => state.redoPlies(1)}
-            >
-              Next
-            </button>
-          </div>
-
-          {allMoves.length ? (
-            <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
-              <div className="grid grid-cols-[44px_1fr_1fr] bg-zinc-50 text-[10px] font-medium text-zinc-500">
-                <div className="px-2 py-1">#</div>
-                <div className="px-2 py-1">White</div>
-                <div className="px-2 py-1">Black</div>
-              </div>
-
-              {Array.from({ length: Math.ceil(allMoves.length / 2) }).map((_, rowIdx) => {
-                const whitePly = rowIdx * 2;
-                const blackPly = rowIdx * 2 + 1;
-                const whiteMove = allMoves[whitePly] ?? null;
-                const blackMove = allMoves[blackPly] ?? null;
-
-                const whiteSelected = selectedPly === whitePly;
-                const blackSelected = selectedPly === blackPly;
-
-                return (
-                  <div key={rowIdx} className="grid grid-cols-[44px_1fr_1fr] border-t border-zinc-200">
-                    <div className="px-2 py-1 text-zinc-500">{rowIdx + 1}.</div>
-                    <button
-                      type="button"
-                      className={`px-2 py-1 text-left font-medium ${
-                        whiteSelected ? "bg-sky-100 text-sky-900" : "hover:bg-zinc-50"
-                      }`}
-                      disabled={!whiteMove}
-                      onClick={() => (whiteMove ? goToPly(whitePly) : null)}
-                    >
-                      {whiteMove ?? ""}
-                    </button>
-                    <button
-                      type="button"
-                      className={`px-2 py-1 text-left font-medium ${
-                        blackSelected ? "bg-sky-100 text-sky-900" : "hover:bg-zinc-50"
-                      }`}
-                      disabled={!blackMove}
-                      onClick={() => (blackMove ? goToPly(blackPly) : null)}
-                    >
-                      {blackMove ?? ""}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="text-zinc-600">No moves yet.</div>
-          )}
-
-          <div className="mt-2 flex items-center justify-between gap-2">
-            <button
-              type="button"
-              className="inline-flex h-9 items-center justify-center rounded-xl border border-zinc-200 bg-white px-3 text-[10px] font-medium text-zinc-900 hover:bg-zinc-50"
-              onClick={() => {
-                setSaveLineName(buildDefaultLineName());
-                setSaveLineNotes("");
-                setSaveLineOpen(true);
-              }}
-            >
-              Save Line
-            </button>
-
-            {saveLineToast ? <div className="text-[10px] text-zinc-600">{saveLineToast}</div> : null}
-          </div>
-        </div>
-      </div>
     </div>
   );
 }

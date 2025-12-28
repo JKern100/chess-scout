@@ -36,6 +36,7 @@ type Props = {
   specialArrow?:
     | { startSquare: string; endSquare: string; intensity?: number }
     | ((state: ChessBoardCoreState) => { startSquare: string; endSquare: string; intensity?: number } | null);
+  leftPanel?: React.ReactNode | ((state: ChessBoardCoreState) => React.ReactNode);
   aboveBoard?: React.ReactNode | ((state: ChessBoardCoreState) => React.ReactNode);
   belowBoard?: React.ReactNode | ((state: ChessBoardCoreState) => React.ReactNode);
   onPieceDrop: (args: any, state: ChessBoardCoreState) => boolean;
@@ -45,7 +46,7 @@ type Props = {
 
 const PLAYER_SIDE_STORAGE_KEY = "chessscout_player_side";
 
-export function ChessBoardCore({ initialFen, arrows, squareStyles, specialArrow, aboveBoard, belowBoard, onPieceDrop, underBoard, children }: Props) {
+export function ChessBoardCore({ initialFen, arrows, squareStyles, specialArrow, leftPanel, aboveBoard, belowBoard, onPieceDrop, underBoard, children }: Props) {
   const initialGame = useMemo(() => {
     const g = new Chess();
     if (initialFen) {
@@ -344,6 +345,7 @@ export function ChessBoardCore({ initialFen, arrows, squareStyles, specialArrow,
   const resolvedSquareStyles = typeof squareStyles === "function" ? squareStyles(state) : (squareStyles ?? {});
   const resolvedSpecialArrow =
     typeof specialArrow === "function" ? specialArrow(state) : (specialArrow ?? null);
+  const resolvedLeftPanel = typeof leftPanel === "function" ? leftPanel(state) : (leftPanel ?? null);
   const resolvedAboveBoard = typeof aboveBoard === "function" ? aboveBoard(state) : (aboveBoard ?? null);
   const resolvedBelowBoard = typeof belowBoard === "function" ? belowBoard(state) : (belowBoard ?? null);
 
@@ -363,7 +365,8 @@ export function ChessBoardCore({ initialFen, arrows, squareStyles, specialArrow,
   const glowSoft = (0.30 + specialIntensity * 0.30).toFixed(3);
 
   return (
-    <div className="grid gap-7 md:grid-cols-[420px_1fr]">
+    <div className="grid gap-7 md:grid-cols-[420px_1fr] xl:grid-cols-[260px_420px_1fr]">
+      <div className="hidden xl:flex xl:flex-col xl:gap-4">{resolvedLeftPanel}</div>
       <div className="flex flex-col gap-3">
         {resolvedAboveBoard ? <div>{resolvedAboveBoard}</div> : null}
         <div
@@ -419,6 +422,8 @@ export function ChessBoardCore({ initialFen, arrows, squareStyles, specialArrow,
         </div>
 
         {resolvedBelowBoard ? <div>{resolvedBelowBoard}</div> : null}
+
+        {resolvedLeftPanel ? <div className="grid gap-4 xl:hidden">{resolvedLeftPanel}</div> : null}
 
         {underBoard}
       </div>
