@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
+import { Chessboard } from "react-chessboard";
 
 type ChessPlatform = "lichess" | "chesscom";
 
@@ -11,6 +12,21 @@ type OpponentRow = {
   created_at: string;
   last_refreshed_at: string | null;
   games_count?: number;
+};
+
+type SavedLineRow = {
+  id: string;
+  opponent_id: string | null;
+  opponent_platform: ChessPlatform | null;
+  opponent_username: string | null;
+  mode: "simulation" | "analysis";
+  platform: ChessPlatform | null;
+  starting_fen: string;
+  moves_san: string[];
+  final_fen: string;
+  name: string;
+  notes: string | null;
+  saved_at: string;
 };
 
 type Props = {
@@ -31,10 +47,27 @@ function formatRelative(iso: string) {
   return `${day}d ago`;
 }
 
+function formatSavedLineDate(iso: string) {
+  const ts = new Date(iso).getTime();
+  if (!Number.isFinite(ts)) return "";
+  const day = Math.floor((Date.now() - ts) / (1000 * 60 * 60 * 24));
+  if (day >= 0 && day <= 7) return formatRelative(iso);
+  const d = new Date(ts);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 export function DashboardPage({ initialOpponents }: Props) {
   const [opponents, setOpponents] = useState<OpponentRow[]>(initialOpponents);
   const [status, setStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  const [savedLinesOpen, setSavedLinesOpen] = useState<Record<string, boolean>>({});
+  const [savedLinesByOpponent, setSavedLinesByOpponent] = useState<Record<string, SavedLineRow[]>>({});
+  const [savedLinesBusy, setSavedLinesBusy] = useState<Record<string, boolean>>({});
+  const [savedLinesError, setSavedLinesError] = useState<Record<string, string | null>>({});
 
   const [platform, setPlatform] = useState<ChessPlatform>("lichess");
   const [username, setUsername] = useState<string>("");
@@ -351,75 +384,180 @@ export function DashboardPage({ initialOpponents }: Props) {
                   activeImport.platform === latest.platform &&
                   activeImport.username.toLowerCase() === latest.username.toLowerCase()
               );
-              return (
-                <div
-                  key={key}
-                  className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-200 bg-white px-4 py-3"
-                >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-semibold text-zinc-700">
-                        {latest.platform === "lichess" ? "Lichess" : "Chess.com"}
-                      </span>
-                      <div className="truncate text-sm font-medium text-zinc-900">{latest.username}</div>
-                    </div>
-                    <div className="mt-1 text-xs text-zinc-600">
-                      Records: {typeof latest.games_count === "number" ? latest.games_count : 0} · Last refreshed:{" "}
-                      {latest.last_refreshed_at ? formatRelative(latest.last_refreshed_at) : "never"}
-                    </div>
-                    {isActive ? (
-                      <div className="mt-1 text-xs font-medium text-zinc-700">
-                        Importing · imported: {activeImport?.importedCount ?? 0}
-                      </div>
-                    ) : null}
-                  </div>
 
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      className="inline-flex h-9 items-center justify-center rounded-lg bg-zinc-900 px-3 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-60"
-                      disabled={loading}
-                      onClick={() => prepare(latest)}
-                    >
-                      Prepare
-                    </button>
-                    <button
-                      type="button"
-                      className="inline-flex h-9 items-center justify-center rounded-lg border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
-                      disabled={loading}
-                      onClick={() => void startRefresh(latest)}
-                      title={latest.platform !== "lichess" ? "Chess.com refresh coming soon" : undefined}
-                    >
-                      Refresh
-                    </button>
-                    <button
-                      type="button"
-                      className="inline-flex h-9 items-center justify-center rounded-lg border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
-                      disabled={loading || isActive}
-                      onClick={() => void deleteOpponent(latest)}
-                      title={isActive ? "Stop import before deleting" : undefined}
-                    >
-                      Delete
-                    </button>
-                    {isActive ? (
+              const isSavedOpen = Boolean(savedLinesOpen[key]);
+              const savedLines = savedLinesByOpponent[key] ?? null;
+              const isSavedBusy = Boolean(savedLinesBusy[key]);
+              const savedErr = savedLinesError[key] ?? null;
+
+              async function toggleSavedLines() {
+                const next = !Boolean(savedLinesOpen[key]);
+                setSavedLinesOpen((prev) => ({ ...prev, [key]: next }));
+                if (!next) return;
+                if (savedLinesByOpponent[key]) return;
+
+                setSavedLinesBusy((prev) => ({ ...prev, [key]: true }));
+                setSavedLinesError((prev) => ({ ...prev, [key]: null }));
+                try {
+                  const qs = new URLSearchParams({
+                    opponent_platform: latest.platform,
+                    opponent_username: latest.username,
+                  });
+                  const res = await fetch(`/api/saved-lines?${qs.toString()}`, { cache: "no-store" });
+                  const json = await res.json().catch(() => ({}));
+                  if (!res.ok) throw new Error(String((json as any)?.error ?? "Failed to load saved lines"));
+                  const lines = Array.isArray((json as any)?.saved_lines)
+                    ? ((json as any).saved_lines as SavedLineRow[])
+                    : [];
+                  setSavedLinesByOpponent((prev) => ({ ...prev, [key]: lines }));
+                } catch (e) {
+                  setSavedLinesError((prev) => ({ ...prev, [key]: e instanceof Error ? e.message : "Failed to load" }));
+                } finally {
+                  setSavedLinesBusy((prev) => ({ ...prev, [key]: false }));
+                }
+              }
+
+              return (
+                <div key={key} className="rounded-xl border border-zinc-200 bg-white px-4 py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-semibold text-zinc-700">
+                          {latest.platform === "lichess" ? "Lichess" : "Chess.com"}
+                        </span>
+                        <div className="truncate text-sm font-medium text-zinc-900">{latest.username}</div>
+                      </div>
+                      <div className="mt-1 text-xs text-zinc-600">
+                        Records: {typeof latest.games_count === "number" ? latest.games_count : 0} · Last refreshed:{" "}
+                        {latest.last_refreshed_at ? formatRelative(latest.last_refreshed_at) : "never"}
+                      </div>
+                      {isActive ? (
+                        <div className="mt-1 text-xs font-medium text-zinc-700">
+                          Importing · imported: {activeImport?.importedCount ?? 0}
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        className="inline-flex h-9 items-center justify-center rounded-lg bg-zinc-900 px-3 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-60"
+                        disabled={loading}
+                        onClick={() => prepare(latest)}
+                      >
+                        Prepare
+                      </button>
                       <button
                         type="button"
                         className="inline-flex h-9 items-center justify-center rounded-lg border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
-                        disabled={loading === false}
-                        onClick={() =>
-                          activeImport
-                            ? void stopImport(activeImport.id)
-                                .then(() => {
-                                  setStatus("Stopping import...");
-                                })
-                                .catch((e) => {
-                                  setStatus(e instanceof Error ? e.message : "Failed to stop import");
-                                })
-                            : null
-                        }
+                        disabled={loading}
+                        onClick={() => void startRefresh(latest)}
+                        title={latest.platform !== "lichess" ? "Chess.com refresh coming soon" : undefined}
                       >
-                        Stop
+                        Refresh
                       </button>
+                      <button
+                        type="button"
+                        className="inline-flex h-9 items-center justify-center rounded-lg border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
+                        disabled={loading || isActive}
+                        onClick={() => void deleteOpponent(latest)}
+                        title={isActive ? "Stop import before deleting" : undefined}
+                      >
+                        Delete
+                      </button>
+                      {isActive ? (
+                        <button
+                          type="button"
+                          className="inline-flex h-9 items-center justify-center rounded-lg border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
+                          disabled={loading === false}
+                          onClick={() =>
+                            activeImport
+                              ? void stopImport(activeImport.id)
+                                  .then(() => {
+                                    setStatus("Stopping import...");
+                                  })
+                                  .catch((e) => {
+                                    setStatus(e instanceof Error ? e.message : "Failed to stop import");
+                                  })
+                              : null
+                          }
+                        >
+                          Stop
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  <div className="mt-3 border-t border-zinc-100 pt-3">
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-2 text-xs font-medium text-zinc-900"
+                      onClick={() => void toggleSavedLines()}
+                    >
+                      <span className="rounded-md bg-zinc-100 px-2 py-1 text-xs font-semibold text-zinc-700">
+                        Saved Lines
+                      </span>
+                      <span className="text-zinc-500">{isSavedOpen ? "Hide" : "Show"}</span>
+                    </button>
+
+                    {isSavedOpen ? (
+                      <div className="mt-3 grid gap-2">
+                        {isSavedBusy ? (
+                          <div className="text-xs text-zinc-600">Loading…</div>
+                        ) : savedErr ? (
+                          <div className="text-xs text-zinc-600">{savedErr}</div>
+                        ) : savedLines && savedLines.length === 0 ? (
+                          <div className="text-xs text-zinc-600">No saved lines yet.</div>
+                        ) : savedLines ? (
+                          <div className="grid gap-2">
+                            {savedLines.map((sl) => (
+                              <div
+                                key={sl.id}
+                                className="flex items-start gap-3 rounded-lg border border-zinc-200 bg-zinc-50 p-2 opacity-70"
+                                title="Open line (coming soon)"
+                              >
+                                <div className="w-[56px] shrink-0 overflow-hidden rounded-md border border-zinc-200 bg-white">
+                                  <Chessboard
+                                    options={{
+                                      position: sl.final_fen,
+                                      allowDrawingArrows: false,
+                                      showNotation: false,
+                                      boardOrientation: "white",
+                                      animationDurationInMs: 0,
+                                      boardStyle: {
+                                        width: 56,
+                                        height: 56,
+                                        display: "grid",
+                                        gridTemplateColumns: "repeat(8, 7px)",
+                                        gridTemplateRows: "repeat(8, 7px)",
+                                        gap: 0,
+                                        lineHeight: 0,
+                                        borderRadius: 0,
+                                      },
+                                      squareStyle: {
+                                        width: 7,
+                                        height: 7,
+                                        lineHeight: 0,
+                                      },
+                                    }}
+                                  />
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-baseline justify-between gap-2">
+                                    <div className="truncate text-xs font-medium text-zinc-900">{sl.name}</div>
+                                    <div className="shrink-0 text-[10px] text-zinc-500">{formatSavedLineDate(sl.saved_at)}</div>
+                                  </div>
+                                  {sl.notes ? (
+                                    <div className="mt-1 text-xs text-zinc-600 line-clamp-2">
+                                      {sl.notes}
+                                    </div>
+                                  ) : null}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
                     ) : null}
                   </div>
                 </div>

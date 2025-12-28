@@ -412,6 +412,8 @@ export function AnalysisBoard(props: Props) {
         body: JSON.stringify({
           mode: "analysis",
           platform: opponentUsername.trim() ? "lichess" : null,
+          opponent_platform: opponentUsername.trim() ? "lichess" : null,
+          opponent_username: opponentUsername.trim() ? opponentUsername.trim() : null,
           starting_fen: startingFen,
           moves_san: movesSan,
           final_fen: finalFen,
