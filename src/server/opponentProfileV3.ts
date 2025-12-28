@@ -31,6 +31,7 @@ export type V3EntryPoint = {
   decisive_move_san: string | null;
   decisive_move_annotated: string | null;
   avg_move_number: number | null;
+  decisive_move_pct: number | null;
   threshold: number;
 };
 
@@ -251,7 +252,7 @@ function computeEntryPoint(params: {
   thresholdPct: number;
   maxPly: number;
   startPly: number;
-}): { decisivePly: number | null; decisiveSan: string | null; avgMoveNumber: number | null } {
+}): { decisivePly: number | null; decisiveSan: string | null; avgMoveNumber: number | null; decisivePct: number | null } {
   const threshold = params.thresholdPct;
 
   for (let ply = params.startPly; ply <= params.maxPly; ply += 1) {
@@ -280,11 +281,11 @@ function computeEntryPoint(params: {
     const bestPct = pct(bestCount, total);
     if (bestMove && bestPct >= threshold) {
       const moveNum = Math.ceil(ply / 2);
-      return { decisivePly: ply, decisiveSan: bestMove, avgMoveNumber: moveNum };
+      return { decisivePly: ply, decisiveSan: bestMove, avgMoveNumber: moveNum, decisivePct: bestPct };
     }
   }
 
-  return { decisivePly: null, decisiveSan: null, avgMoveNumber: null };
+  return { decisivePly: null, decisiveSan: null, avgMoveNumber: null, decisivePct: null };
 }
 
 function computeDeviationHabit(params: {
@@ -486,6 +487,7 @@ function buildContext(params: {
     decisive_move_san: entry.decisiveSan,
     decisive_move_annotated: entry.decisivePly && entry.decisiveSan ? annotateMove(entry.decisivePly, entry.decisiveSan) : null,
     avg_move_number: entry.avgMoveNumber,
+    decisive_move_pct: entry.decisivePct == null ? null : Math.round(entry.decisivePct * 10) / 10,
     threshold: params.entryThresholdPct / 100,
   };
 

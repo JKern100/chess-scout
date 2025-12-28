@@ -95,6 +95,7 @@ type OpponentProfileV2 = {
           decisive_move_san: string | null;
           decisive_move_annotated: string | null;
           avg_move_number: number | null;
+          decisive_move_pct: number | null;
           threshold: number;
         };
         deviation_habit: {
@@ -111,6 +112,7 @@ type OpponentProfileV2 = {
           decisive_move_san: string | null;
           decisive_move_annotated: string | null;
           avg_move_number: number | null;
+          decisive_move_pct: number | null;
           threshold: number;
         };
         deviation_habit: {
@@ -127,6 +129,7 @@ type OpponentProfileV2 = {
           decisive_move_san: string | null;
           decisive_move_annotated: string | null;
           avg_move_number: number | null;
+          decisive_move_pct: number | null;
           threshold: number;
         };
         deviation_habit: {
@@ -477,7 +480,10 @@ export function OpponentProfileClient({ platform, username }: Props) {
                           <div className="mt-1">
                             {ctx.entry_point.decisive_move_annotated ? (
                               <span className="font-medium text-zinc-900">
-                                {ctx.entry_point.decisive_move_annotated} ({Math.round(ctx.entry_point.threshold * 100)}%)
+                                {ctx.entry_point.decisive_move_annotated}
+                                {typeof ctx.entry_point.decisive_move_pct === "number"
+                                  ? ` (${ctx.entry_point.decisive_move_pct.toFixed(0)}%)`
+                                  : ""}
                               </span>
                             ) : (
                               <span className="text-zinc-600">No clear commitment ≤ move 5.</span>
