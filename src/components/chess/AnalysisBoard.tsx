@@ -74,6 +74,12 @@ export function AnalysisBoard(props: Props) {
   const [engineMoveEval, setEngineMoveEval] = useState<Record<string, string>>({});
   const [moveTableTab, setMoveTableTab] = useState<"moves" | "tab2">("moves");
 
+  const [saveLineOpen, setSaveLineOpen] = useState(false);
+  const [saveLineName, setSaveLineName] = useState<string>("");
+  const [saveLineNotes, setSaveLineNotes] = useState<string>("");
+  const [saveLineBusy, setSaveLineBusy] = useState(false);
+  const [saveLineToast, setSaveLineToast] = useState<string | null>(null);
+
   const allMoves = useMemo(() => {
     return [...state.moveHistory, ...state.redoMoves];
   }, [state.moveHistory, state.redoMoves]);
@@ -374,6 +380,61 @@ export function AnalysisBoard(props: Props) {
     if (showMoveTable) setMoveTableTab("moves");
   }, [showMoveTable]);
 
+  useEffect(() => {
+    if (!saveLineToast) return;
+    const t = window.setTimeout(() => setSaveLineToast(null), 2000);
+    return () => window.clearTimeout(t);
+  }, [saveLineToast]);
+
+  function buildDefaultLineName() {
+    const opp = opponentUsername.trim() ? opponentUsername.trim() : "Opponent";
+    const date = new Date();
+    const yyyy = date.getFullYear();
+    const mm = String(date.getMonth() + 1).padStart(2, "0");
+    const dd = String(date.getDate()).padStart(2, "0");
+    return `vs ${opp} — ${yyyy}-${mm}-${dd}`;
+  }
+
+  async function submitSaveLine() {
+    if (saveLineBusy) return;
+    const name = saveLineName.trim();
+    if (!name) return;
+
+    const startingFen = state.fenHistory[0] ?? new Chess().fen();
+    const movesSan = [...state.moveHistory];
+    const finalFen = state.fen;
+
+    setSaveLineBusy(true);
+    try {
+      const res = await fetch("/api/saved-lines", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          mode: "analysis",
+          platform: opponentUsername.trim() ? "lichess" : null,
+          starting_fen: startingFen,
+          moves_san: movesSan,
+          final_fen: finalFen,
+          name,
+          notes: saveLineNotes.trim() ? saveLineNotes : null,
+        }),
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg = String((json as any)?.error ?? "Could not save line");
+        throw new Error(msg);
+      }
+
+      setSaveLineOpen(false);
+      setSaveLineToast("Line saved!");
+    } catch {
+      setSaveLineToast("Could not save line");
+    } finally {
+      setSaveLineBusy(false);
+    }
+  }
+
   function formatGameCount(value: number) {
     const n = Number(value);
     if (!Number.isFinite(n) || n <= 0) return "0";
@@ -574,6 +635,61 @@ export function AnalysisBoard(props: Props) {
         </div>
       ) : null}
 
+      {saveLineOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/40"
+            onClick={() => (saveLineBusy ? null : setSaveLineOpen(false))}
+            aria-label="Close save line dialog"
+          />
+          <div className="relative w-full max-w-lg rounded-2xl border border-zinc-200 bg-white p-4 shadow-xl">
+            <div className="text-sm font-medium text-zinc-900">Save Line</div>
+
+            <div className="mt-3 grid gap-3">
+              <div className="grid gap-1">
+                <label className="text-[10px] font-medium text-zinc-900">Line name</label>
+                <input
+                  className="h-9 rounded-xl border border-zinc-200 bg-white px-3 text-[10px] text-zinc-900 outline-none focus:border-zinc-400"
+                  value={saveLineName}
+                  onChange={(e) => setSaveLineName(e.target.value)}
+                  placeholder="Line name"
+                />
+              </div>
+
+              <div className="grid gap-1">
+                <label className="text-[10px] font-medium text-zinc-900">Notes</label>
+                <textarea
+                  className="min-h-24 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-[10px] text-zinc-900 outline-none focus:border-zinc-400"
+                  value={saveLineNotes}
+                  onChange={(e) => setSaveLineNotes(e.target.value)}
+                  placeholder="Optional notes"
+                />
+              </div>
+            </div>
+
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                className="inline-flex h-9 items-center justify-center rounded-xl border border-zinc-200 bg-white px-3 text-[10px] font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
+                onClick={() => setSaveLineOpen(false)}
+                disabled={saveLineBusy}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="inline-flex h-9 items-center justify-center rounded-xl bg-zinc-900 px-3 text-[10px] font-medium text-white hover:bg-zinc-800 disabled:opacity-60"
+                onClick={() => void submitSaveLine()}
+                disabled={saveLineBusy || !saveLineName.trim()}
+              >
+                {saveLineBusy ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
         <div className="text-[10px] font-medium text-zinc-900">Moves</div>
         <div className="mt-2 grid gap-2 text-[10px] text-zinc-700">
@@ -643,6 +759,22 @@ export function AnalysisBoard(props: Props) {
           ) : (
             <div className="text-zinc-600">No moves yet.</div>
           )}
+
+          <div className="mt-2 flex items-center justify-between gap-2">
+            <button
+              type="button"
+              className="inline-flex h-9 items-center justify-center rounded-xl border border-zinc-200 bg-white px-3 text-[10px] font-medium text-zinc-900 hover:bg-zinc-50"
+              onClick={() => {
+                setSaveLineName(buildDefaultLineName());
+                setSaveLineNotes("");
+                setSaveLineOpen(true);
+              }}
+            >
+              Save Line
+            </button>
+
+            {saveLineToast ? <div className="text-[10px] text-zinc-600">{saveLineToast}</div> : null}
+          </div>
         </div>
       </div>
     </div>
