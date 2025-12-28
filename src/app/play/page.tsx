@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { PlayBoardModes } from "@/components/chess/PlayBoardModes";
+import { PlayModeToggle } from "@/components/chess/PlayModeToggle";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 
@@ -25,7 +26,9 @@ export default async function PlayPage() {
                   v1.0
                 </span>
               </div>
-              <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">Play</h1>
+              <div className="mt-3">
+                <PlayModeToggle />
+              </div>
             </div>
             <Link
               href="/dashboard"
