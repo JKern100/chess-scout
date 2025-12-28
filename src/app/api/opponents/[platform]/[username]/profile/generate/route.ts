@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { buildOpponentProfile, type ChessPlatform, type LichessSpeed } from "@/server/opponentProfile";
+import { buildOpponentProfileV2, type ChessPlatform, type LichessSpeed } from "@/server/opponentProfileV2";
+
+export const runtime = "nodejs";
 
 type Params = {
   platform: string;
@@ -48,7 +50,7 @@ export async function POST(request: Request, context: { params: Promise<Params> 
   const from = typeof body?.from === "string" ? String(body.from) : null;
   const to = typeof body?.to === "string" ? String(body.to) : null;
 
-  const { profile, filtersUsed } = await buildOpponentProfile({
+  const { profile, filtersUsed } = await buildOpponentProfileV2({
     supabase,
     profileId: user.id,
     platform,
@@ -64,24 +66,38 @@ export async function POST(request: Request, context: { params: Promise<Params> 
         platform,
         username,
         filters_json: filtersUsed,
-        stats_json: profile,
+        profile_version: 2,
+        profile_json: profile,
+        stats_json: null,
         games_analyzed: profile.games_analyzed,
         generated_at: profile.generated_at,
+        date_range_start: profile.date_range_start,
+        date_range_end: profile.date_range_end,
+        source_game_ids_hash: profile.source_game_ids_hash,
         updated_at: new Date().toISOString(),
       },
       { onConflict: "profile_id,platform,username" }
     )
-    .select("id, profile_id, platform, username, ratings, fetched_at, filters_json, stats_json, games_analyzed, generated_at, created_at, updated_at")
+    .select(
+      "id, profile_id, platform, username, ratings, fetched_at, filters_json, profile_version, profile_json, stats_json, games_analyzed, generated_at, date_range_start, date_range_end, source_game_ids_hash, created_at, updated_at"
+    )
     .single();
 
   if (error) {
     const msg = String(error.message || "");
     const missingColumn =
-      msg.includes("filters_json") || msg.includes("stats_json") || msg.includes("games_analyzed") || msg.includes("generated_at");
+      msg.includes("filters_json") ||
+      msg.includes("profile_version") ||
+      msg.includes("profile_json") ||
+      msg.includes("games_analyzed") ||
+      msg.includes("generated_at") ||
+      msg.includes("date_range_start") ||
+      msg.includes("date_range_end") ||
+      msg.includes("source_game_ids_hash");
     if (missingColumn) {
       return NextResponse.json(
         {
-          error: "Opponent profile schema is missing v1 columns. Run scripts/supabase_opponent_profiles.sql in Supabase SQL editor.",
+          error: "Opponent profile schema is missing v2 columns. Run scripts/supabase_opponent_profiles.sql in Supabase SQL editor.",
           needs_migration: true,
           details: error.message,
         },

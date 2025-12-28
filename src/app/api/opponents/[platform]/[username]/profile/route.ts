@@ -32,7 +32,7 @@ export async function GET(_request: Request, context: { params: Promise<Params> 
   }
 
   const fullSelect =
-    "id, profile_id, platform, username, ratings, fetched_at, filters_json, stats_json, games_analyzed, generated_at, created_at, updated_at";
+    "id, profile_id, platform, username, ratings, fetched_at, filters_json, profile_version, profile_json, stats_json, games_analyzed, generated_at, date_range_start, date_range_end, source_game_ids_hash, created_at, updated_at";
   const baseSelect = "id, profile_id, platform, username, ratings, fetched_at, created_at, updated_at";
 
   const { data, error } = await supabase
@@ -45,7 +45,16 @@ export async function GET(_request: Request, context: { params: Promise<Params> 
 
   if (error) {
     const msg = String(error.message || "");
-    const missingColumn = msg.includes("filters_json") || msg.includes("stats_json") || msg.includes("games_analyzed") || msg.includes("generated_at");
+    const missingColumn =
+      msg.includes("filters_json") ||
+      msg.includes("profile_version") ||
+      msg.includes("profile_json") ||
+      msg.includes("stats_json") ||
+      msg.includes("games_analyzed") ||
+      msg.includes("generated_at") ||
+      msg.includes("date_range_start") ||
+      msg.includes("date_range_end") ||
+      msg.includes("source_game_ids_hash");
     if (!missingColumn) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }

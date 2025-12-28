@@ -9,6 +9,11 @@ create table if not exists public.opponent_profiles (
   stats_json jsonb null,
   games_analyzed int null,
   generated_at timestamptz null,
+  profile_version int not null default 2,
+  profile_json jsonb null,
+  date_range_start timestamptz null,
+  date_range_end timestamptz null,
+  source_game_ids_hash text null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint opponent_profiles_platform_check check (platform in ('lichess', 'chesscom')),
@@ -53,3 +58,8 @@ alter table public.opponent_profiles add column if not exists filters_json jsonb
 alter table public.opponent_profiles add column if not exists stats_json jsonb null;
 alter table public.opponent_profiles add column if not exists games_analyzed int null;
 alter table public.opponent_profiles add column if not exists generated_at timestamptz null;
+alter table public.opponent_profiles add column if not exists profile_version int not null default 2;
+alter table public.opponent_profiles add column if not exists profile_json jsonb null;
+alter table public.opponent_profiles add column if not exists date_range_start timestamptz null;
+alter table public.opponent_profiles add column if not exists date_range_end timestamptz null;
+alter table public.opponent_profiles add column if not exists source_game_ids_hash text null;
