@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { buildOpponentProfileV2, type ChessPlatform, type LichessSpeed } from "@/server/opponentProfileV2";
+import { buildOpponentProfile, type ChessPlatform, type LichessSpeed } from "@/server/opponentProfile";
+import { buildOpponentProfileV2 } from "@/server/opponentProfileV2";
+import { buildOpponentProfileV3Addon } from "@/server/opponentProfileV3";
 
 export const runtime = "nodejs";
 
@@ -50,13 +52,26 @@ export async function POST(request: Request, context: { params: Promise<Params> 
   const from = typeof body?.from === "string" ? String(body.from) : null;
   const to = typeof body?.to === "string" ? String(body.to) : null;
 
-  const { profile, filtersUsed } = await buildOpponentProfileV2({
-    supabase,
-    profileId: user.id,
-    platform,
-    username,
-    filters: { speeds, rated, from, to },
-  });
+  const [{ profile: statsV1 }, { profile: profileV2, normalized, filtersUsed }] = await Promise.all([
+    buildOpponentProfile({
+      supabase,
+      profileId: user.id,
+      platform,
+      username,
+      filters: { speeds, rated, from, to },
+    }),
+    buildOpponentProfileV2({
+      supabase,
+      profileId: user.id,
+      platform,
+      username,
+      filters: { speeds, rated, from, to },
+      includeNormalized: true,
+    }),
+  ]);
+
+  const v3 = buildOpponentProfileV3Addon({ platform, normalized: normalized ?? [] });
+  const profile: any = { ...profileV2, profile_version: 2, v3 };
 
   const { data: saved, error } = await supabase
     .from("opponent_profiles")
@@ -66,9 +81,9 @@ export async function POST(request: Request, context: { params: Promise<Params> 
         platform,
         username,
         filters_json: filtersUsed,
-        profile_version: 2,
+        profile_version: 3,
         profile_json: profile,
-        stats_json: null,
+        stats_json: statsV1,
         games_analyzed: profile.games_analyzed,
         generated_at: profile.generated_at,
         date_range_start: profile.date_range_start,

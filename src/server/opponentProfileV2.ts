@@ -28,6 +28,8 @@ type GameNorm = {
   moves_san: string[];
 };
 
+export type OpponentProfileGameNorm = GameNorm;
+
 export type V2OpeningRow = {
   eco: string | null;
   name: string;
@@ -591,7 +593,8 @@ export async function buildOpponentProfileV2(params: {
   filters: OpponentProfileFilters;
   maxGamesCap?: number | null;
   segmentMinGames?: number;
-}): Promise<{ profile: OpponentProfileV2; filtersUsed: OpponentProfileFilters }>
+  includeNormalized?: boolean;
+}): Promise<{ profile: OpponentProfileV2; filtersUsed: OpponentProfileFilters; normalized?: GameNorm[] }>
 {
   const { fromIso, toIso } = parseDateRangeIso({ from: params.filters.from, to: params.filters.to });
 
@@ -725,5 +728,5 @@ export async function buildOpponentProfileV2(params: {
     profile.message = params.platform === "chesscom" ? "No Chess.com games available yet." : "No games matched the selected filters.";
   }
 
-  return { profile, filtersUsed: profile.filters_used };
+  return { profile, filtersUsed: profile.filters_used, normalized: params.includeNormalized ? normalized : undefined };
 }

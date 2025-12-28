@@ -87,6 +87,68 @@ type OpponentProfileV2 = {
     }
   >;
   engineInsights: null;
+  v3?: {
+    contexts: {
+      as_white: {
+        concentration: { top_line_pct: number; top_3_pct: number; label: string };
+        entry_point: {
+          decisive_move_san: string | null;
+          decisive_move_annotated: string | null;
+          avg_move_number: number | null;
+          threshold: number;
+        };
+        deviation_habit: {
+          early_deviation_rate: number | null;
+          label: string;
+          measured_over_games: number;
+          prefix_ply: number;
+          diverge_before_ply: number;
+        };
+      };
+      as_black_vs_e4: {
+        concentration: { top_line_pct: number; top_3_pct: number; label: string };
+        entry_point: {
+          decisive_move_san: string | null;
+          decisive_move_annotated: string | null;
+          avg_move_number: number | null;
+          threshold: number;
+        };
+        deviation_habit: {
+          early_deviation_rate: number | null;
+          label: string;
+          measured_over_games: number;
+          prefix_ply: number;
+          diverge_before_ply: number;
+        };
+      };
+      as_black_vs_d4: {
+        concentration: { top_line_pct: number; top_3_pct: number; label: string };
+        entry_point: {
+          decisive_move_san: string | null;
+          decisive_move_annotated: string | null;
+          avg_move_number: number | null;
+          threshold: number;
+        };
+        deviation_habit: {
+          early_deviation_rate: number | null;
+          label: string;
+          measured_over_games: number;
+          prefix_ply: number;
+          diverge_before_ply: number;
+        };
+      };
+    };
+    structure_profile: {
+      castling_side_label: string;
+      early_queen_trades_label: string;
+      opposite_castling_label: string;
+      castling: { kingside: number; queenside: number; none: number };
+      queen_trade_by_20_pct: number;
+      opposite_castling_pct: number;
+    };
+    prep_summary: string;
+    message?: string;
+  };
   message?: string;
 };
 
@@ -262,6 +324,8 @@ export function OpponentProfileClient({ platform, username }: Props) {
 
   const v2Profile = (profileRow?.profile_json as OpponentProfileV2 | null | undefined) ?? null;
   const hasV2 = Boolean(v2Profile && v2Profile.profile_version === 2);
+  const v3Addon = v2Profile?.v3 ?? null;
+  const hasV3 = Boolean(v3Addon);
   const hasProfile = Boolean(hasV2 || profileRow?.stats_json);
 
   const [segmentKey, setSegmentKey] = useState<string>("all");
@@ -306,7 +370,10 @@ export function OpponentProfileClient({ platform, username }: Props) {
       setNeedsMigration(Boolean((json as any)?.needs_migration));
       setProfileRow(((json as any)?.opponent_profile as OpponentProfileRow | null) ?? null);
 
-      const msg = (json as any)?.opponent_profile?.stats_json?.message;
+      const msgV1 = (json as any)?.opponent_profile?.stats_json?.message;
+      const msgV2 = (json as any)?.opponent_profile?.profile_json?.message;
+      const msgV3 = (json as any)?.opponent_profile?.profile_json?.v3?.message;
+      const msg = typeof msgV3 === "string" && msgV3.trim() ? msgV3 : typeof msgV2 === "string" && msgV2.trim() ? msgV2 : msgV1;
       if (typeof msg === "string" && msg.trim()) setActionMessage(msg);
     } catch (e) {
       setActionMessage(e instanceof Error ? e.message : "Failed to generate profile");
@@ -378,6 +445,85 @@ export function OpponentProfileClient({ platform, username }: Props) {
                 <span className="font-medium text-zinc-900">Filters used:</span> {currentFiltersSummary}
               </div>
             </div>
+
+            {hasV3 && v3Addon ? (
+              <div className="grid gap-3">
+                <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4">
+                  <div className="text-xs font-semibold text-zinc-700">Prep insights (v3)</div>
+                  <div className="mt-2 text-sm text-zinc-700">{v3Addon.prep_summary}</div>
+                  {v3Addon.message ? <div className="mt-2 text-xs text-zinc-600">{v3Addon.message}</div> : null}
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-3">
+                  {[
+                    { title: "As White", ctx: v3Addon.contexts.as_white },
+                    { title: "As Black vs 1.e4", ctx: v3Addon.contexts.as_black_vs_e4 },
+                    { title: "As Black vs 1.d4", ctx: v3Addon.contexts.as_black_vs_d4 },
+                  ].map(({ title, ctx }) => (
+                    <div key={title} className="rounded-xl border border-zinc-200 bg-zinc-50 p-4">
+                      <div className="text-xs font-semibold text-zinc-700">{title}</div>
+                      <div className="mt-2 grid gap-2 text-xs text-zinc-700">
+                        <div>
+                          <div className="text-[10px] font-medium text-zinc-600">Repertoire concentration</div>
+                          <div className="mt-1">
+                            <span className="font-medium text-zinc-900">{ctx.concentration.label}</span>
+                          </div>
+                          <div className="mt-1 text-[10px] text-zinc-600">
+                            Top line: {ctx.concentration.top_line_pct.toFixed(1)}% · Top 3: {ctx.concentration.top_3_pct.toFixed(1)}%
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-[10px] font-medium text-zinc-600">Entry point</div>
+                          <div className="mt-1">
+                            {ctx.entry_point.decisive_move_annotated ? (
+                              <span className="font-medium text-zinc-900">
+                                {ctx.entry_point.decisive_move_annotated} ({Math.round(ctx.entry_point.threshold * 100)}%)
+                              </span>
+                            ) : (
+                              <span className="text-zinc-600">No clear commitment ≤ move 5.</span>
+                            )}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-[10px] font-medium text-zinc-600">Deviation habit</div>
+                          <div className="mt-1">
+                            <span className="font-medium text-zinc-900">{ctx.deviation_habit.label}</span>
+                          </div>
+                          <div className="mt-1 text-[10px] text-zinc-600">
+                            {ctx.deviation_habit.early_deviation_rate == null
+                              ? `Insufficient sample.`
+                              : `Early deviation rate: ${(ctx.deviation_habit.early_deviation_rate * 100).toFixed(0)}% (n=${ctx.deviation_habit.measured_over_games})`}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4">
+                  <div className="text-xs font-semibold text-zinc-700">Structure profile</div>
+                  <div className="mt-2 grid gap-2 text-xs text-zinc-700 md:grid-cols-3">
+                    <div>
+                      <div className="text-[10px] font-medium text-zinc-600">Castling</div>
+                      <div className="mt-1 font-medium text-zinc-900">{v3Addon.structure_profile.castling_side_label}</div>
+                      <div className="mt-1 text-[10px] text-zinc-600">
+                        O-O: {v3Addon.structure_profile.castling.kingside} · O-O-O: {v3Addon.structure_profile.castling.queenside} · None: {v3Addon.structure_profile.castling.none}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] font-medium text-zinc-600">Queen trades by move 20</div>
+                      <div className="mt-1 font-medium text-zinc-900">{v3Addon.structure_profile.early_queen_trades_label}</div>
+                      <div className="mt-1 text-[10px] text-zinc-600">Rate: {v3Addon.structure_profile.queen_trade_by_20_pct.toFixed(1)}%</div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] font-medium text-zinc-600">Opposite-side castling</div>
+                      <div className="mt-1 font-medium text-zinc-900">{v3Addon.structure_profile.opposite_castling_label}</div>
+                      <div className="mt-1 text-[10px] text-zinc-600">Rate: {v3Addon.structure_profile.opposite_castling_pct.toFixed(1)}%</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : null}
 
             <div className="flex flex-wrap items-center gap-2">
               {availableSegments.map((k) => (
