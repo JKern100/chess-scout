@@ -261,7 +261,7 @@ export function DashboardPage({ initialOpponents }: Props) {
     } catch {
       // ignore
     }
-    window.location.href = "/play";
+    window.location.href = "/play?mode=analysis";
   }
 
   return (

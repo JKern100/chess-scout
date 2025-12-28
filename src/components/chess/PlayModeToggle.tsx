@@ -11,7 +11,7 @@ export function PlayModeToggle() {
   const searchParams = useSearchParams();
 
   const modeParam = searchParams.get("mode");
-  const mode: Mode = modeParam === "analysis" || modeParam === "simulation" ? modeParam : "simulation";
+  const mode: Mode = modeParam === "analysis" || modeParam === "simulation" ? modeParam : "analysis";
 
   const setMode = useCallback(
     (next: Mode) => {
@@ -27,20 +27,20 @@ export function PlayModeToggle() {
       <button
         type="button"
         className={`h-8 px-3 text-[10px] font-medium ${
-          mode === "simulation" ? "bg-zinc-900 text-white" : "text-zinc-900 hover:bg-zinc-50"
-        }`}
-        onClick={() => setMode("simulation")}
-      >
-        Game Simulation
-      </button>
-      <button
-        type="button"
-        className={`h-8 px-3 text-[10px] font-medium ${
           mode === "analysis" ? "bg-zinc-900 text-white" : "text-zinc-900 hover:bg-zinc-50"
         }`}
         onClick={() => setMode("analysis")}
       >
         Analysis
+      </button>
+      <button
+        type="button"
+        className={`h-8 px-3 text-[10px] font-medium ${
+          mode === "simulation" ? "bg-zinc-900 text-white" : "text-zinc-900 hover:bg-zinc-50"
+        }`}
+        onClick={() => setMode("simulation")}
+      >
+        Game Simulation
       </button>
     </div>
   );

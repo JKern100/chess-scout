@@ -373,7 +373,7 @@ type Stats = {
 
 export function PlayBoardModes({ initialFen }: Props) {
   const searchParams = useSearchParams();
-  const [mode, setMode] = useState<Mode>("simulation");
+  const [mode, setMode] = useState<Mode>("analysis");
 
   const savedLineId = searchParams.get("saved_line_id");
   const modeParam = searchParams.get("mode");
@@ -436,6 +436,8 @@ export function PlayBoardModes({ initialFen }: Props) {
   useEffect(() => {
     if (modeParam === "analysis" || modeParam === "simulation") {
       setMode(modeParam);
+    } else {
+      setMode("analysis");
     }
   }, [modeParam]);
 
