@@ -4,9 +4,11 @@ import { Chess } from "chess.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { getBestMoveForPlay, type EngineScore } from "@/lib/engine/engineService";
-import { AnalysisBoard } from "./AnalysisBoard";
 import { ChessBoardCore, type ChessBoardCoreState } from "./ChessBoardCore";
 import { SimulationBoard } from "./SimulationBoard";
+import { AnalysisBoard } from "./AnalysisBoard";
+import { OpponentFiltersPanel } from "./OpponentFiltersPanel";
+import { useOpponentFilters } from "./useOpponentFilters";
 
 type Props = {
   initialFen?: string;
@@ -378,16 +380,17 @@ export function PlayBoardModes({ initialFen }: Props) {
 
   const [opponentUsername, setOpponentUsername] = useState<string>("");
   const [availableOpponents, setAvailableOpponents] = useState<Array<{ platform: string; username: string }>>([]);
-  const [filterSpeeds, setFilterSpeeds] = useState<Array<"bullet" | "blitz" | "rapid" | "classical" | "correspondence">>([
-    "bullet",
-    "blitz",
-    "rapid",
-    "classical",
-    "correspondence",
-  ]);
-  const [filterRated, setFilterRated] = useState<"any" | "rated" | "casual">("any");
-  const [filterFromDate, setFilterFromDate] = useState<string>("");
-  const [filterToDate, setFilterToDate] = useState<string>("");
+  const {
+    speeds: filterSpeeds,
+    setSpeeds: setFilterSpeeds,
+    rated: filterRated,
+    setRated: setFilterRated,
+    fromDate: filterFromDate,
+    setFromDate: setFilterFromDate,
+    toDate: filterToDate,
+    setToDate: setFilterToDate,
+    filtersKey,
+  } = useOpponentFilters();
   const [opponentMode, setOpponentMode] = useState<Strategy>("proportional");
   const [depthRemaining, setDepthRemaining] = useState<number | null>(null);
   const [lastOpponentMove, setLastOpponentMove] = useState<{ uci: string; san: string | null } | null>(null);
@@ -446,34 +449,6 @@ export function PlayBoardModes({ initialFen }: Props) {
   }, []);
 
   useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem("chessscout.opponentFilters") ?? "";
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as any;
-      const speeds = Array.isArray(parsed?.speeds) ? (parsed.speeds as any[]) : [];
-      const nextSpeeds = speeds
-        .map((s) => String(s))
-        .filter((s) => ["bullet", "blitz", "rapid", "classical", "correspondence"].includes(s)) as Array<
-        "bullet" | "blitz" | "rapid" | "classical" | "correspondence"
-      >;
-
-      setFilterSpeeds(
-        nextSpeeds.length > 0
-          ? nextSpeeds
-          : ["bullet", "blitz", "rapid", "classical", "correspondence"]
-      );
-
-      const rated = String(parsed?.rated ?? "any");
-      setFilterRated(rated === "rated" ? "rated" : rated === "casual" ? "casual" : "any");
-
-      setFilterFromDate(typeof parsed?.from === "string" ? parsed.from : "");
-      setFilterToDate(typeof parsed?.to === "string" ? parsed.to : "");
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  useEffect(() => {
     let cancelled = false;
     void fetch("/api/opponents")
       .then((r) => r.json())
@@ -501,17 +476,6 @@ export function PlayBoardModes({ initialFen }: Props) {
       // ignore
     }
   }, [opponentUsername]);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(
-        "chessscout.opponentFilters",
-        JSON.stringify({ speeds: filterSpeeds, rated: filterRated, from: filterFromDate, to: filterToDate })
-      );
-    } catch {
-      // ignore
-    }
-  }, [filterSpeeds, filterRated, filterFromDate, filterToDate]);
 
   useEffect(() => {
     if (availableOpponents.length === 0) return;
@@ -673,11 +637,6 @@ export function PlayBoardModes({ initialFen }: Props) {
     if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
     return String(Math.round(n));
   }
-
-  const filtersKey = useMemo(() => {
-    const speedsKey = [...filterSpeeds].sort().join(",");
-    return `${speedsKey}|${filterRated}|${filterFromDate}|${filterToDate}`;
-  }, [filterSpeeds, filterRated, filterFromDate, filterToDate]);
 
   const opponentSourceIndicator = useMemo(() => {
     if (mode !== "simulation") return null;
@@ -983,97 +942,32 @@ export function PlayBoardModes({ initialFen }: Props) {
 
   const underBoard = (
     <div className="grid gap-3">
-      <div className="rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm">
-        <div className="grid gap-2">
-          <div className="flex items-center justify-between gap-4">
-            <div className="text-[10px] font-medium text-zinc-900">Opponent</div>
-            <select
-              className="h-8 min-w-[180px] rounded-xl border border-zinc-200 bg-white px-3 text-[10px] text-zinc-900 outline-none focus:border-zinc-400 disabled:opacity-60"
-              value={opponentUsername}
-              onChange={(e) => setOpponentUsername(e.target.value)}
-              disabled={availableOpponents.length === 0}
-            >
-              {availableOpponents.length === 0 ? <option value="">No imported opponents</option> : null}
-              {availableOpponents.map((o) => (
-                <option key={`${o.platform}:${o.username}`} value={o.username}>
-                  {o.username}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="grid gap-2">
-            <div className="text-[10px] font-medium text-zinc-900">Time Control</div>
-
-            <div className="flex flex-wrap items-center gap-2 text-[10px] text-zinc-700">
-              {(["bullet", "blitz", "rapid", "classical", "correspondence"] as const).map((s) => {
-                const checked = filterSpeeds.includes(s);
-                return (
-                  <label key={s} className="inline-flex items-center gap-1.5">
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={(e) => {
-                        const on = e.target.checked;
-                        setFilterSpeeds((prev) => {
-                          if (on) return prev.includes(s) ? prev : [...prev, s];
-                          return prev.filter((x) => x !== s);
-                        });
-                      }}
-                    />
-                    {s}
-                  </label>
-                );
-              })}
-            </div>
-
-            <div className="grid gap-2">
-              <div className="flex items-center gap-2">
-                <div className="text-[10px] font-medium text-zinc-900">Mode</div>
-                <select
-                  id="opp-filter-rated"
-                  className="h-8 rounded-xl border border-zinc-200 bg-white px-3 text-[10px] text-zinc-900 outline-none focus:border-zinc-400"
-                  value={filterRated}
-                  onChange={(e) => setFilterRated(e.target.value as any)}
-                >
-                  <option value="any">All</option>
-                  <option value="rated">Rated</option>
-                  <option value="casual">Casual</option>
-                </select>
-              </div>
-
-              <div className="text-[10px] font-medium text-zinc-900">Date Range</div>
-              <div className="grid gap-2 md:grid-cols-2">
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-medium text-zinc-900" htmlFor="opp-filter-from">
-                    From
-                  </label>
-                  <input
-                    id="opp-filter-from"
-                    type="date"
-                    className="h-8 rounded-xl border border-zinc-200 bg-white px-3 text-[10px] text-zinc-900 outline-none focus:border-zinc-400"
-                    value={filterFromDate}
-                    onChange={(e) => setFilterFromDate(e.target.value)}
-                  />
-                </div>
-
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-medium text-zinc-900" htmlFor="opp-filter-to">
-                    To
-                  </label>
-                  <input
-                    id="opp-filter-to"
-                    type="date"
-                    className="h-8 rounded-xl border border-zinc-200 bg-white px-3 text-[10px] text-zinc-900 outline-none focus:border-zinc-400"
-                    value={filterToDate}
-                    onChange={(e) => setFilterToDate(e.target.value)}
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+      <OpponentFiltersPanel
+        headerLeft="Opponent"
+        headerRight={
+          <select
+            className="h-8 min-w-[180px] rounded-xl border border-zinc-200 bg-white px-3 text-[10px] text-zinc-900 outline-none focus:border-zinc-400 disabled:opacity-60"
+            value={opponentUsername}
+            onChange={(e) => setOpponentUsername(e.target.value)}
+            disabled={availableOpponents.length === 0}
+          >
+            {availableOpponents.length === 0 ? <option value="">No imported opponents</option> : null}
+            {availableOpponents.map((o) => (
+              <option key={`${o.platform}:${o.username}`} value={o.username}>
+                {o.username}
+              </option>
+            ))}
+          </select>
+        }
+        speeds={filterSpeeds}
+        setSpeeds={setFilterSpeeds}
+        rated={filterRated}
+        setRated={setFilterRated}
+        fromDate={filterFromDate}
+        setFromDate={setFilterFromDate}
+        toDate={filterToDate}
+        setToDate={setFilterToDate}
+      />
 
     </div>
   );
