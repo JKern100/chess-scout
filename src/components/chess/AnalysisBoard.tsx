@@ -541,7 +541,7 @@ export function AnalysisBoard(props: Props) {
       {showMoveTable ? (
         <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
           <div className="flex items-end justify-between gap-3">
-            <div className="text-[10px] font-medium text-zinc-900">Opponent moves</div>
+            <div className="text-[10px] font-medium text-zinc-900">Next Moves</div>
             <div className="flex items-center gap-4 border-b border-zinc-200 text-[10px]">
               <button
                 type="button"
@@ -552,7 +552,7 @@ export function AnalysisBoard(props: Props) {
                 }
                 onClick={() => setMoveTableTab("moves")}
               >
-                Moves
+                Moves so Far
               </button>
               <button
                 type="button"
@@ -693,7 +693,7 @@ export function AnalysisBoard(props: Props) {
       ) : null}
 
       <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
-        <div className="text-[10px] font-medium text-zinc-900">Moves</div>
+        <div className="text-[10px] font-medium text-zinc-900">Moves so Far</div>
         <div className="mt-2 grid gap-2 text-[10px] text-zinc-700">
           <div className="flex items-center justify-between">
             <button
