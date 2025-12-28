@@ -169,6 +169,57 @@ function filterPctAtLeastOne<T extends { pct: number }>(rows: T[]) {
   return rows.filter((r): r is T => r.pct >= 1);
 }
 
+function makeBranchKey(prefix: string[]) {
+  return prefix.join("|");
+}
+
+function RepertoireTree(params: { nodes: V2BranchNode[]; maxDepth: number; opponentLabel: string }) {
+  const { nodes, maxDepth, opponentLabel } = params;
+
+  const byPrefix = useMemo(() => {
+    const m = new Map<string, V2BranchNode>();
+    for (const n of nodes) m.set(makeBranchKey(n.prefix), n);
+    return m;
+  }, [nodes]);
+
+  const renderPrefix = (prefix: string[], depth: number) => {
+    const node = byPrefix.get(makeBranchKey(prefix));
+    if (!node) return null;
+    if (depth >= maxDepth) return null;
+
+    const next = filterPctAtLeastOne(node.next);
+    if (next.length === 0) return null;
+
+    return (
+      <div className={depth === 0 ? "mt-2" : "mt-1"}>
+        <div className="grid gap-1">
+          {next.map((m) => {
+            const childPrefix = [...prefix, m.move];
+            const hasChild = byPrefix.has(makeBranchKey(childPrefix));
+            const ply = childPrefix.length;
+            const who = ply % 2 === 1 ? "white" : opponentLabel;
+            return (
+              <div key={makeBranchKey(childPrefix)} className="relative pl-4">
+                <div className="absolute left-1 top-0 bottom-0 w-px bg-zinc-200" />
+                <div className="absolute left-1 top-2 h-px w-3 bg-zinc-200" />
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium text-zinc-900">
+                    {m.move} <span className="text-zinc-600">({who})</span>
+                  </span>
+                  <span className="text-zinc-600">{m.pct.toFixed(0)}% ({m.games})</span>
+                </div>
+                {hasChild ? <div className="ml-2">{renderPrefix(childPrefix, depth + 1)}</div> : null}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
+  return <div className="text-xs text-zinc-700">{renderPrefix([], 0)}</div>;
+}
+
 export function OpponentProfileClient({ platform, username }: Props) {
   const { speeds, setSpeeds, rated, setRated, fromDate, setFromDate, toDate, setToDate } = useOpponentFilters();
 
@@ -394,7 +445,7 @@ export function OpponentProfileClient({ platform, username }: Props) {
                 className="flex items-center justify-between rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-left"
                 onClick={() => setRepertoireOpen((v) => !v)}
               >
-                <div className="text-xs font-semibold text-zinc-700">Repertoire branches</div>
+                <div className="text-xs font-semibold text-zinc-700">Opening Defense as Black</div>
                 <div className="text-[10px] text-zinc-600">{repertoireOpen ? "Hide" : "Show"}</div>
               </button>
               {repertoireOpen ? (
@@ -405,25 +456,11 @@ export function OpponentProfileClient({ platform, username }: Props) {
                   ].map(({ title, nodes }) => (
                     <div key={title} className="rounded-xl border border-zinc-200 bg-zinc-50 p-4">
                       <div className="text-xs font-semibold text-zinc-700">{title}</div>
-                      <div className="mt-2 grid gap-2 text-xs text-zinc-700">
-                        {nodes.length === 0 ? (
-                          <div className="text-zinc-600">No samples.</div>
-                        ) : (
-                          nodes.slice(0, 6).map((n) => (
-                            <div key={`${title}-${n.ply}-${n.prefix.join(" ")}`}>
-                              <div className="text-[10px] text-zinc-600">After {n.prefix.join(" ") || "(start)"}</div>
-                              <div className="mt-1 grid gap-1">
-                                {filterPctAtLeastOne(n.next).map((m) => (
-                                  <div key={m.move} className="flex items-center justify-between gap-2">
-                                    <span className="font-medium text-zinc-900">{m.move}</span>
-                                    <span className="text-zinc-600">{m.pct.toFixed(0)}% ({m.games})</span>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          ))
-                        )}
-                      </div>
+                      {nodes.length === 0 ? (
+                        <div className="mt-2 text-xs text-zinc-600">No samples.</div>
+                      ) : (
+                        <RepertoireTree nodes={nodes} maxDepth={4} opponentLabel={username} />
+                      )}
                     </div>
                   ))}
                 </div>
