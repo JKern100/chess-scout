@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { useState } from "react";
 import { DateRangePresetSelect } from "./DateRangePresetSelect";
 import type { DatePreset, OpponentRatedFilter, OpponentSpeed } from "./useOpponentFilters";
 
@@ -21,6 +22,8 @@ type Props = {
 
 export function OpponentFiltersPanel(props: Props) {
   const { speeds, setSpeeds, rated, setRated, datePreset, setDatePreset, fromDate, setFromDate, toDate, setToDate, headerLeft, headerRight } = props;
+
+  const [generateStyleMarkers, setGenerateStyleMarkers] = useState(true);
 
   return (
     <div className="rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm">
@@ -101,6 +104,29 @@ export function OpponentFiltersPanel(props: Props) {
                 />
               </div>
             </div>
+
+            <label
+              className="mt-1 inline-flex select-none items-center justify-between gap-3 rounded-xl border border-zinc-200 bg-white px-3 py-2"
+              htmlFor="opp-filter-style-markers"
+            >
+              <span className="flex min-w-0 items-center gap-2">
+                <input
+                  id="opp-filter-style-markers"
+                  type="checkbox"
+                  checked={generateStyleMarkers}
+                  onChange={(e) => setGenerateStyleMarkers(e.target.checked)}
+                  className="h-4 w-4 accent-[#FFFF00]"
+                />
+                <span className="truncate text-[10px] font-medium text-zinc-900">Generate ChessScout Style Markers</span>
+              </span>
+
+              <span
+                title="Used in move predictions"
+                className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-zinc-200 bg-white text-[10px] font-semibold text-zinc-600"
+              >
+                i
+              </span>
+            </label>
           </div>
         </div>
       </div>
