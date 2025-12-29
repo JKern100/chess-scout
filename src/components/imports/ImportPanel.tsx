@@ -1,19 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useImportsRealtime } from "@/lib/hooks/useImportsRealtime";
 
-type ImportRow = {
-  id: string;
-  target_type: "self" | "opponent";
-  platform: "lichess" | "chesscom";
-  username: string;
-  status: "idle" | "running" | "stopped" | "complete" | "error";
-  imported_count: number;
-  last_game_at: string | null;
-  cursor_until: string | null;
-  last_error: string | null;
-  updated_at: string;
-};
+type ImportRow = ReturnType<typeof useImportsRealtime>["imports"][number];
 
 type Props = {
   selfUsername?: string | null;
@@ -21,9 +11,10 @@ type Props = {
 };
 
 export function ImportPanel({ selfUsername, selfPlatform }: Props) {
-  const [imports, setImports] = useState<ImportRow[]>([]);
+  const { imports, loading: statusLoading, error: statusError } = useImportsRealtime();
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  const [continueBusy, setContinueBusy] = useState(false);
   const [opponentPlatform, setOpponentPlatform] = useState<"lichess" | "chesscom">("lichess");
   const [opponentUsername, setOpponentUsername] = useState<string>("");
   const [activeImportId, setActiveImportId] = useState<string | null>(null);
@@ -35,13 +26,6 @@ export function ImportPanel({ selfUsername, selfPlatform }: Props) {
   }, [imports, selfUsername]);
 
   const pollTimer = useRef<number | null>(null);
-
-  async function refresh() {
-    const res = await fetch("/api/imports/status", { cache: "no-store" });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json?.error ?? "Failed to load import status");
-    setImports(json.imports ?? []);
-  }
 
   async function runOpponentImport(imp: ImportRow) {
     setLoading(true);
@@ -60,18 +44,12 @@ export function ImportPanel({ selfUsername, selfPlatform }: Props) {
       if (!res.ok) throw new Error(json?.error ?? "Failed to run opponent import");
 
       setActiveImportId(json?.import?.id ?? imp.id);
-      await refresh();
     } catch (e) {
       setStatus(e instanceof Error ? e.message : "Failed to run opponent import");
     } finally {
       setLoading(false);
     }
   }
-
-  useEffect(() => {
-    void refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   useEffect(() => {
     if (pollTimer.current) {
@@ -107,7 +85,6 @@ export function ImportPanel({ selfUsername, selfPlatform }: Props) {
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error ?? "Failed to start import");
       setActiveImportId(json?.import?.id ?? null);
-      await refresh();
     } catch (e) {
       setStatus(e instanceof Error ? e.message : "Failed to start import");
     } finally {
@@ -131,7 +108,6 @@ export function ImportPanel({ selfUsername, selfPlatform }: Props) {
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error ?? "Failed to start opponent import");
       setActiveImportId(json?.import?.id ?? null);
-      await refresh();
     } catch (e) {
       setStatus(e instanceof Error ? e.message : "Failed to start opponent import");
     } finally {
@@ -140,6 +116,8 @@ export function ImportPanel({ selfUsername, selfPlatform }: Props) {
   }
 
   async function continueImport(importId: string) {
+    if (continueBusy) return;
+    setContinueBusy(true);
     try {
       const res = await fetch("/api/imports/lichess/continue", {
         method: "POST",
@@ -151,9 +129,10 @@ export function ImportPanel({ selfUsername, selfPlatform }: Props) {
       if (!res.ok) throw new Error(json?.error ?? "Failed to continue import");
 
       setStatus(null);
-      await refresh();
     } catch (e) {
       setStatus(e instanceof Error ? e.message : "Failed to continue import");
+    } finally {
+      setContinueBusy(false);
     }
   }
 
@@ -169,7 +148,6 @@ export function ImportPanel({ selfUsername, selfPlatform }: Props) {
 
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error ?? "Failed to stop import");
-      await refresh();
     } catch (e) {
       setStatus(e instanceof Error ? e.message : "Failed to stop import");
     } finally {
@@ -189,6 +167,29 @@ export function ImportPanel({ selfUsername, selfPlatform }: Props) {
       .filter((i) => i.target_type === "opponent")
       .sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
   }, [imports]);
+
+  const runningImport = useMemo(() => {
+    const active = activeImportId ? imports.find((i) => i.id === activeImportId) : null;
+    if (active?.status === "running") return active;
+    if (selfImport?.status === "running") return selfImport;
+    const opp = opponentImports.find((i) => i.status === "running");
+    return opp ?? null;
+  }, [activeImportId, imports, opponentImports, selfImport]);
+
+  const runningNote = useMemo(() => {
+    if (!runningImport) return null;
+    if (runningImport.target_type !== "opponent") return null;
+    const indexed = typeof (runningImport as any)?.archived_count === "number" ? (runningImport as any).archived_count : 0;
+    const ready = Boolean((runningImport as any)?.ready);
+    const stage = String((runningImport as any)?.stage ?? "");
+
+    if (ready && stage === "archiving") return "Scouting 1,000 games (Archiving history...)";
+    if (ready) return "Scout ready";
+
+    const capped = Math.min(indexed, 1000);
+    const base = `Indexing: ${capped} / 1000`;
+    return continueBusy ? `${base} (Fetching games...)` : base;
+  }, [continueBusy, runningImport]);
 
   return (
     <div className="flex w-full flex-col gap-4 rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
@@ -299,8 +300,8 @@ export function ImportPanel({ selfUsername, selfPlatform }: Props) {
             <button
               type="button"
               className="inline-flex h-11 items-center justify-center rounded-xl border border-zinc-200 bg-white px-4 text-sm font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
-              disabled={loading}
-              onClick={() => void refresh()}
+              disabled={loading || statusLoading}
+              onClick={() => window.location.reload()}
             >
               Refresh
             </button>
@@ -309,17 +310,18 @@ export function ImportPanel({ selfUsername, selfPlatform }: Props) {
           {opponentImports.length ? (
             <div className="flex flex-col gap-2">
               <div className="text-sm font-medium text-zinc-900">Recent opponent imports</div>
+              {runningNote ? <div className="text-xs text-zinc-700">{runningNote}</div> : null}
               {opponentImports.slice(0, 5).map((imp) => (
                 <div
                   key={imp.id}
-                  className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-200 bg-white px-4 py-3"
+                  className="grid gap-2 rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm"
                 >
                   <div className="min-w-0">
                     <div className="truncate text-sm font-medium text-zinc-900">
                       {imp.platform} / {imp.username}
                     </div>
-                    <div className="text-xs text-zinc-600">
-                      status: {imp.status} · imported: {imp.imported_count}
+                    <div className="text-xs text-zinc-700">
+                      {imp.status === "running" ? "Importing" : "Status"}: {imp.status} · imported: {imp.imported_count}
                     </div>
                     {imp.last_error ? (
                       <div className="text-xs text-red-600">{imp.last_error}</div>
@@ -354,6 +356,7 @@ export function ImportPanel({ selfUsername, selfPlatform }: Props) {
       </div>
 
       {status ? <div className="text-sm text-zinc-600">{status}</div> : null}
+      {statusError ? <div className="text-sm text-zinc-600">{statusError}</div> : null}
     </div>
   );
 }

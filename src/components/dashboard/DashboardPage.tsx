@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Chessboard } from "react-chessboard";
+import { useImportsRealtime } from "@/lib/hooks/useImportsRealtime";
 
 type ChessPlatform = "lichess" | "chesscom";
 
@@ -63,6 +64,12 @@ export function DashboardPage({ initialOpponents }: Props) {
   const [opponents, setOpponents] = useState<OpponentRow[]>(initialOpponents);
   const [status, setStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [continueBusy, setContinueBusy] = useState(false);
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [displayIndexedCount, setDisplayIndexedCount] = useState(0);
+  const [indeterminateArmed, setIndeterminateArmed] = useState(false);
+
+  const { imports } = useImportsRealtime();
 
   const [savedLinesOpen, setSavedLinesOpen] = useState<Record<string, boolean>>({});
   const [savedLinesByOpponent, setSavedLinesByOpponent] = useState<Record<string, SavedLineRow[]>>({});
@@ -80,6 +87,10 @@ export function DashboardPage({ initialOpponents }: Props) {
         platform: ChessPlatform;
         username: string;
         importedCount: number;
+        indexedCount: number;
+        ready: boolean;
+        stage: string;
+        status: string;
       }
     | null
   >(null);
@@ -228,17 +239,45 @@ export function DashboardPage({ initialOpponents }: Props) {
       if (!importId) throw new Error("Import did not return an id");
 
       const initialImported = Number(json?.import?.imported_count ?? 0);
+      const initialIndexed = Number(json?.import?.archived_count ?? 0);
+      const initialReady = Boolean(json?.import?.ready);
+      const initialStage = String(json?.import?.stage ?? "indexing");
+      const initialStatus = String(json?.import?.status ?? "running");
 
       activeImportRef.current = { id: importId, username: o.username, platform: o.platform };
-      setActiveImport({ id: importId, platform: o.platform, username: o.username, importedCount: initialImported });
+      setActiveImport({
+        id: importId,
+        platform: o.platform,
+        username: o.username,
+        importedCount: initialImported,
+        indexedCount: initialIndexed,
+        ready: initialReady,
+        stage: initialStage,
+        status: initialStatus,
+      });
+      setImportModalOpen(true);
 
       // Poll until complete/error/stopped.
       for (;;) {
         if (stopRequestedRef.current) break;
+        setContinueBusy(true);
         const step = await continueImport(importId);
-        const status = String(step?.import?.status ?? "");
+        setContinueBusy(false);
+        const status = String(step?.import?.status ?? initialStatus);
+        const stage = String(step?.import?.stage ?? initialStage);
+        const ready = Boolean(step?.import?.ready);
         const importedCount = Number(step?.import?.imported_count ?? initialImported);
-        setActiveImport({ id: importId, platform: o.platform, username: o.username, importedCount });
+        const indexedCount = Number(step?.import?.archived_count ?? initialIndexed);
+        setActiveImport({
+          id: importId,
+          platform: o.platform,
+          username: o.username,
+          importedCount,
+          indexedCount,
+          ready,
+          stage,
+          status,
+        });
         if (status && status !== "running") break;
         await new Promise((r) => window.setTimeout(r, 500));
       }
@@ -249,8 +288,34 @@ export function DashboardPage({ initialOpponents }: Props) {
     } finally {
       activeImportRef.current = null;
       setActiveImport(null);
+      setContinueBusy(false);
       setLoading(false);
     }
+  }
+
+  const importsByKey = useMemo(() => {
+    const m = new Map<string, (typeof imports)[number]>();
+    for (const i of imports) {
+      if (i.target_type !== "opponent") continue;
+      m.set(`${i.platform}:${i.username.toLowerCase()}`, i);
+    }
+    return m;
+  }, [imports]);
+
+  function formatTieredStatus(imp: any, isActive: boolean) {
+    if (!imp) return null;
+    if (String(imp.status ?? "") !== "running" && !imp.ready) return null;
+
+    const ready = Boolean(imp.ready);
+    const stage = String(imp.stage ?? "");
+    const indexed = typeof imp.archived_count === "number" ? imp.archived_count : 0;
+
+    if (ready && stage === "archiving") return "Scouting 1,000 games (Archiving history...)";
+    if (ready) return "Scout ready";
+
+    const capped = Math.min(indexed, 1000);
+    const base = `Indexing: ${capped} / 1000`;
+    return isActive && continueBusy ? `${base} (Fetching games...)` : base;
   }
 
   function prepare(o: OpponentRow) {
@@ -263,6 +328,76 @@ export function DashboardPage({ initialOpponents }: Props) {
     }
     window.location.href = "/play?mode=analysis";
   }
+
+  const activeReady = Boolean(activeImport?.ready);
+  const activeStage = String(activeImport?.stage ?? "");
+  const activeStatus = String(activeImport?.status ?? "");
+  const activeIndexedCapped = Math.min(Number(activeImport?.indexedCount ?? 0), 1000);
+  const activePct = Math.max(0, Math.min(100, Math.round((activeIndexedCapped / 1000) * 100)));
+  const activeIndeterminate = indeterminateArmed && !activeReady && activeIndexedCapped === 0 && continueBusy;
+
+  useEffect(() => {
+    if (!importModalOpen || !activeImport) {
+      setIndeterminateArmed(false);
+      return;
+    }
+
+    setIndeterminateArmed(false);
+    const id = window.setTimeout(() => setIndeterminateArmed(true), 600);
+    return () => window.clearTimeout(id);
+  }, [activeImport, importModalOpen]);
+
+  useEffect(() => {
+    if (!importModalOpen || !activeImport) return;
+    setDisplayIndexedCount((prev) => {
+      const next = Math.min(Math.max(prev, 0), 1000);
+      if (next > activeIndexedCapped) return activeIndexedCapped;
+      return next;
+    });
+  }, [activeIndexedCapped, activeImport, importModalOpen]);
+
+  useEffect(() => {
+    if (!importModalOpen || !activeImport) return;
+    if (activeIndeterminate) return;
+    if (displayIndexedCount >= activeIndexedCapped) return;
+
+    const id = window.setInterval(() => {
+      setDisplayIndexedCount((prev) => {
+        if (prev >= activeIndexedCapped) return prev;
+        const remaining = activeIndexedCapped - prev;
+        const step = Math.max(1, Math.min(8, Math.ceil(remaining / 12)));
+        return Math.min(activeIndexedCapped, prev + step);
+      });
+    }, 60);
+
+    return () => window.clearInterval(id);
+  }, [activeImport, activeIndexedCapped, activeIndeterminate, displayIndexedCount, importModalOpen]);
+
+  const activeTitle = activeImport
+    ? `Importing ${activeImport.username} from ${activeImport.platform === "lichess" ? "Lichess" : "Chess.com"}`
+    : "Import";
+
+  const activeSubtitle = useMemo(() => {
+    if (!activeImport) return null;
+    if (activeStatus === "complete" || activeStage === "complete") return "Import complete.";
+    if (activeReady && activeStage === "archiving") return "Archiving history in the background.";
+    if (activeReady) return "Ready to analyze.";
+    return "Indexing your first 1,000 games (unlocks analysis).";
+  }, [activeImport, activeReady, activeStage, activeStatus]);
+
+  const activeExplain = useMemo(() => {
+    if (!activeImport) return null;
+    if (activeReady) return "You can close this window and start analyzing or create a profile.";
+    return "Once the first 1,000 games are indexed, you can close this window and start analyzing.";
+  }, [activeImport, activeReady]);
+
+  useMemo(() => {
+    if (!importModalOpen) return null;
+    if (!activeImport) return null;
+    if (!(activeStatus === "complete" || activeStage === "complete")) return null;
+    const id = window.setTimeout(() => setImportModalOpen(false), 1000);
+    return () => window.clearTimeout(id);
+  }, [activeImport, activeStage, activeStatus, importModalOpen]);
 
   return (
     <div className="min-h-screen bg-zinc-50">
@@ -347,6 +482,7 @@ export function DashboardPage({ initialOpponents }: Props) {
               <div className="text-sm text-zinc-700">
                 Importing <span className="font-medium text-zinc-900">{activeImport.username}</span> · imported:{" "}
                 <span className="font-semibold text-zinc-900">{activeImport.importedCount}</span>
+                {continueBusy ? <span className="text-zinc-500"> · Fetching games…</span> : null}
               </div>
               <button
                 type="button"
@@ -369,6 +505,111 @@ export function DashboardPage({ initialOpponents }: Props) {
             </div>
           ) : null}
 
+          {importModalOpen && activeImport ? (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
+              <div className="w-full max-w-lg rounded-2xl border border-zinc-200 bg-white p-5 shadow-lg">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <div className="truncate text-base font-semibold text-zinc-900">{activeTitle}</div>
+                    {activeSubtitle ? <div className="mt-1 text-xs text-zinc-600">{activeSubtitle}</div> : null}
+                  </div>
+                  <button
+                    type="button"
+                    className="inline-flex h-9 items-center justify-center rounded-xl border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-900 hover:bg-zinc-50"
+                    onClick={() => {
+                      if (!activeReady) {
+                        const ok = window.confirm(
+                          "Indexing is still in progress. You can close this window now, but analysis will remain locked until the first 1,000 games are indexed."
+                        );
+                        if (!ok) return;
+                      }
+                      setImportModalOpen(false);
+                    }}
+                  >
+                    Close
+                  </button>
+                </div>
+
+                <div className="mt-4 grid gap-4">
+                  <div className="grid gap-2">
+                    <div className="flex items-center justify-between text-xs text-zinc-700">
+                      <div className="font-medium text-zinc-900">Downloading games</div>
+                      <div className="tabular-nums">{activeImport.importedCount}</div>
+                    </div>
+                    <div className="h-2 w-full overflow-hidden rounded-full bg-zinc-200">
+                      {indeterminateArmed && continueBusy ? (
+                        <div className="h-full w-full bg-zinc-900/20 animate-pulse" />
+                      ) : (
+                        <div className="h-full bg-zinc-900" style={{ width: "0%" }} />
+                      )}
+                    </div>
+                    <div className="text-xs text-zinc-600">{continueBusy ? "Fetching games…" : "Queued…"}</div>
+                  </div>
+
+                  <div className="grid gap-2">
+                    <div className="flex items-center justify-between text-xs text-zinc-700">
+                      <div className="font-medium text-zinc-900">Indexing first 1,000 games (unlocks analysis)</div>
+                      <div className="tabular-nums">{activeIndeterminate ? 0 : displayIndexedCount} / 1000</div>
+                    </div>
+                    <div className="h-2 w-full overflow-hidden rounded-full bg-zinc-200">
+                      {activeIndeterminate ? (
+                        <div className="h-full w-full bg-zinc-900/20 animate-pulse" />
+                      ) : (
+                        <div
+                          className="h-full bg-zinc-900"
+                          style={{ width: `${Math.max(0, Math.min(100, Math.round(((activeIndeterminate ? 0 : displayIndexedCount) / 1000) * 100)))}%` }}
+                        />
+                      )}
+                    </div>
+                    <div className="text-xs text-zinc-600">{activeReady ? "Ready" : continueBusy ? "Indexing…" : "Waiting for next batch…"}</div>
+                  </div>
+                </div>
+
+                {activeExplain ? <div className="mt-3 text-xs leading-5 text-zinc-700">{activeExplain}</div> : null}
+
+                <div className="mt-5 flex flex-wrap items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    className="inline-flex h-10 items-center justify-center rounded-xl border border-zinc-200 bg-white px-4 text-xs font-semibold text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
+                    disabled={!activeImport || loading}
+                    onClick={() =>
+                      void stopImport(activeImport.id)
+                        .then(() => {
+                          setStatus("Stopping import...");
+                        })
+                        .catch((e) => {
+                          setStatus(e instanceof Error ? e.message : "Failed to stop import");
+                        })
+                    }
+                  >
+                    Cancel import
+                  </button>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      className="inline-flex h-10 items-center justify-center rounded-xl border border-zinc-200 bg-white px-4 text-xs font-semibold text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
+                      disabled={!activeReady}
+                      title={activeReady ? undefined : "Scout not ready yet (indexing first 1,000 games)"}
+                      onClick={() => prepare({ platform: activeImport.platform, username: activeImport.username, created_at: "", last_refreshed_at: null })}
+                    >
+                      Analyze
+                    </button>
+                    <Link
+                      href={`/opponents/${encodeURIComponent(activeImport.platform)}/${encodeURIComponent(activeImport.username)}/profile`}
+                      className={`inline-flex h-10 items-center justify-center rounded-xl bg-zinc-900 px-4 text-xs font-semibold text-white hover:bg-zinc-800 ${
+                        activeReady ? "" : "pointer-events-none opacity-60"
+                      }`}
+                      title={activeReady ? undefined : "Scout not ready yet (indexing first 1,000 games)"}
+                    >
+                      Create Profile
+                    </Link>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
           <div className="mt-6 grid gap-3">
             {opponents.length === 0 ? (
               <div className="rounded-xl border border-dashed border-zinc-200 bg-zinc-50 p-6 text-sm text-zinc-600">
@@ -384,6 +625,10 @@ export function DashboardPage({ initialOpponents }: Props) {
                   activeImport.platform === latest.platform &&
                   activeImport.username.toLowerCase() === latest.username.toLowerCase()
               );
+
+              const importRow = importsByKey.get(key) ?? null;
+              const tieredStatus = formatTieredStatus(importRow as any, isActive);
+              const canUseScout = Boolean((importRow as any)?.ready);
 
               const isSavedOpen = Boolean(savedLinesOpen[key]);
               const savedLines = savedLinesByOpponent[key] ?? null;
@@ -436,6 +681,10 @@ export function DashboardPage({ initialOpponents }: Props) {
                           Importing · imported: {activeImport?.importedCount ?? 0}
                         </div>
                       ) : null}
+
+                      {tieredStatus ? (
+                        <div className="mt-1 text-xs text-zinc-700">{tieredStatus}</div>
+                      ) : null}
                     </div>
 
                     <div className="flex items-center gap-2">
@@ -448,7 +697,8 @@ export function DashboardPage({ initialOpponents }: Props) {
                       <button
                         type="button"
                         className="inline-flex h-9 items-center justify-center rounded-lg bg-zinc-900 px-3 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-60"
-                        disabled={loading}
+                        disabled={loading || !canUseScout}
+                        title={canUseScout ? undefined : "Scout not ready yet (indexing first 1,000 games)"}
                         onClick={() => prepare(latest)}
                       >
                         Prepare

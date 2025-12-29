@@ -4,7 +4,10 @@ import { fetchLichessGamesBatch } from "@/server/services/lichess";
 import { fetchLichessUserRatingsSnapshot } from "@/server/services/lichess";
 import { buildOpponentMoveEventsFromGame, upsertOpponentMoveEvents } from "@/server/openingTree";
 
-const BATCH_MAX = 200;
+const STAGE1_BATCH_MAX = 200;
+const STAGE2_BATCH_MAX = 500;
+const READY_THRESHOLD_GAMES = 1000;
+const STAGE1_INDEX_MAX = 50;
 
 export async function POST(request: Request) {
   const supabase = await createSupabaseServerClient();
@@ -33,7 +36,7 @@ export async function POST(request: Request) {
   const { data: imp, error: impError } = await supabase
     .from("imports")
     .select(
-      "id, profile_id, target_type, platform, username, status, imported_count, cursor_until, newest_game_at"
+      "id, profile_id, target_type, platform, username, status, imported_count, cursor_until, newest_game_at, ready, stage, archived_count"
     )
     .eq("id", importId)
     .eq("profile_id", user.id)
@@ -58,9 +61,16 @@ export async function POST(request: Request) {
   try {
     const untilMs = imp.cursor_until ? new Date(imp.cursor_until).getTime() : undefined;
 
+    const stage = typeof (imp as any)?.stage === "string" ? String((imp as any).stage) : "indexing";
+    const ready = Boolean((imp as any)?.ready);
+    const importedCountBefore = typeof imp.imported_count === "number" ? imp.imported_count : 0;
+    const indexedCountBefore = typeof (imp as any)?.archived_count === "number" ? (imp as any).archived_count : 0;
+
+    const batchMax = ready || stage === "archiving" ? STAGE2_BATCH_MAX : STAGE1_BATCH_MAX;
+
     const batch = await fetchLichessGamesBatch({
       username: imp.username,
-      max: BATCH_MAX,
+      max: batchMax,
       untilMs,
     });
 
@@ -69,12 +79,14 @@ export async function POST(request: Request) {
         .from("imports")
         .update({
           status: "complete",
+          stage: "complete",
+          ready: imp.target_type === "opponent" ? true : (imp as any)?.ready,
           last_success_at: new Date().toISOString(),
           last_error: null,
         })
         .eq("id", imp.id)
         .select(
-          "id, profile_id, target_type, platform, username, status, imported_count, last_game_at, cursor_until, newest_game_at, last_success_at, expires_at, last_error, updated_at"
+          "id, profile_id, target_type, platform, username, status, imported_count, last_game_at, cursor_until, newest_game_at, ready, stage, archived_count, last_success_at, expires_at, last_error, updated_at"
         )
         .single();
 
@@ -119,13 +131,15 @@ export async function POST(request: Request) {
       pgn: g.pgn,
     }));
 
+    const batchById = new Map(batch.games.map((g) => [String(g.platformGameId), g] as const));
+
     const { data: upserted, error: upsertErr } = await supabase
       .from("games")
       .upsert(rows, {
         onConflict: "platform,platform_game_id",
         ignoreDuplicates: true,
       })
-      .select("platform_game_id, played_at, pgn");
+      .select("platform_game_id, played_at");
 
     if (upsertErr) {
       throw upsertErr;
@@ -133,18 +147,33 @@ export async function POST(request: Request) {
 
     const insertedCount = upserted?.length ?? 0;
 
-    if (insertedCount > 0 && imp.target_type === "opponent") {
+    const importedCountAfter = importedCountBefore + insertedCount;
+
+    const shouldIndexMovesStage1 = imp.target_type === "opponent" && !ready;
+    const shouldIndexMovesStage2 = imp.target_type === "opponent" && (ready || stage === "archiving");
+
+    let indexedGameCount = 0;
+
+    if (insertedCount > 0 && (shouldIndexMovesStage1 || shouldIndexMovesStage2)) {
       try {
-        const events = (upserted ?? []).flatMap((g: any) =>
-          buildOpponentMoveEventsFromGame({
+        const limit = shouldIndexMovesStage2
+          ? Math.min(insertedCount, STAGE2_BATCH_MAX)
+          : Math.min(insertedCount, STAGE1_INDEX_MAX);
+        const toIndex = (upserted ?? []).slice(0, limit);
+        indexedGameCount = toIndex.length;
+
+        const events = toIndex.flatMap((g: any) => {
+          const platformGameId = String(g?.platform_game_id ?? "");
+          const src = batchById.get(platformGameId);
+          return buildOpponentMoveEventsFromGame({
             profileId: user.id,
             platform: "lichess",
             username: imp.username,
-            platformGameId: String(g?.platform_game_id ?? ""),
+            platformGameId,
             playedAt: (g?.played_at as string | null) ?? null,
-            pgn: String(g?.pgn ?? ""),
-          })
-        );
+            pgn: String(src?.pgn ?? ""),
+          });
+        });
 
         await upsertOpponentMoveEvents({ supabase, rows: events });
       } catch {
@@ -155,10 +184,22 @@ export async function POST(request: Request) {
     const nextUntilMs = batch.oldestGameAtMs !== null ? batch.oldestGameAtMs - 1 : null;
 
     const updatePayload: any = {
-      imported_count: (imp.imported_count ?? 0) + insertedCount,
+      imported_count: importedCountAfter,
       last_success_at: new Date().toISOString(),
       last_error: null,
     };
+
+    if (imp.target_type === "opponent" && indexedGameCount > 0) {
+      const indexedCountAfter = indexedCountBefore + indexedGameCount;
+      updatePayload.archived_count = indexedCountAfter;
+
+      if (!ready && indexedCountAfter >= READY_THRESHOLD_GAMES) {
+        updatePayload.ready = true;
+        updatePayload.stage = "archiving";
+      } else if (ready || stage === "archiving") {
+        updatePayload.stage = "archiving";
+      }
+    }
 
     if (batch.oldestGameAtMs !== null) {
       updatePayload.last_game_at = new Date(batch.oldestGameAtMs).toISOString();
@@ -172,8 +213,10 @@ export async function POST(request: Request) {
       updatePayload.cursor_until = new Date(nextUntilMs).toISOString();
     }
 
-    if (batch.games.length < BATCH_MAX) {
+    if (batch.games.length < batchMax) {
       updatePayload.status = "complete";
+      updatePayload.stage = "complete";
+      if (imp.target_type === "opponent") updatePayload.ready = true;
     }
 
     const { data: updated, error: updateErr } = await supabase
@@ -181,7 +224,7 @@ export async function POST(request: Request) {
       .update(updatePayload)
       .eq("id", imp.id)
       .select(
-        "id, profile_id, target_type, platform, username, status, imported_count, last_game_at, cursor_until, newest_game_at, last_success_at, expires_at, last_error, updated_at"
+        "id, profile_id, target_type, platform, username, status, imported_count, last_game_at, cursor_until, newest_game_at, ready, stage, archived_count, last_success_at, expires_at, last_error, updated_at"
       )
       .single();
 

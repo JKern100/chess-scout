@@ -9,6 +9,7 @@ import { SimulationBoard } from "./SimulationBoard";
 import { AnalysisBoard } from "./AnalysisBoard";
 import { OpponentFiltersPanel } from "./OpponentFiltersPanel";
 import { useOpponentFilters } from "./useOpponentFilters";
+import { useImportsRealtime } from "@/lib/hooks/useImportsRealtime";
 
 type Props = {
   initialFen?: string;
@@ -380,6 +381,7 @@ export function PlayBoardModes({ initialFen }: Props) {
 
   const [opponentUsername, setOpponentUsername] = useState<string>("");
   const [availableOpponents, setAvailableOpponents] = useState<Array<{ platform: string; username: string }>>([]);
+  const { imports } = useImportsRealtime();
   const {
     speeds: filterSpeeds,
     setSpeeds: setFilterSpeeds,
@@ -487,6 +489,23 @@ export function PlayBoardModes({ initialFen }: Props) {
     if (current && availableOpponents.some((o) => o.username.toLowerCase() === current)) return;
     setOpponentUsername(availableOpponents[0]?.username ?? "");
   }, [availableOpponents, opponentUsername]);
+
+  const opponentImport = useMemo(() => {
+    const u = opponentUsername.trim().toLowerCase();
+    if (!u) return null;
+    return (
+      imports
+        .filter((i) => i.target_type === "opponent" && i.platform === "lichess")
+        .find((i) => i.username.trim().toLowerCase() === u) ?? null
+    );
+  }, [imports, opponentUsername]);
+
+  const archivingNote = useMemo(() => {
+    if (!opponentImport) return null;
+    if (!opponentImport.ready) return null;
+    if (String(opponentImport.stage ?? "") !== "archiving") return null;
+    return "Scouting 1,000 games (Archiving history...)";
+  }, [opponentImport]);
 
   const timeControls: TimeControlPreset[] = useMemo(
     () => [
@@ -973,6 +992,7 @@ export function PlayBoardModes({ initialFen }: Props) {
         setFromDate={setFilterFromDate}
         toDate={filterToDate}
         setToDate={setFilterToDate}
+        footerNote={archivingNote ? <span>{archivingNote}</span> : null}
       />
 
     </div>

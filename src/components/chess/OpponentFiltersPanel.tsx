@@ -18,10 +18,25 @@ type Props = {
   setToDate: (v: string) => void;
   headerLeft?: string;
   headerRight?: ReactNode;
+  footerNote?: ReactNode;
 };
 
 export function OpponentFiltersPanel(props: Props) {
-  const { speeds, setSpeeds, rated, setRated, datePreset, setDatePreset, fromDate, setFromDate, toDate, setToDate, headerLeft, headerRight } = props;
+  const {
+    speeds,
+    setSpeeds,
+    rated,
+    setRated,
+    datePreset,
+    setDatePreset,
+    fromDate,
+    setFromDate,
+    toDate,
+    setToDate,
+    headerLeft,
+    headerRight,
+    footerNote,
+  } = props;
 
   const [generateStyleMarkers, setGenerateStyleMarkers] = useState(true);
 
@@ -128,6 +143,8 @@ export function OpponentFiltersPanel(props: Props) {
               </span>
             </label>
           </div>
+
+          {footerNote ? <div className="text-[10px] text-zinc-600">{footerNote}</div> : null}
         </div>
       </div>
     </div>
