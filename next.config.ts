@@ -5,6 +5,9 @@ const nextConfig: NextConfig = {
   eslint: {
     ignoreDuringBuilds: true,
   },
+  experimental: {
+    webpackBuildWorker: false,
+  },
   webpack: (config, { isServer }) => {
     if (isServer) {
       config.output = config.output ?? {};
