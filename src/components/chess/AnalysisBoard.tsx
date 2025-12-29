@@ -10,6 +10,7 @@ type Strategy = "proportional" | "random";
 type Props = {
   state: ChessBoardCoreState;
   opponentUsername: string;
+  opponentImportedCount: number;
   filtersKey: string;
   requestOpponentMove: (params: { fen: string; username: string; mode: Strategy; prefetch?: boolean }) => Promise<any>;
   showArrow: boolean;
@@ -48,6 +49,7 @@ export function AnalysisBoard(props: Props) {
   const {
     state,
     opponentUsername,
+    opponentImportedCount,
     filtersKey,
     requestOpponentMove,
     showArrow,
@@ -73,6 +75,7 @@ export function AnalysisBoard(props: Props) {
   const [showEngineColumn, setShowEngineColumn] = useState(false);
   const [engineMoveEval, setEngineMoveEval] = useState<Record<string, string>>({});
   const [moveTableTab, setMoveTableTab] = useState<"moves" | "tab2">("moves");
+  const prevImportedCountRef = useRef(0);
 
   useEffect(() => {
     if (!showArrow) return;
@@ -202,7 +205,24 @@ export function AnalysisBoard(props: Props) {
     return () => {
       cancelled = true;
     };
-  }, [opponentUsername, filtersKey, showArrow, showMoveTable, state.fen, setOpponentStatsBusy, setOpponentStats]);
+  }, [opponentUsername, filtersKey, showArrow, showMoveTable, state.fen, opponentImportedCount, setOpponentStatsBusy, setOpponentStats]);
+
+  useEffect(() => {
+    const trimmed = opponentUsername.trim();
+    if (!trimmed) return;
+    if (!showMoveTable && !showArrow) return;
+    const prev = prevImportedCountRef.current;
+    prevImportedCountRef.current = opponentImportedCount;
+    if (opponentImportedCount <= prev) return;
+    setOpponentStatsBusy(true);
+    void fetchOpponentStats({ fen: state.fen, username: trimmed })
+      .then((stats) => {
+        setOpponentStats(stats);
+      })
+      .finally(() => {
+        setOpponentStatsBusy(false);
+      });
+  }, [opponentImportedCount, opponentUsername, showArrow, showMoveTable, state.fen, setOpponentStats, setOpponentStatsBusy]);
 
   useEffect(() => {
     if (!showEngineBest) {
@@ -469,7 +489,10 @@ export function AnalysisBoard(props: Props) {
       {showMoveTable ? (
         <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
           <div className="flex items-end justify-between gap-3">
-            <div className="text-[10px] font-medium text-zinc-900">Next Moves</div>
+            <div className="grid gap-0.5">
+              <div className="text-[10px] font-medium text-zinc-900">Next Moves</div>
+              <div className="text-[10px] text-zinc-500">Games imported: {opponentImportedCount}</div>
+            </div>
             <div className="flex items-center gap-4 border-b border-zinc-200 text-[10px]">
               <button
                 type="button"

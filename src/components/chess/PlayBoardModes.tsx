@@ -500,6 +500,8 @@ export function PlayBoardModes({ initialFen }: Props) {
     );
   }, [imports, opponentUsername]);
 
+  const opponentImportedCount = typeof opponentImport?.imported_count === "number" ? opponentImport.imported_count : 0;
+
   const archivingNote = useMemo(() => {
     if (!opponentImport) return null;
     if (!opponentImport.ready) return null;
@@ -1245,6 +1247,7 @@ export function PlayBoardModes({ initialFen }: Props) {
               <AnalysisBoard
                 state={state}
                 opponentUsername={opponentUsername}
+                opponentImportedCount={opponentImportedCount}
                 filtersKey={filtersKey}
                 requestOpponentMove={requestOpponentMove}
                 showArrow={analysisShowArrow}

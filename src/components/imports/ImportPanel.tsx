@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useImportsRealtime } from "@/lib/hooks/useImportsRealtime";
+import { createOpeningGraphImporter, type OpeningGraphImportStatus } from "@/lib/openingGraphImport/openingGraphImportService";
 
 type ImportRow = ReturnType<typeof useImportsRealtime>["imports"][number];
 
@@ -15,9 +16,17 @@ export function ImportPanel({ selfUsername, selfPlatform }: Props) {
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [continueBusy, setContinueBusy] = useState(false);
+  const [fastStatus, setFastStatus] = useState<OpeningGraphImportStatus>({
+    phase: "idle",
+    gamesProcessed: 0,
+    bytesRead: 0,
+    lastError: null,
+  });
   const [opponentPlatform, setOpponentPlatform] = useState<"lichess" | "chesscom">("lichess");
   const [opponentUsername, setOpponentUsername] = useState<string>("");
   const [activeImportId, setActiveImportId] = useState<string | null>(null);
+
+  const fastImporterRef = useRef<ReturnType<typeof createOpeningGraphImporter> | null>(null);
 
   const selfImport = useMemo(() => {
     return imports.find(
@@ -48,6 +57,38 @@ export function ImportPanel({ selfUsername, selfPlatform }: Props) {
       setStatus(e instanceof Error ? e.message : "Failed to run opponent import");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function startFastOpponentImport() {
+    const trimmed = opponentUsername.trim();
+    if (!trimmed) {
+      setStatus("Opponent username is required");
+      return;
+    }
+
+    if (opponentPlatform !== "lichess") {
+      setStatus("Fast import currently supports Lichess only");
+      return;
+    }
+
+    setStatus(null);
+
+    if (!fastImporterRef.current) {
+      fastImporterRef.current = createOpeningGraphImporter({
+        onStatus: (s) => setFastStatus(s),
+      });
+    }
+
+    try {
+      await fastImporterRef.current.start({
+        platform: "lichess",
+        username: trimmed,
+        color: "both",
+        rated: "any",
+      });
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Failed to start fast import");
     }
   }
 
@@ -294,7 +335,17 @@ export function ImportPanel({ selfUsername, selfPlatform }: Props) {
               disabled={loading || !opponentUsername.trim()}
               onClick={startOpponentImport}
             >
-              Start
+              Start / Resume
+            </button>
+
+            <button
+              type="button"
+              className="inline-flex h-11 items-center justify-center rounded-xl border border-zinc-200 bg-white px-4 text-sm font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
+              disabled={loading || fastStatus.phase === "running"}
+              onClick={startFastOpponentImport}
+              title="Fast Import (beta): streams from Lichess and writes aggregated opening graph"
+            >
+              Fast Import (beta)
             </button>
 
             <button

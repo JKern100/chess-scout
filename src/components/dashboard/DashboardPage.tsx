@@ -61,6 +61,7 @@ function formatSavedLineDate(iso: string) {
 }
 
 export function DashboardPage({ initialOpponents }: Props) {
+  const MIN_GAMES_FOR_ANALYSIS = 10;
   const [opponents, setOpponents] = useState<OpponentRow[]>(initialOpponents);
   const [status, setStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -166,17 +167,6 @@ export function DashboardPage({ initialOpponents }: Props) {
     }
   }
 
-  async function continueImport(importId: string) {
-    const res = await fetch("/api/imports/lichess/continue", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ import_id: importId }),
-    });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json?.error ?? "Import failed");
-    return json;
-  }
-
   async function stopImport(importId: string) {
     stopRequestedRef.current = true;
     const res = await fetch("/api/imports/stop", {
@@ -256,33 +246,6 @@ export function DashboardPage({ initialOpponents }: Props) {
         status: initialStatus,
       });
       setImportModalOpen(true);
-
-      // Poll until complete/error/stopped.
-      for (;;) {
-        if (stopRequestedRef.current) break;
-        setContinueBusy(true);
-        const step = await continueImport(importId);
-        setContinueBusy(false);
-        const status = String(step?.import?.status ?? initialStatus);
-        const stage = String(step?.import?.stage ?? initialStage);
-        const ready = Boolean(step?.import?.ready);
-        const importedCount = Number(step?.import?.imported_count ?? initialImported);
-        const indexedCount = Number(step?.import?.archived_count ?? initialIndexed);
-        setActiveImport({
-          id: importId,
-          platform: o.platform,
-          username: o.username,
-          importedCount,
-          indexedCount,
-          ready,
-          stage,
-          status,
-        });
-        if (status && status !== "running") break;
-        await new Promise((r) => window.setTimeout(r, 500));
-      }
-
-      await reloadOpponents();
     } catch (e) {
       setStatus(e instanceof Error ? e.message : "Refresh failed");
     } finally {
@@ -335,6 +298,7 @@ export function DashboardPage({ initialOpponents }: Props) {
   const activeIndexedCapped = Math.min(Number(activeImport?.indexedCount ?? 0), 1000);
   const activePct = Math.max(0, Math.min(100, Math.round((activeIndexedCapped / 1000) * 100)));
   const activeIndeterminate = indeterminateArmed && !activeReady && activeIndexedCapped === 0 && continueBusy;
+  const activeCanAnalyze = (activeImport?.importedCount ?? 0) >= MIN_GAMES_FOR_ANALYSIS;
 
   useEffect(() => {
     if (!importModalOpen || !activeImport) {
@@ -589,8 +553,8 @@ export function DashboardPage({ initialOpponents }: Props) {
                     <button
                       type="button"
                       className="inline-flex h-10 items-center justify-center rounded-xl border border-zinc-200 bg-white px-4 text-xs font-semibold text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
-                      disabled={!activeReady}
-                      title={activeReady ? undefined : "Scout not ready yet (indexing first 1,000 games)"}
+                      disabled={!activeCanAnalyze}
+                      title={activeCanAnalyze ? undefined : `Waiting for ${MIN_GAMES_FOR_ANALYSIS} games to download...`}
                       onClick={() => prepare({ platform: activeImport.platform, username: activeImport.username, created_at: "", last_refreshed_at: null })}
                     >
                       Analyze
@@ -598,9 +562,9 @@ export function DashboardPage({ initialOpponents }: Props) {
                     <Link
                       href={`/opponents/${encodeURIComponent(activeImport.platform)}/${encodeURIComponent(activeImport.username)}/profile`}
                       className={`inline-flex h-10 items-center justify-center rounded-xl bg-zinc-900 px-4 text-xs font-semibold text-white hover:bg-zinc-800 ${
-                        activeReady ? "" : "pointer-events-none opacity-60"
+                        activeCanAnalyze ? "" : "pointer-events-none opacity-60"
                       }`}
-                      title={activeReady ? undefined : "Scout not ready yet (indexing first 1,000 games)"}
+                      title={activeCanAnalyze ? undefined : `Waiting for ${MIN_GAMES_FOR_ANALYSIS} games to download...`}
                     >
                       Create Profile
                     </Link>
@@ -628,7 +592,10 @@ export function DashboardPage({ initialOpponents }: Props) {
 
               const importRow = importsByKey.get(key) ?? null;
               const tieredStatus = formatTieredStatus(importRow as any, isActive);
-              const canUseScout = Boolean((importRow as any)?.ready);
+              const downloadedCount = typeof (importRow as any)?.imported_count === "number" ? (importRow as any).imported_count : 0;
+              const recordsCountBase = typeof latest.games_count === "number" ? latest.games_count : 0;
+              const recordsCountLive = Math.max(recordsCountBase, downloadedCount);
+              const canUseScout = downloadedCount >= MIN_GAMES_FOR_ANALYSIS || isActive;
 
               const isSavedOpen = Boolean(savedLinesOpen[key]);
               const savedLines = savedLinesByOpponent[key] ?? null;
@@ -673,8 +640,10 @@ export function DashboardPage({ initialOpponents }: Props) {
                         <div className="truncate text-sm font-medium text-zinc-900">{latest.username}</div>
                       </div>
                       <div className="mt-1 text-xs text-zinc-600">
-                        Records: {typeof latest.games_count === "number" ? latest.games_count : 0} · Last refreshed:{" "}
-                        {latest.last_refreshed_at ? formatRelative(latest.last_refreshed_at) : "never"}
+                        Records: {recordsCountLive} · Last refreshed:{" "}
+                        <span suppressHydrationWarning>
+                          {latest.last_refreshed_at ? formatRelative(latest.last_refreshed_at) : "never"}
+                        </span>
                       </div>
                       {isActive ? (
                         <div className="mt-1 text-xs font-medium text-zinc-700">
@@ -698,7 +667,7 @@ export function DashboardPage({ initialOpponents }: Props) {
                         type="button"
                         className="inline-flex h-9 items-center justify-center rounded-lg bg-zinc-900 px-3 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-60"
                         disabled={loading || !canUseScout}
-                        title={canUseScout ? undefined : "Scout not ready yet (indexing first 1,000 games)"}
+                        title={canUseScout ? undefined : `Waiting for ${MIN_GAMES_FOR_ANALYSIS} games to download...`}
                         onClick={() => prepare(latest)}
                       >
                         Prepare
@@ -797,17 +766,19 @@ export function DashboardPage({ initialOpponents }: Props) {
                                     }}
                                   />
                                 </div>
+
                                 <div className="min-w-0 flex-1">
                                   <div className="flex items-baseline justify-between gap-2">
                                     <div className="truncate text-xs font-medium text-zinc-900">{sl.name}</div>
-                                    <div className="shrink-0 text-[10px] text-zinc-500">{formatSavedLineDate(sl.saved_at)}</div>
+                                    <div className="shrink-0 text-[10px] text-zinc-500" suppressHydrationWarning>
+                                      {formatSavedLineDate(sl.saved_at)}
+                                    </div>
                                   </div>
                                   {sl.notes ? (
-                                    <div className="mt-1 text-xs text-zinc-600 line-clamp-2">
-                                      {sl.notes}
-                                    </div>
+                                    <div className="mt-1 text-xs text-zinc-600 line-clamp-2">{sl.notes}</div>
                                   ) : null}
-                                  <div className="mt-2 flex items-center justify-end">
+
+                                  <div className="mt-2 flex items-center gap-2">
                                     <Link
                                       href={`/play?mode=analysis&saved_line_id=${encodeURIComponent(sl.id)}`}
                                       className="inline-flex h-7 items-center justify-center rounded-lg bg-zinc-900 px-2.5 text-[10px] font-semibold text-white hover:bg-zinc-800"

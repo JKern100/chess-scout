@@ -99,8 +99,9 @@ export function buildOpponentMoveEventsFromGame(params: {
   platformGameId: string;
   playedAt: string | null;
   pgn: string;
+  maxPlies?: number;
 }): OpponentMoveEventRow[] {
-  const { profileId, platform, username, platformGameId, playedAt, pgn } = params;
+  const { profileId, platform, username, platformGameId, playedAt, pgn, maxPlies } = params;
 
   const oppColor = inferOpponentColorFromPgn(pgn, username);
   if (!oppColor) return [];
@@ -134,6 +135,7 @@ export function buildOpponentMoveEventsFromGame(params: {
     if (!played) break;
 
     ply += 1;
+    if (typeof maxPlies === "number" && maxPlies > 0 && ply > maxPlies) break;
     const uci = `${mv.from}${mv.to}${mv.promotion ? mv.promotion : ""}`;
     const moveColor = mv?.color as "w" | "b" | undefined;
 
@@ -172,16 +174,15 @@ export async function upsertOpponentMoveEvents(params: {
 
   for (let i = 0; i < rows.length; i += chunkSize) {
     const chunk = rows.slice(i, i + chunkSize);
-    const { error, data } = await supabase
+    const { error } = await supabase
       .from("opponent_move_events")
       .upsert(chunk, {
         onConflict: "profile_id,platform,platform_game_id,ply",
         ignoreDuplicates: true,
-      })
-      .select("profile_id");
+      });
 
     if (error) throw error;
-    inserted += (data?.length ?? 0);
+    inserted += chunk.length;
   }
 
   return { inserted };

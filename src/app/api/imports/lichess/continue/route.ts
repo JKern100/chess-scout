@@ -8,6 +8,10 @@ const STAGE1_BATCH_MAX = 200;
 const STAGE2_BATCH_MAX = 500;
 const READY_THRESHOLD_GAMES = 1000;
 const STAGE1_INDEX_MAX = 50;
+const STAGE1_MAX_PLIES = 16;
+
+const continueLocks = new Map<string, number>();
+const CONTINUE_LOCK_TTL_MS = 60_000;
 
 export async function POST(request: Request) {
   const supabase = await createSupabaseServerClient();
@@ -58,7 +62,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unsupported platform" }, { status: 400 });
   }
 
+  const lockKey = `${user.id}:${imp.username}`;
+  const heldAt = continueLocks.get(lockKey);
+  if (heldAt && Date.now() - heldAt < CONTINUE_LOCK_TTL_MS) {
+    return NextResponse.json({ error: "Lichess import already in progress" }, { status: 429 });
+  }
+  continueLocks.set(lockKey, Date.now());
+
   try {
+    const t0 = Date.now();
     const untilMs = imp.cursor_until ? new Date(imp.cursor_until).getTime() : undefined;
 
     const stage = typeof (imp as any)?.stage === "string" ? String((imp as any).stage) : "indexing";
@@ -68,11 +80,27 @@ export async function POST(request: Request) {
 
     const batchMax = ready || stage === "archiving" ? STAGE2_BATCH_MAX : STAGE1_BATCH_MAX;
 
+    const tFetch0 = Date.now();
     const batch = await fetchLichessGamesBatch({
       username: imp.username,
       max: batchMax,
       untilMs,
     });
+    const tFetch1 = Date.now();
+
+    console.log(
+      JSON.stringify({
+        tag: "import_continue",
+        phase: "fetch",
+        importId: imp.id,
+        username: imp.username,
+        untilMs: untilMs ?? null,
+        batchMax,
+        batchLen: batch.games.length,
+        oldestGameAtMs: batch.oldestGameAtMs,
+        newestGameAtMs: batch.newestGameAtMs,
+      })
+    );
 
     if (batch.games.length === 0) {
       const { data: updated, error: updateErr } = await supabase
@@ -133,6 +161,7 @@ export async function POST(request: Request) {
 
     const batchById = new Map(batch.games.map((g) => [String(g.platformGameId), g] as const));
 
+    const tGames0 = Date.now();
     const { data: upserted, error: upsertErr } = await supabase
       .from("games")
       .upsert(rows, {
@@ -140,6 +169,7 @@ export async function POST(request: Request) {
         ignoreDuplicates: true,
       })
       .select("platform_game_id, played_at");
+    const tGames1 = Date.now();
 
     if (upsertErr) {
       throw upsertErr;
@@ -154,8 +184,47 @@ export async function POST(request: Request) {
 
     let indexedGameCount = 0;
 
-    if (insertedCount > 0 && (shouldIndexMovesStage1 || shouldIndexMovesStage2)) {
+    // If we didn't insert any new games (duplicates / already imported), stage-1 indexing can stall.
+    // Keep indexing from the existing games table using archived_count as an offset.
+    if (insertedCount === 0 && shouldIndexMovesStage1) {
       try {
+        const start = Math.max(0, indexedCountBefore);
+        const end = start + STAGE1_INDEX_MAX - 1;
+        const { data: existing, error: existingErr } = await supabase
+          .from("games")
+          .select("platform_game_id, played_at, pgn")
+          .eq("profile_id", user.id)
+          .eq("platform", "lichess")
+          .eq("username", imp.username)
+          .order("played_at", { ascending: false })
+          .range(start, end);
+
+        if (existingErr) throw existingErr;
+
+        const rows = Array.isArray(existing) ? existing : [];
+        const events = rows.flatMap((g: any) => {
+          const platformGameId = String(g?.platform_game_id ?? "");
+          return buildOpponentMoveEventsFromGame({
+            profileId: user.id,
+            platform: "lichess",
+            username: imp.username,
+            platformGameId,
+            playedAt: (g?.played_at as string | null) ?? null,
+            pgn: String(g?.pgn ?? ""),
+            maxPlies: STAGE1_MAX_PLIES,
+          });
+        });
+
+        await upsertOpponentMoveEvents({ supabase, rows: events });
+        indexedGameCount = rows.length;
+      } catch {
+        // best-effort
+      }
+    }
+
+    if (indexedGameCount === 0 && insertedCount > 0 && (shouldIndexMovesStage1 || shouldIndexMovesStage2)) {
+      try {
+        const tIndex0 = Date.now();
         const limit = shouldIndexMovesStage2
           ? Math.min(insertedCount, STAGE2_BATCH_MAX)
           : Math.min(insertedCount, STAGE1_INDEX_MAX);
@@ -172,16 +241,39 @@ export async function POST(request: Request) {
             platformGameId,
             playedAt: (g?.played_at as string | null) ?? null,
             pgn: String(src?.pgn ?? ""),
+            maxPlies: shouldIndexMovesStage2 ? undefined : STAGE1_MAX_PLIES,
           });
         });
 
+        const tUpsert0 = Date.now();
         await upsertOpponentMoveEvents({ supabase, rows: events });
+        const tUpsert1 = Date.now();
+
+        console.log(
+          JSON.stringify({
+            tag: "import_continue",
+            phase: "index",
+            importId: imp.id,
+            username: imp.username,
+            gamesFetched: batch.games.length,
+            gamesInserted: insertedCount,
+            gamesIndexed: indexedGameCount,
+            eventsAttempted: events.length,
+            ms_parse_build: tUpsert0 - tIndex0,
+            ms_events_upsert: tUpsert1 - tUpsert0,
+          })
+        );
       } catch {
         // best-effort
       }
     }
 
-    const nextUntilMs = batch.oldestGameAtMs !== null ? batch.oldestGameAtMs - 1 : null;
+    const nextUntilMs =
+      batch.oldestGameAtMs !== null
+        ? batch.oldestGameAtMs - 1
+        : untilMs !== undefined
+          ? untilMs - 1
+          : null;
 
     const updatePayload: any = {
       imported_count: importedCountAfter,
@@ -209,14 +301,8 @@ export async function POST(request: Request) {
       updatePayload.newest_game_at = new Date(batch.newestGameAtMs).toISOString();
     }
 
-    if (nextUntilMs !== null) {
+    if (nextUntilMs !== null && nextUntilMs > 0) {
       updatePayload.cursor_until = new Date(nextUntilMs).toISOString();
-    }
-
-    if (batch.games.length < batchMax) {
-      updatePayload.status = "complete";
-      updatePayload.stage = "complete";
-      if (imp.target_type === "opponent") updatePayload.ready = true;
     }
 
     const { data: updated, error: updateErr } = await supabase
@@ -227,6 +313,18 @@ export async function POST(request: Request) {
         "id, profile_id, target_type, platform, username, status, imported_count, last_game_at, cursor_until, newest_game_at, ready, stage, archived_count, last_success_at, expires_at, last_error, updated_at"
       )
       .single();
+
+    console.log(
+      JSON.stringify({
+        tag: "import_continue",
+        phase: "done",
+        importId: imp.id,
+        username: imp.username,
+        ms_total: Date.now() - t0,
+        ms_fetch: tFetch1 - tFetch0,
+        ms_games_upsert: tGames1 - tGames0,
+      })
+    );
 
     if (updateErr) {
       return NextResponse.json({ error: updateErr.message }, { status: 500 });
@@ -265,12 +363,30 @@ export async function POST(request: Request) {
   } catch (e) {
     const message = e instanceof Error ? e.message : "Import failed";
 
+    const statusMatch = /Lichess API error \((\d{3})\)/.exec(message);
+    const upstreamStatus = statusMatch ? Number(statusMatch[1]) : null;
+    const responseStatus = upstreamStatus && Number.isFinite(upstreamStatus) ? upstreamStatus : 500;
+
+    console.warn(
+      JSON.stringify({
+        tag: "import_continue",
+        phase: "error",
+        importId: imp.id,
+        username: imp.username,
+        message,
+      })
+    );
+
+    // Keep the import 'running' so the ImportSupervisor can retry.
+    // Persist the error so the UI can surface it.
     await supabase
       .from("imports")
-      .update({ status: "error", last_error: message })
+      .update({ status: "running", last_error: message })
       .eq("id", imp.id)
       .eq("profile_id", user.id);
 
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: message }, { status: responseStatus });
+  } finally {
+    continueLocks.delete(lockKey);
   }
 }
