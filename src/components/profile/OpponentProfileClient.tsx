@@ -422,6 +422,7 @@ export function OpponentProfileClient({ platform, username }: Props) {
   const [styleOpen, setStyleOpen] = useState(false);
   const [resultsOpen, setResultsOpen] = useState(false);
   const [datasetOpen, setDatasetOpen] = useState(false);
+  const [styleMarkersOpen, setStyleMarkersOpen] = useState(true);
 
   const runGenerate = useCallback(async () => {
     if (generateBusy) return;
@@ -518,6 +519,123 @@ export function OpponentProfileClient({ platform, username }: Props) {
   }, []);
 
   const accent = "#EAB308";
+
+  const styleMarkers = useMemo(() => {
+    if (!hasV2 || !segment) return [] as Array<{ label: string; strength: "Strong" | "Medium" | "Light"; tooltip: string }>;
+
+    const markers: Array<{ label: string; strength: "Strong" | "Medium" | "Light"; tooltip: string }> = [];
+
+    const totalCastles =
+      segment.style.castling.kingside + segment.style.castling.queenside + segment.style.castling.none > 0
+        ? segment.style.castling.kingside + segment.style.castling.queenside + segment.style.castling.none
+        : 1;
+    const ksPct = segment.style.castling.kingside / totalCastles;
+    const qsPct = segment.style.castling.queenside / totalCastles;
+    const nonePct = segment.style.castling.none / totalCastles;
+
+    const toStrength = (pct: number): "Strong" | "Medium" | "Light" => {
+      if (pct >= 0.75) return "Strong";
+      if (pct >= 0.55) return "Medium";
+      return "Light";
+    };
+
+    if (ksPct >= 0.55) {
+      markers.push({
+        label: "Kingside Seeker",
+        strength: toStrength(ksPct),
+        tooltip: "Usually castles kingside early, favoring quick king safety and a stable center.",
+      });
+    }
+
+    if (qsPct >= 0.35) {
+      markers.push({
+        label: "Queenside Adventurer",
+        strength: toStrength(qsPct),
+        tooltip: "Frequently castles queenside, often aiming for opposite-wing pawn races.",
+      });
+    }
+
+    if (nonePct >= 0.35) {
+      markers.push({
+        label: "Center-Stayer",
+        strength: toStrength(nonePct),
+        tooltip: "Often delays castling or keeps the king centralized for flexibility.",
+      });
+    }
+
+    const qtPct = segment.style.queen_trade_by_20.pct / 100;
+    if (qtPct >= 0.55) {
+      markers.push({
+        label: "Early Queen Trader",
+        strength: toStrength(qtPct),
+        tooltip: "Trades queens early at a high rate, preferring simplified structures.",
+      });
+    } else if (qtPct <= 0.35) {
+      markers.push({
+        label: "Queen Keeper",
+        strength: toStrength(1 - qtPct),
+        tooltip: "Avoids early queen trades, keeping tactical chances and complications.",
+      });
+    }
+
+    const ksStorm = segment.style.pawn_storm_after_castle.kingside_pct;
+    if (ksStorm >= 0.45) {
+      markers.push({
+        label: "Kingside Pawn Storms",
+        strength: toStrength(ksStorm),
+        tooltip: "After castling kingside, often throws pawns forward to attack.",
+      });
+    }
+
+    const qsStorm = segment.style.pawn_storm_after_castle.queenside_pct;
+    if (qsStorm >= 0.45) {
+      markers.push({
+        label: "Queenside Pawn Storms",
+        strength: toStrength(qsStorm),
+        tooltip: "After castling queenside, frequently launches pawn storms on the opposite wing.",
+      });
+    }
+
+    const checks = segment.style.aggression.avg_checks_by_15;
+    if (checks >= 0.75) {
+      markers.push({
+        label: "Initiative Hunter",
+        strength: checks >= 1.2 ? "Strong" : "Medium",
+        tooltip: "Creates pressure early with checks and active piece play.",
+      });
+    }
+
+    const ctx = v3Addon?.contexts.as_white;
+    if (ctx?.deviation_habit.early_deviation_rate != null) {
+      const d = ctx.deviation_habit.early_deviation_rate;
+      if (d >= 0.55) {
+        markers.push({
+          label: "Early Deviator",
+          strength: toStrength(d),
+          tooltip: "Frequently deviates from mainlines early, making preparation harder.",
+        });
+      } else if (d <= 0.25) {
+        markers.push({
+          label: "Mainline Loyalist",
+          strength: toStrength(1 - d),
+          tooltip: "Often stays in booked/mainline paths for longer before deviating.",
+        });
+      }
+    }
+
+    if (ctx) {
+      const topLine = ctx.concentration.top_line_pct / 100;
+      if (topLine >= 0.45) {
+        markers.push({
+          label: "One-Line Specialist",
+          strength: toStrength(topLine),
+          tooltip: "Leans heavily on a single main line, which can be targeted with specific prep.",
+        });
+      }
+    }
+
+    return markers;
+  }, [hasV2, segment, v3Addon]);
 
   function OpeningBarList(props: { rows: V2OpeningRow[]; title: string; sampleWarning?: string | null; ctx?: V3Context | null }) {
     const { rows, title, sampleWarning, ctx } = props;
@@ -798,6 +916,40 @@ export function OpponentProfileClient({ platform, username }: Props) {
                 )}
               </BentoCard>
             </div>
+
+            <BentoCard
+              title={styleMarkersOpen ? "Style Markers" : `Style Markers • ${styleMarkers.length}`}
+              headerRight={
+                <button
+                  type="button"
+                  onClick={() => setStyleMarkersOpen((v) => !v)}
+                  className="inline-flex h-8 items-center justify-center rounded-xl border border-neutral-200 bg-white px-3 text-[10px] font-semibold text-neutral-900 shadow-sm hover:bg-neutral-50"
+                >
+                  {styleMarkersOpen ? "Hide" : "Show"}
+                </button>
+              }
+            >
+              {styleMarkersOpen ? (
+                styleMarkers.length === 0 ? (
+                  <div className="text-xs text-neutral-500">No markers yet for this sample.</div>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {styleMarkers.map((m) => (
+                      <div
+                        key={`${m.label}|${m.strength}`}
+                        title={m.tooltip}
+                        className="inline-flex items-center gap-2 rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1 text-xs text-neutral-900"
+                      >
+                        <span className="font-medium">{m.label}</span>
+                        <span className="rounded-full bg-neutral-200 px-2 py-0.5 text-[10px] font-semibold text-neutral-700">
+                          {m.strength}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )
+              ) : null}
+            </BentoCard>
 
 
             <div className="grid gap-4 md:grid-cols-2">
