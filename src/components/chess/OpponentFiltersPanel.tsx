@@ -1,13 +1,16 @@
 "use client";
 
 import type { ReactNode } from "react";
-import type { OpponentRatedFilter, OpponentSpeed } from "./useOpponentFilters";
+import { DateRangePresetSelect } from "./DateRangePresetSelect";
+import type { DatePreset, OpponentRatedFilter, OpponentSpeed } from "./useOpponentFilters";
 
 type Props = {
   speeds: OpponentSpeed[];
   setSpeeds: (next: OpponentSpeed[] | ((prev: OpponentSpeed[]) => OpponentSpeed[])) => void;
   rated: OpponentRatedFilter;
   setRated: (next: OpponentRatedFilter) => void;
+  datePreset: DatePreset;
+  setDatePreset: (next: DatePreset) => void;
   fromDate: string;
   setFromDate: (v: string) => void;
   toDate: string;
@@ -17,7 +20,7 @@ type Props = {
 };
 
 export function OpponentFiltersPanel(props: Props) {
-  const { speeds, setSpeeds, rated, setRated, fromDate, setFromDate, toDate, setToDate, headerLeft, headerRight } = props;
+  const { speeds, setSpeeds, rated, setRated, datePreset, setDatePreset, fromDate, setFromDate, toDate, setToDate, headerLeft, headerRight } = props;
 
   return (
     <div className="rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm">
@@ -70,6 +73,7 @@ export function OpponentFiltersPanel(props: Props) {
             </div>
 
             <div className="text-[10px] font-medium text-zinc-900">Date Range</div>
+            <DateRangePresetSelect value={datePreset} onChange={setDatePreset} />
             <div className="grid gap-2 md:grid-cols-2">
               <div className="flex flex-col gap-1">
                 <label className="text-[10px] font-medium text-zinc-900" htmlFor="opp-filter-from">

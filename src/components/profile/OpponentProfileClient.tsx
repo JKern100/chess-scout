@@ -286,7 +286,7 @@ function RepertoireTree(params: { nodes: V2BranchNode[]; maxDepth: number; oppon
 }
 
 export function OpponentProfileClient({ platform, username }: Props) {
-  const { speeds, setSpeeds, rated, setRated, fromDate, setFromDate, toDate, setToDate } = useOpponentFilters();
+  const { speeds, setSpeeds, rated, setRated, datePreset, setDatePreset, fromDate, setFromDate, toDate, setToDate } = useOpponentFilters();
 
   const [profileRow, setProfileRow] = useState<OpponentProfileRow | null>(null);
   const [loadBusy, setLoadBusy] = useState(false);
@@ -906,6 +906,8 @@ export function OpponentProfileClient({ platform, username }: Props) {
             setSpeeds={setSpeeds}
             rated={rated}
             setRated={setRated}
+            datePreset={datePreset}
+            setDatePreset={setDatePreset}
             fromDate={fromDate}
             setFromDate={setFromDate}
             toDate={toDate}

@@ -385,6 +385,8 @@ export function PlayBoardModes({ initialFen }: Props) {
     setSpeeds: setFilterSpeeds,
     rated: filterRated,
     setRated: setFilterRated,
+    datePreset: filterDatePreset,
+    setDatePreset: setFilterDatePreset,
     fromDate: filterFromDate,
     setFromDate: setFilterFromDate,
     toDate: filterToDate,
@@ -965,6 +967,8 @@ export function PlayBoardModes({ initialFen }: Props) {
         setSpeeds={setFilterSpeeds}
         rated={filterRated}
         setRated={setFilterRated}
+        datePreset={filterDatePreset}
+        setDatePreset={setFilterDatePreset}
         fromDate={filterFromDate}
         setFromDate={setFilterFromDate}
         toDate={filterToDate}
