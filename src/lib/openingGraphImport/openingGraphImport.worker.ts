@@ -65,6 +65,7 @@ let gamesProcessed = 0;
 let bytesRead = 0;
 
 const fenMap = new Map<string, FenAgg>();
+const dirtyFens = new Set<string>();
 
 function normalizeFen(fen: string) {
   const parts = fen.trim().split(/\s+/);
@@ -130,6 +131,7 @@ function ensureFenAgg(fen: string): FenAgg {
     entry = { opponent: {}, against: {} };
     fenMap.set(fen, entry);
   }
+  dirtyFens.add(fen);
   return entry;
 }
 
@@ -154,8 +156,11 @@ function ensureMoveAgg(map: SideAgg, uci: string): MoveAgg {
 function flushNodes(maxNodes = 250): FlushPayload[] {
   const out: FlushPayload[] = [];
   let i = 0;
-  for (const [fen, played_by] of fenMap) {
+  for (const fen of dirtyFens) {
+    const played_by = fenMap.get(fen);
+    if (!played_by) continue;
     out.push({ fen, played_by });
+    dirtyFens.delete(fen);
     i += 1;
     if (i >= maxNodes) break;
   }
@@ -167,6 +172,7 @@ async function runImport(params: ImportStartMessage) {
   gamesProcessed = 0;
   bytesRead = 0;
   fenMap.clear();
+  dirtyFens.clear();
 
   const user = params.username.trim();
   if (!user) {
@@ -282,6 +288,9 @@ async function runImport(params: ImportStartMessage) {
         const side = moveColor === oppColor ? fenAgg.opponent : fenAgg.against;
         const agg = ensureMoveAgg(side, uci);
 
+        // Mark the current position as dirty (ensureFenAgg does too, but this is cheap and safe).
+        dirtyFens.add(fenKey);
+
         agg.count += 1;
         agg.win += outcome.win;
         agg.loss += outcome.loss;
@@ -324,6 +333,10 @@ async function runImport(params: ImportStartMessage) {
   }
 
   (self as any).postMessage({ type: "flush", nodes: flushNodes(), gamesProcessed } satisfies WorkerFlush);
+  // Flush any remaining dirty nodes.
+  while (dirtyFens.size > 0) {
+    (self as any).postMessage({ type: "flush", nodes: flushNodes(500), gamesProcessed } satisfies WorkerFlush);
+  }
   (self as any).postMessage({ type: "done", gamesProcessed } satisfies WorkerDone);
 }
 

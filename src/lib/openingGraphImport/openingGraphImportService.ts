@@ -42,12 +42,18 @@ export function createOpeningGraphImporter(params: {
   let stopped = false;
   let status: OpeningGraphImportStatus = { phase: "idle", gamesProcessed: 0, bytesRead: 0, lastError: null };
 
+  let profileId: string | null = null;
+  let writeDisabled = false;
+
   let writeQueue: Promise<void> = Promise.resolve();
 
   async function upsertNodes(platform: string, username: string, nodes: WorkerFlushNode[]) {
     if (nodes.length === 0) return;
+    if (writeDisabled) return;
+    if (!profileId) throw new Error("Not authenticated");
 
     const rows = nodes.map((n) => ({
+      profile_id: profileId,
       platform,
       username,
       fen: normalizeFen(n.fen),
@@ -61,7 +67,14 @@ export function createOpeningGraphImporter(params: {
       const { error } = await supabase.from("opening_graph_nodes").upsert(chunk, {
         onConflict: "profile_id,platform,username,fen",
       });
-      if (error) throw error;
+      if (error) {
+        // If we hit RLS/permission issues, stop spamming and surface a clear error.
+        const statusCode = (error as any)?.status;
+        if (statusCode === 401 || statusCode === 403) {
+          writeDisabled = true;
+        }
+        throw error;
+      }
     }
   }
 
@@ -82,7 +95,18 @@ export function createOpeningGraphImporter(params: {
 
   async function start(p: OpeningGraphImportParams) {
     stopped = false;
+    writeDisabled = false;
     setStatus({ phase: "running", gamesProcessed: 0, bytesRead: 0, lastError: null });
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+    if (userError || !user?.id) {
+      setStatus({ phase: "error", lastError: "Not signed in" });
+      return;
+    }
+    profileId = user.id;
 
     worker = new Worker(new URL("./openingGraphImport.worker.ts", import.meta.url), { type: "module" });
 
@@ -108,6 +132,9 @@ export function createOpeningGraphImporter(params: {
           .catch((e) => {
             const m = e instanceof Error ? e.message : "Failed to write opening graph";
             setStatus({ phase: "error", lastError: m });
+            if (writeDisabled) {
+              postStop();
+            }
           });
         return;
       }

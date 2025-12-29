@@ -1,5 +1,9 @@
 begin;
 
+-- Clear aggregated opening graph data
+truncate table public.opening_graph_examples restart identity;
+truncate table public.opening_graph_nodes restart identity;
+
 -- Clear move-by-move data
 truncate table public.opponent_move_events restart identity;
 

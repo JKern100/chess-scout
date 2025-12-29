@@ -16,6 +16,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const profileId = user.id;
+
   let body: any = {};
   try {
     body = await request.json();
@@ -37,6 +39,9 @@ export async function POST(request: Request) {
     "bullet" | "blitz" | "rapid" | "classical" | "correspondence"
   >;
 
+  const normalizedSpeeds =
+    speeds.length >= 5 ? ([] as typeof speeds) : speeds;
+
   const ratedRaw = String(body?.rated ?? "any");
   const rated = ratedRaw === "rated" ? "rated" : ratedRaw === "casual" ? "casual" : "any";
 
@@ -55,18 +60,60 @@ export async function POST(request: Request) {
 
   const cache = { status: "db", max_games: 0, age_ms: 0, build_ms: 0 };
 
+  const canUseOpeningGraph =
+    normalizedSpeeds.length === 0 && rated === "any" && !from && !to && platform === "lichess";
+
+  async function fetchMovesFromOpeningGraph(params: {
+    fenKey: string;
+    side: "opponent" | "against";
+  }): Promise<Array<{ uci: string; san: string | null; played_count: number; win: number; loss: number; draw: number }>> {
+    const { data, error } = await supabase
+      .from("opening_graph_nodes")
+      .select("played_by")
+      .eq("profile_id", profileId)
+      .eq("platform", platform)
+      .eq("username", username)
+      .eq("fen", params.fenKey)
+      .maybeSingle();
+
+    if (error) throw error;
+
+    const playedBy = (data as any)?.played_by as any;
+    const bucket = params.side === "opponent" ? playedBy?.opponent : playedBy?.against;
+    const entries = bucket && typeof bucket === "object" ? Object.entries(bucket) : [];
+
+    return entries
+      .map(([uci, agg]: any) => ({
+        uci: String(uci ?? ""),
+        san: agg?.san != null ? String(agg.san) : null,
+        played_count: Number(agg?.count ?? 0),
+        win: Number(agg?.win ?? 0),
+        loss: Number(agg?.loss ?? 0),
+        draw: Number(agg?.draw ?? 0),
+      }))
+      .filter((m) => m.uci && m.played_count > 0)
+      .sort((a, b) => b.played_count - a.played_count);
+  }
+
   async function fetchMoves(params: {
     fenKey: string;
     isOpponentMove: boolean;
   }): Promise<
     Array<{ uci: string; san: string | null; played_count: number; win: number; loss: number; draw: number }>
   > {
+    if (canUseOpeningGraph) {
+      return await fetchMovesFromOpeningGraph({
+        fenKey: params.fenKey,
+        side: params.isOpponentMove ? "opponent" : "against",
+      });
+    }
+
     const { data, error } = await supabase.rpc("get_opponent_position_moves", {
       in_platform: platform,
       in_username: username,
       in_fen: params.fenKey,
       in_is_opponent_move: params.isOpponentMove,
-      in_speeds: speeds.length ? speeds : null,
+      in_speeds: normalizedSpeeds.length ? normalizedSpeeds : null,
       in_rated: rated,
       in_from: from ? new Date(from).toISOString() : null,
       in_to: to ? new Date(to).toISOString() : null,

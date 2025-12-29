@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Chessboard } from "react-chessboard";
 import { useImportsRealtime } from "@/lib/hooks/useImportsRealtime";
+import { createOpeningGraphImporter, type OpeningGraphImportStatus } from "@/lib/openingGraphImport/openingGraphImportService";
 
 type ChessPlatform = "lichess" | "chesscom";
 
@@ -65,6 +66,14 @@ export function DashboardPage({ initialOpponents }: Props) {
   const [opponents, setOpponents] = useState<OpponentRow[]>(initialOpponents);
   const [status, setStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [fastStatus, setFastStatus] = useState<OpeningGraphImportStatus>({
+    phase: "idle",
+    gamesProcessed: 0,
+    bytesRead: 0,
+    lastError: null,
+  });
+  const [fastTargetKey, setFastTargetKey] = useState<string | null>(null);
+  const fastImporterRef = useRef<ReturnType<typeof createOpeningGraphImporter> | null>(null);
   const [continueBusy, setContinueBusy] = useState(false);
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [displayIndexedCount, setDisplayIndexedCount] = useState(0);
@@ -104,6 +113,35 @@ export function DashboardPage({ initialOpponents }: Props) {
     return m;
   }, [opponents]);
 
+  async function startFastImport(o: OpponentRow) {
+    if (loading) return;
+    if (o.platform !== "lichess") {
+      setStatus("Fast import currently supports Lichess only");
+      return;
+    }
+
+    const key = `${o.platform}:${o.username.toLowerCase()}`;
+    setFastTargetKey(key);
+    setStatus(null);
+
+    if (!fastImporterRef.current) {
+      fastImporterRef.current = createOpeningGraphImporter({
+        onStatus: (s) => setFastStatus(s),
+      });
+    }
+
+    try {
+      await fastImporterRef.current.start({
+        platform: "lichess",
+        username: o.username,
+        color: "both",
+        rated: "any",
+      });
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Failed to start fast import");
+    }
+  }
+
   async function reloadOpponents() {
     const res = await fetch("/api/opponents", { cache: "no-store" });
     const json = await res.json();
@@ -129,6 +167,38 @@ export function DashboardPage({ initialOpponents }: Props) {
       await reloadOpponents();
       setUsername("");
       setStatus(null);
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Failed to add opponent");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function addOpponentAndFastImport() {
+    setLoading(true);
+    setStatus(null);
+    try {
+      const trimmed = username.trim();
+      if (!trimmed) throw new Error("Username is required");
+      if (platform !== "lichess") throw new Error("Fast import currently supports Lichess only");
+
+      const res = await fetch("/api/opponents", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ platform, username: trimmed }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error ?? "Failed to add opponent");
+
+      await reloadOpponents();
+      setUsername("");
+
+      await startFastImport({
+        platform,
+        username: trimmed,
+        created_at: new Date().toISOString(),
+        last_refreshed_at: null,
+      });
     } catch (e) {
       setStatus(e instanceof Error ? e.message : "Failed to add opponent");
     } finally {
@@ -433,7 +503,17 @@ export function DashboardPage({ initialOpponents }: Props) {
                   onClick={addOpponentAndImport}
                   title={platform !== "lichess" ? "Chess.com import coming soon" : undefined}
                 >
-                  Import
+                  Import (Legacy)
+                </button>
+
+                <button
+                  type="button"
+                  className="inline-flex h-11 items-center justify-center rounded-xl border border-zinc-200 bg-white px-4 text-sm font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
+                  disabled={loading || !username.trim() || platform !== "lichess"}
+                  onClick={addOpponentAndFastImport}
+                  title={platform !== "lichess" ? "Fast import currently supports Lichess only" : "Fast Import (beta): streams from Lichess and writes aggregated opening graph"}
+                >
+                  Fast Import
                 </button>
               </div>
             </div>
@@ -654,6 +734,13 @@ export function DashboardPage({ initialOpponents }: Props) {
                       {tieredStatus ? (
                         <div className="mt-1 text-xs text-zinc-700">{tieredStatus}</div>
                       ) : null}
+
+                      {fastTargetKey === key && fastStatus.phase !== "idle" ? (
+                        <div className="mt-1 text-xs text-zinc-700">
+                          Fast import: <span className="font-medium">{fastStatus.phase}</span> · games: {fastStatus.gamesProcessed}
+                          {fastStatus.lastError ? <span className="text-red-600"> · {fastStatus.lastError}</span> : null}
+                        </div>
+                      ) : null}
                     </div>
 
                     <div className="flex items-center gap-2">
@@ -681,6 +768,17 @@ export function DashboardPage({ initialOpponents }: Props) {
                       >
                         Refresh
                       </button>
+
+                      <button
+                        type="button"
+                        className="inline-flex h-9 items-center justify-center rounded-lg border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
+                        disabled={loading || fastStatus.phase === "running"}
+                        onClick={() => void startFastImport(latest)}
+                        title="Fast Import (beta): streams from Lichess and writes aggregated opening graph"
+                      >
+                        Fast Import
+                      </button>
+
                       <button
                         type="button"
                         className="inline-flex h-9 items-center justify-center rounded-lg border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
