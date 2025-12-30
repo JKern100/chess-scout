@@ -846,18 +846,28 @@ export function OpponentProfileClient({ platform, username }: Props) {
             <BentoCard
               title={styleMarkersOpen ? "Style Markers" : `Style Markers • ${styleMarkers.length}`}
               headerRight={
-                <button
-                  type="button"
-                  onClick={() => setStyleMarkersOpen((v) => !v)}
-                  className="inline-flex h-8 items-center justify-center rounded-xl border border-neutral-200 bg-white px-3 text-[10px] font-semibold text-neutral-900 shadow-sm hover:bg-neutral-50"
-                >
-                  {styleMarkersOpen ? "Hide" : "Show"}
-                </button>
+                <div className="flex items-center gap-2">
+                  <span
+                    title={
+                      "Strength compares this opponent’s metrics to benchmarks for their opening category. Light: >5% difference. Medium: >20%. Strong: >40%."
+                    }
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-neutral-200 bg-white text-[10px] font-semibold text-neutral-700 shadow-sm"
+                  >
+                    ?
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setStyleMarkersOpen((v) => !v)}
+                    className="inline-flex h-8 items-center justify-center rounded-xl border border-neutral-200 bg-white px-3 text-[10px] font-semibold text-neutral-900 shadow-sm hover:bg-neutral-50"
+                  >
+                    {styleMarkersOpen ? "Hide" : "Show"}
+                  </button>
+                </div>
               }
             >
               {styleMarkersOpen ? (
                 styleMarkers.length === 0 ? (
-                  <div className="text-xs text-neutral-500">No markers yet for this sample.</div>
+                  <div className="text-xs text-neutral-500">No notable deviations detected for this sample.</div>
                 ) : (
                   <div className="flex flex-wrap gap-2">
                     {styleMarkers.map((m) => (

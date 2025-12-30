@@ -38,6 +38,7 @@ function diffStrength(diffRatio: number): StyleMarkerStrength | null {
   const abs = Math.abs(diffRatio);
   if (abs > 0.4) return "Strong";
   if (abs > 0.2) return "Medium";
+  if (abs > 0.05) return "Light";
   return null;
 }
 
@@ -310,23 +311,6 @@ export async function calculateAndStoreMarkers(params: {
     .eq("platform", params.platform)
     .eq("username", usernameKey)
     .eq("source_type", params.sourceType);
-
-  if (markers.length === 0) {
-    markers.push({
-      marker_key: "balanced",
-      label: "Balanced",
-      strength: "Light",
-      tooltip: "No major style deviations detected for this sample",
-      metrics_json: {
-        category,
-        queen_trade_rate: pct(metrics.queenTradeRate),
-        avg_castle_ply: metrics.avgCastlePly,
-        aggression_m15_avg: metrics.aggressionAvg,
-        counts: metrics.counts,
-        benchmark: bench,
-      },
-    });
-  }
 
   const rows = markers.map((m) => ({
     profile_id: params.profileId,
