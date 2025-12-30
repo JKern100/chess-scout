@@ -9,11 +9,6 @@ const nextConfig: NextConfig = {
     webpackBuildWorker: false,
   },
   webpack: (config, { isServer }) => {
-    if (isServer) {
-      config.output = config.output ?? {};
-      config.output.chunkFilename = "chunks/[name].js";
-    }
-
     config.watchOptions = {
       ...(config.watchOptions ?? {}),
       poll: 1000,
