@@ -42,6 +42,21 @@ type FlushPayload = {
   played_by: FenAgg;
 };
 
+type FlushEvent = {
+  platform_game_id: string;
+  played_at: string | null;
+  speed: string | null;
+  rated: boolean | null;
+  fen: string;
+  uci: string;
+  san: string | null;
+  ply: number;
+  is_opponent_move: boolean;
+  win: number;
+  loss: number;
+  draw: number;
+};
+
 type WorkerProgress = {
   type: "progress";
   gamesProcessed: number;
@@ -53,6 +68,7 @@ type WorkerProgress = {
 type WorkerFlush = {
   type: "flush";
   nodes: FlushPayload[];
+  events: FlushEvent[];
   gamesProcessed: number;
 };
 
@@ -74,6 +90,8 @@ type FilterGraph = {
 };
 
 const graphs = new Map<string, FilterGraph>();
+
+const eventBuffer: FlushEvent[] = [];
 
 function ensureGraph(filterKey: string): FilterGraph {
   let g = graphs.get(filterKey);
@@ -219,6 +237,19 @@ function flushNodes(maxNodes = 250): FlushPayload[] {
   return out;
 }
 
+function flushEvents(maxEvents = 2000): FlushEvent[] {
+  if (eventBuffer.length === 0) return [];
+  const out = eventBuffer.splice(0, maxEvents);
+  return out;
+}
+
+function emitFlush(params?: { maxNodes?: number; maxEvents?: number }) {
+  const nodes = flushNodes(params?.maxNodes ?? 250);
+  const events = flushEvents(params?.maxEvents ?? 2000);
+  if (nodes.length === 0 && events.length === 0) return;
+  (self as any).postMessage({ type: "flush", nodes, events, gamesProcessed } satisfies WorkerFlush);
+}
+
 async function runImport(params: ImportStartMessage) {
   stopRequested = false;
   gamesProcessed = 0;
@@ -226,6 +257,7 @@ async function runImport(params: ImportStartMessage) {
   fenMap.clear();
   dirtyFens.clear();
   graphs.clear();
+  eventBuffer.length = 0;
 
   const user = params.username.trim();
   if (!user) {
@@ -309,8 +341,12 @@ async function runImport(params: ImportStartMessage) {
       const result = inferResultFromPgn(pgn);
       const outcome = inferOutcomeFlags({ oppColor, result });
       const oppElo = inferOpponentEloFromPgn(pgn, oppColor);
-      const ratedFlag = inferRatedFromPgn(pgn);
-      const speed = inferSpeedFromPgn(pgn);
+      const ratedFlag =
+        typeof parsed?.rated === "boolean" ? (parsed.rated as boolean) : inferRatedFromPgn(pgn);
+      const speed =
+        typeof parsed?.speed === "string" && ["bullet", "blitz", "rapid", "classical", "correspondence"].includes(String(parsed.speed).toLowerCase())
+          ? String(parsed.speed).toLowerCase()
+          : inferSpeedFromPgn(pgn);
 
       const ts = typeof parsed?.lastMoveAt === "number" ? parsed.lastMoveAt : typeof parsed?.createdAt === "number" ? parsed.createdAt : null;
       const playedAtIso = ts ? new Date(ts).toISOString() : null;
@@ -325,11 +361,31 @@ async function runImport(params: ImportStartMessage) {
       const verbose = chess.history({ verbose: true }) as any[];
       const replay = new Chess();
 
+      let ply = 0;
+
       for (const mv of verbose) {
         const fenKey = normalizeFen(replay.fen());
         const moveColor = mv?.color as "w" | "b" | undefined;
 
         const uci = `${mv.from}${mv.to}${mv.promotion ? mv.promotion : ""}`;
+
+        const isOpponentMove = Boolean(moveColor && moveColor === oppColor);
+
+        // Record an event row for precise filtering.
+        eventBuffer.push({
+          platform_game_id: platformGameId,
+          played_at: playedAtIso,
+          speed: speed ?? null,
+          rated: ratedFlag ?? null,
+          fen: fenKey,
+          uci,
+          san: mv?.san != null ? String(mv.san) : null,
+          ply,
+          is_opponent_move: isOpponentMove,
+          win: outcome.win,
+          loss: outcome.loss,
+          draw: outcome.draw,
+        });
 
         let played: any = null;
         try {
@@ -338,6 +394,8 @@ async function runImport(params: ImportStartMessage) {
           break;
         }
         if (!played) break;
+
+        ply += 1;
 
         // Always aggregate into the 'all' graph.
         const baseAll = ensureFenAggFor("all", fenKey);
@@ -394,7 +452,7 @@ async function runImport(params: ImportStartMessage) {
         // throttle flushes slightly
         if (now - lastFlushAt > 500) {
           lastFlushAt = now;
-          (self as any).postMessage({ type: "flush", nodes: flushNodes(), gamesProcessed } satisfies WorkerFlush);
+          emitFlush();
         }
       }
 
@@ -410,8 +468,8 @@ async function runImport(params: ImportStartMessage) {
     // ignore
   }
 
-  (self as any).postMessage({ type: "flush", nodes: flushNodes(), gamesProcessed } satisfies WorkerFlush);
-  // Flush any remaining dirty nodes.
+  emitFlush({ maxNodes: 500, maxEvents: 5000 });
+  // Flush any remaining dirty nodes / event rows.
   const hasDirty = () => {
     for (const [, g] of graphs) {
       if (g.dirty.size > 0) return true;
@@ -419,8 +477,8 @@ async function runImport(params: ImportStartMessage) {
     return false;
   };
 
-  while (hasDirty()) {
-    (self as any).postMessage({ type: "flush", nodes: flushNodes(500), gamesProcessed } satisfies WorkerFlush);
+  while (hasDirty() || eventBuffer.length > 0) {
+    emitFlush({ maxNodes: 500, maxEvents: 5000 });
   }
   (self as any).postMessage({ type: "done", gamesProcessed } satisfies WorkerDone);
 }

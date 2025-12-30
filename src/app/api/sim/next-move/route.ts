@@ -33,15 +33,23 @@ export async function POST(request: Request) {
   const maxDepth = Math.min(Math.max(Number(body?.max_depth ?? 16), 1), 40);
   const prefetch = Boolean(body?.prefetch);
 
-  const speedsRaw = Array.isArray(body?.speeds) ? (body.speeds as any[]) : [];
+  const speedsProvided = Array.isArray(body?.speeds) || typeof body?.speeds === "string";
+  const speedsRaw = Array.isArray(body?.speeds)
+    ? (body.speeds as any[])
+    : typeof body?.speeds === "string"
+      ? [body.speeds]
+      : [];
   const speeds = speedsRaw
     .map((s) => String(s))
     .filter((s) => ["bullet", "blitz", "rapid", "classical", "correspondence"].includes(s)) as Array<
     "bullet" | "blitz" | "rapid" | "classical" | "correspondence"
   >;
 
-  const normalizedSpeeds =
-    speeds.length >= 5 ? ([] as typeof speeds) : speeds;
+  // Important semantics:
+  // - speeds not provided => treat as "any" (no speed filter)
+  // - speeds provided but empty => treat as "none" (match nothing)
+  // - all 5 speeds selected => treat as "any"
+  const speedsFilter: (typeof speeds) | null = !speedsProvided ? null : speeds.length >= 5 ? null : speeds;
 
   const ratedRaw = String(body?.rated ?? "any");
   const rated = ratedRaw === "rated" ? "rated" : ratedRaw === "casual" ? "casual" : "any";
@@ -61,23 +69,48 @@ export async function POST(request: Request) {
 
   const cache = { status: "db", max_games: 0, age_ms: 0, build_ms: 0 };
 
-  const canUseOpeningGraph =
-    normalizedSpeeds.length === 0 && rated === "any" && !from && !to && platform === "lichess";
+  const canUseOpeningGraphPresets = !from && !to && platform === "lichess";
 
-  const openingGraphKey = canUseOpeningGraph ? "all" : null;
+  const openingGraphKeyExact = (() => {
+    if (!canUseOpeningGraphPresets) return null;
+    if (rated === "rated" || rated === "casual") return rated;
+    if (Array.isArray(speedsFilter) && speedsFilter.length === 1) return `speed:${speedsFilter[0]}`;
+    // Only use the 'all' graph when there is no explicit speed filter.
+    if (speedsFilter === null) return "all";
+    return null;
+  })();
+
+  const openingGraphKeyFallback = (() => {
+    // If any date range is set, we can't represent it with preset graphs.
+    // We'll still use a reasonable fallback ('all') if the RPC yields nothing.
+    if (platform !== "lichess") return null;
+    if (rated === "rated" || rated === "casual") return rated;
+    if (Array.isArray(speedsFilter) && speedsFilter.length === 1) return `speed:${speedsFilter[0]}`;
+    return "all";
+  })();
+
+  const filterMetaBase = {
+    requested: {
+      speeds: speedsFilter,
+      rated,
+      from,
+      to,
+    },
+  };
 
   async function fetchMovesFromOpeningGraph(params: {
     fenKey: string;
     side: "opponent" | "against";
+    filterKey: string;
   }): Promise<Array<{ uci: string; san: string | null; played_count: number; win: number; loss: number; draw: number }>> {
-    if (!openingGraphKey) return [];
+    if (!params.filterKey) return [];
     const { data, error } = await supabase
       .from("opening_graph_nodes")
       .select("played_by")
       .eq("profile_id", profileId)
       .eq("platform", platform)
       .eq("username", username)
-      .eq("filter_key", openingGraphKey)
+      .eq("filter_key", params.filterKey)
       .eq("fen", params.fenKey)
       .maybeSingle();
 
@@ -103,14 +136,19 @@ export async function POST(request: Request) {
   async function fetchMoves(params: {
     fenKey: string;
     isOpponentMove: boolean;
+    fallbackKey: string | null;
   }): Promise<
     Array<{ uci: string; san: string | null; played_count: number; win: number; loss: number; draw: number }>
   > {
-    if (canUseOpeningGraph) {
-      return await fetchMovesFromOpeningGraph({
+    if (openingGraphKeyExact) {
+      const fromGraph = await fetchMovesFromOpeningGraph({
         fenKey: params.fenKey,
         side: params.isOpponentMove ? "opponent" : "against",
+        filterKey: openingGraphKeyExact,
       });
+
+      // If the preset graph isn't materialized for this opponent yet, fall back to exact RPC.
+      if (fromGraph.length > 0) return fromGraph;
     }
 
     const { data, error } = await supabase.rpc("get_opponent_position_moves", {
@@ -118,7 +156,7 @@ export async function POST(request: Request) {
       in_username: username,
       in_fen: params.fenKey,
       in_is_opponent_move: params.isOpponentMove,
-      in_speeds: normalizedSpeeds.length ? normalizedSpeeds : null,
+      in_speeds: speedsFilter === null ? null : speedsFilter,
       in_rated: rated,
       in_from: from ? new Date(from).toISOString() : null,
       in_to: to ? new Date(to).toISOString() : null,
@@ -129,7 +167,7 @@ export async function POST(request: Request) {
     }
 
     const rows = Array.isArray(data) ? (data as any[]) : [];
-    return rows.map((m) => ({
+    const out = rows.map((m) => ({
       uci: String(m?.uci ?? ""),
       san: m?.san != null ? String(m.san) : null,
       played_count: Number(m?.played_count ?? 0),
@@ -137,6 +175,31 @@ export async function POST(request: Request) {
       loss: Number(m?.loss ?? 0),
       draw: Number(m?.draw ?? 0),
     })).filter((m) => m.uci);
+
+    if (out.length > 0) return out;
+
+    if (params.fallbackKey) {
+      const fromFallback = await fetchMovesFromOpeningGraph({
+        fenKey: params.fenKey,
+        side: params.isOpponentMove ? "opponent" : "against",
+        filterKey: params.fallbackKey,
+      });
+
+      if (fromFallback.length > 0) return fromFallback;
+
+      // Last-resort UX fallback: if the user requested a single-speed subset but we don't have
+      // the speed-specific graph and there are no events yet, fall back to 'all' instead of
+      // showing zero moves.
+      if (params.fallbackKey.startsWith("speed:") && params.fallbackKey !== "all") {
+        return await fetchMovesFromOpeningGraph({
+          fenKey: params.fenKey,
+          side: params.isOpponentMove ? "opponent" : "against",
+          filterKey: "all",
+        });
+      }
+    }
+
+    return out;
   }
 
   function pickMove(
@@ -159,7 +222,7 @@ export async function POST(request: Request) {
   if (prefetch) {
     // Warm path: prime PostgREST / DB caches by issuing a cheap query.
     try {
-      await fetchMoves({ fenKey: startFenKey, isOpponentMove: true });
+      await fetchMoves({ fenKey: startFenKey, isOpponentMove: true, fallbackKey: openingGraphKeyFallback });
     } catch {
       // ignore
     }
@@ -179,9 +242,11 @@ export async function POST(request: Request) {
     });
   }
 
+  const usedFallback = !openingGraphKeyExact && Boolean(openingGraphKeyFallback);
+
   const [movesOpponent, movesAgainst] = await Promise.all([
-    fetchMoves({ fenKey: startFenKey, isOpponentMove: true }),
-    fetchMoves({ fenKey: startFenKey, isOpponentMove: false }),
+    fetchMoves({ fenKey: startFenKey, isOpponentMove: true, fallbackKey: openingGraphKeyFallback }),
+    fetchMoves({ fenKey: startFenKey, isOpponentMove: false, fallbackKey: openingGraphKeyFallback }),
   ]);
 
   const availableTotalCount = movesOpponent.reduce((s, m) => s + m.played_count, 0);
@@ -190,6 +255,16 @@ export async function POST(request: Request) {
 
   return NextResponse.json({
     cache,
+    filter_meta: {
+      ...filterMetaBase,
+      source: openingGraphKeyExact ? "opening_graph" : usedFallback ? "opening_graph_fallback" : "rpc",
+      opening_graph_key_used: openingGraphKeyExact ?? (usedFallback ? openingGraphKeyFallback : null),
+      approximate: Boolean(
+        !openingGraphKeyExact &&
+          usedFallback &&
+          (from || to || (Array.isArray(speedsFilter) && speedsFilter.length > 1))
+      ),
+    },
     position: startFenKey,
     mode,
     available_count: movesOpponent.length,
@@ -211,7 +286,12 @@ export async function POST(request: Request) {
     moves_against: movesAgainst.slice(0, 30),
   });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Internal Server Error";
+    const anyErr = e as any;
+    const status = Number(anyErr?.status);
+    const msg = e instanceof Error ? e.message : typeof anyErr?.message === "string" ? anyErr.message : "Internal Server Error";
+    if (Number.isFinite(status) && status >= 400 && status < 600) {
+      return NextResponse.json({ error: msg }, { status });
+    }
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

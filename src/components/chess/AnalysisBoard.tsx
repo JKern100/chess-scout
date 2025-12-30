@@ -197,6 +197,10 @@ export function AnalysisBoard(props: Props) {
         if (cancelled) return;
         setOpponentStats(stats);
       })
+      .catch(() => {
+        if (cancelled) return;
+        setOpponentStats(null);
+      })
       .finally(() => {
         if (cancelled) return;
         setOpponentStatsBusy(false);
@@ -218,6 +222,9 @@ export function AnalysisBoard(props: Props) {
     void fetchOpponentStats({ fen: state.fen, username: trimmed })
       .then((stats) => {
         setOpponentStats(stats);
+      })
+      .catch(() => {
+        setOpponentStats(null);
       })
       .finally(() => {
         setOpponentStatsBusy(false);
