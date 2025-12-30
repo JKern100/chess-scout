@@ -51,5 +51,14 @@ export async function GET(request: Request) {
     out.push(r);
   }
 
-  return NextResponse.json({ markers: out });
+  return NextResponse.json(
+    { markers: out },
+    {
+      headers: {
+        "cache-control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+        pragma: "no-cache",
+        expires: "0",
+      },
+    }
+  );
 }

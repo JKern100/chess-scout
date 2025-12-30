@@ -726,24 +726,28 @@ export function PlayBoardModes({ initialFen }: Props) {
   const [sessionAxisMarkersBusy, setSessionAxisMarkersBusy] = useState(false);
 
   const fetchSessionAxisMarkers = useCallback(
-    async (username: string) => {
+    async (username: string, cacheBust?: string) => {
       const trimmed = username.trim();
       if (!trimmed) {
         setSessionAxisMarkers([]);
-        return;
+        return [] as StoredStyleMarker[];
       }
 
       try {
         setSessionAxisMarkersBusy(true);
-        const res = await fetch(`/api/sim/session/markers?platform=lichess&username=${encodeURIComponent(trimmed)}`, {
+        const t = cacheBust ? `&t=${encodeURIComponent(cacheBust)}` : "";
+        const res = await fetch(`/api/sim/session/markers?platform=lichess&username=${encodeURIComponent(trimmed)}${t}`, {
           cache: "no-store",
         });
         const json = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(String((json as any)?.error ?? "Failed to load session markers"));
         const rows = Array.isArray((json as any)?.markers) ? ((json as any).markers as StoredStyleMarker[]) : [];
-        setSessionAxisMarkers(rows.filter(Boolean));
+        const cleaned = rows.filter(Boolean);
+        setSessionAxisMarkers(cleaned);
+        return cleaned;
       } catch {
         setSessionAxisMarkers([]);
+        return [] as StoredStyleMarker[];
       } finally {
         setSessionAxisMarkersBusy(false);
       }
@@ -752,7 +756,7 @@ export function PlayBoardModes({ initialFen }: Props) {
   );
 
   useEffect(() => {
-    void fetchSessionAxisMarkers(opponentUsername);
+    void fetchSessionAxisMarkers(opponentUsername, String(Date.now()));
   }, [fetchSessionAxisMarkers, opponentUsername, filtersKey]);
 
   const axisQueen = sessionAxisMarkers.find((m) => m.marker_key === "axis_queen_trades") ?? null;
@@ -788,6 +792,7 @@ export function PlayBoardModes({ initialFen }: Props) {
 
       void (async () => {
         try {
+          const startedAt = Date.now();
           const res = await fetch("/api/sim/session/start", {
             method: "POST",
             headers: { "content-type": "application/json" },
@@ -808,7 +813,19 @@ export function PlayBoardModes({ initialFen }: Props) {
           }
 
           lastStyleSessionKeyRef.current = styleSessionKey;
-          await fetchSessionAxisMarkers(trimmed);
+
+          // Poll briefly to avoid stale reads (writes can land slightly after the POST returns).
+          let best = await fetchSessionAxisMarkers(trimmed, String(Date.now()));
+          for (let i = 0; i < 4; i++) {
+            const newest = best
+              .map((r) => Date.parse(String((r as any)?.created_at ?? "")))
+              .filter((n) => Number.isFinite(n))
+              .reduce((m, n) => Math.max(m, n), 0);
+
+            if (newest && newest >= startedAt - 500) break;
+            await sleep(250);
+            best = await fetchSessionAxisMarkers(trimmed, String(Date.now()));
+          }
         } finally {
           styleSessionInFlightRef.current = false;
           setSessionAxisMarkersBusy(false);
