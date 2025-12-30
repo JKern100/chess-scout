@@ -365,8 +365,8 @@ export function ChessBoardCore({ initialFen, arrows, squareStyles, specialArrow,
   const glowSoft = (0.30 + specialIntensity * 0.30).toFixed(3);
 
   return (
-    <div className="grid gap-7 md:grid-cols-[420px_1fr] xl:grid-cols-[260px_420px_1fr]">
-      <div className="hidden xl:flex xl:flex-col xl:gap-4">{resolvedLeftPanel}</div>
+    <div className="grid gap-7 lg:grid-cols-[280px_1fr_360px]">
+      <div className="hidden lg:flex lg:flex-col lg:gap-4">{resolvedLeftPanel}</div>
       <div className="flex flex-col gap-3">
         {resolvedAboveBoard ? <div>{resolvedAboveBoard}</div> : null}
         <div
@@ -423,7 +423,7 @@ export function ChessBoardCore({ initialFen, arrows, squareStyles, specialArrow,
 
         {resolvedBelowBoard ? <div>{resolvedBelowBoard}</div> : null}
 
-        {resolvedLeftPanel ? <div className="grid gap-4 xl:hidden">{resolvedLeftPanel}</div> : null}
+        {resolvedLeftPanel ? <div className="grid gap-4 lg:hidden">{resolvedLeftPanel}</div> : null}
 
         {underBoard}
       </div>

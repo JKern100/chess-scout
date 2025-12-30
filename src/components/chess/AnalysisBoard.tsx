@@ -14,16 +14,13 @@ type Props = {
   filtersKey: string;
   requestOpponentMove: (params: { fen: string; username: string; mode: Strategy; prefetch?: boolean }) => Promise<any>;
   showArrow: boolean;
-  setShowArrow: (v: boolean) => void;
   showEval: boolean;
-  setShowEval: (v: boolean) => void;
   onEvalChange: (score: EngineScore | null) => void;
-  showMoveTable: boolean;
-  setShowMoveTable: (v: boolean) => void;
   showEngineBest: boolean;
-  setShowEngineBest: (v: boolean) => void;
   engineBestMove: { uci: string; san: string | null } | null;
   setEngineBestMove: (m: { uci: string; san: string | null } | null) => void;
+  showEngineColumn: boolean;
+  enabled: boolean;
   opponentStatsBusy: boolean;
   opponentStats: {
     totalCountOpponent: number;
@@ -53,16 +50,13 @@ export function AnalysisBoard(props: Props) {
     filtersKey,
     requestOpponentMove,
     showArrow,
-    setShowArrow,
     showEval,
-    setShowEval,
     onEvalChange,
-    showMoveTable,
-    setShowMoveTable,
     showEngineBest,
-    setShowEngineBest,
     engineBestMove,
     setEngineBestMove,
+    showEngineColumn,
+    enabled,
     opponentStats,
     setOpponentStats,
     opponentStatsBusy,
@@ -72,9 +66,7 @@ export function AnalysisBoard(props: Props) {
   const engineReqIdRef = useRef(0);
   const evalReqIdRef = useRef(0);
   const engineColumnReqIdRef = useRef(0);
-  const [showEngineColumn, setShowEngineColumn] = useState(false);
   const [engineMoveEval, setEngineMoveEval] = useState<Record<string, string>>({});
-  const [moveTableTab, setMoveTableTab] = useState<"moves" | "tab2">("moves");
   const prevImportedCountRef = useRef(0);
 
   useEffect(() => {
@@ -185,7 +177,7 @@ export function AnalysisBoard(props: Props) {
       return;
     }
 
-    if (!showArrow && !showMoveTable) {
+    if (!showArrow && !enabled) {
       return;
     }
 
@@ -209,12 +201,12 @@ export function AnalysisBoard(props: Props) {
     return () => {
       cancelled = true;
     };
-  }, [opponentUsername, filtersKey, showArrow, showMoveTable, state.fen, opponentImportedCount, setOpponentStatsBusy, setOpponentStats]);
+  }, [opponentUsername, filtersKey, showArrow, enabled, state.fen, opponentImportedCount, setOpponentStatsBusy, setOpponentStats]);
 
   useEffect(() => {
     const trimmed = opponentUsername.trim();
     if (!trimmed) return;
-    if (!showMoveTable && !showArrow) return;
+    if (!enabled && !showArrow) return;
     const prev = prevImportedCountRef.current;
     prevImportedCountRef.current = opponentImportedCount;
     if (opponentImportedCount <= prev) return;
@@ -229,7 +221,7 @@ export function AnalysisBoard(props: Props) {
       .finally(() => {
         setOpponentStatsBusy(false);
       });
-  }, [opponentImportedCount, opponentUsername, showArrow, showMoveTable, state.fen, setOpponentStats, setOpponentStatsBusy]);
+  }, [opponentImportedCount, opponentUsername, showArrow, enabled, state.fen, setOpponentStats, setOpponentStatsBusy]);
 
   useEffect(() => {
     if (!showEngineBest) {
@@ -318,7 +310,7 @@ export function AnalysisBoard(props: Props) {
   }
 
   useEffect(() => {
-    if (!showMoveTable || !showEngineColumn) {
+    if (!enabled || !showEngineColumn) {
       setEngineMoveEval({});
       return;
     }
@@ -386,11 +378,7 @@ export function AnalysisBoard(props: Props) {
       cancelled = true;
       window.clearTimeout(timeout);
     };
-  }, [showMoveTable, showEngineColumn, state.fen, visibleMovesKey, nextMoveList.moves]);
-
-  useEffect(() => {
-    if (showMoveTable) setMoveTableTab("moves");
-  }, [showMoveTable]);
+  }, [enabled, showEngineColumn, state.fen, visibleMovesKey, nextMoveList.moves]);
 
   function formatGameCount(value: number) {
     const n = Number(value);
@@ -403,192 +391,96 @@ export function AnalysisBoard(props: Props) {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
-        <div className="text-[10px] text-zinc-600">
-          Turn: <span className="font-medium text-zinc-900">{state.game.turn() === "w" ? "White" : "Black"}</span>
-        </div>
-
-        {showEngineBest ? (
-          <div className="mt-3 text-[10px] text-zinc-700">
-            Engine best:{" "}
-            <span className="font-medium text-zinc-900">
-              {engineBestMove ? `${engineBestMove.san ?? engineBestMove.uci}` : "—"}
-            </span>
-          </div>
-        ) : null}
-
-        <div className="mt-3 grid gap-2 md:grid-cols-2">
-          <div className="flex flex-col gap-2">
-            <label className="text-[10px] font-medium text-zinc-900">Overlays</label>
-            <label className="inline-flex items-center gap-2 text-[10px] text-zinc-700">
-              <input type="checkbox" checked={showArrow} onChange={(e) => setShowArrow(e.target.checked)} />
-              Show candidate arrows
-            </label>
-            <label className="inline-flex items-center gap-2 text-[10px] text-zinc-700">
-              <input type="checkbox" checked={showEval} onChange={(e) => setShowEval(e.target.checked)} />
-              Show eval
-            </label>
-            <label className="inline-flex items-center gap-2 text-[10px] text-zinc-700">
-              <input
-                type="checkbox"
-                checked={showEngineBest}
-                onChange={(e) => setShowEngineBest(e.target.checked)}
-              />
-              Display engine’s best move
-            </label>
-            <label className="inline-flex items-center gap-2 text-[10px] text-zinc-700">
-              <input type="checkbox" checked={showMoveTable} onChange={(e) => setShowMoveTable(e.target.checked)} />
-              Show move table
-            </label>
-            {showMoveTable ? (
-              <label className="inline-flex items-center gap-2 text-[10px] text-zinc-700">
-                <input
-                  type="checkbox"
-                  checked={showEngineColumn}
-                  onChange={(e) => setShowEngineColumn(e.target.checked)}
-                />
-                Show engine eval column
-              </label>
-            ) : null}
-            <div className="text-[10px] text-zinc-700">
-              Depth remaining (approx):{" "}
-              <span className="font-medium text-zinc-900">
-                {opponentStats?.depthRemaining == null ? "—" : String(opponentStats.depthRemaining)}
-              </span>
-            </div>
-          </div>
-        </div>
-        {state.status ? <div className="mt-2 text-[10px] text-zinc-600">{state.status}</div> : null}
+      <div className="text-[10px] text-zinc-600">
+        Turn: <span className="font-medium text-zinc-900">{state.game.turn() === "w" ? "White" : "Black"}</span>
       </div>
 
-      {showMoveTable ? (
-        <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
-          <div className="flex items-end justify-between gap-3">
-            <div className="grid gap-0.5">
-              <div className="text-[10px] font-medium text-zinc-900">Next Moves</div>
-              <div className="text-[10px] text-zinc-500">Games imported: {opponentImportedCount}</div>
-            </div>
-            <div className="flex items-center gap-4 border-b border-zinc-200 text-[10px]">
-              <button
-                type="button"
-                className={
-                  moveTableTab === "moves"
-                    ? "pb-2 font-medium text-zinc-900 border-b-2 border-zinc-900"
-                    : "pb-2 font-medium text-zinc-500 hover:text-zinc-900"
-                }
-                onClick={() => setMoveTableTab("moves")}
-              >
-                Moves so Far
-              </button>
-              <button
-                type="button"
-                className={
-                  moveTableTab === "tab2"
-                    ? "pb-2 font-medium text-zinc-900 border-b-2 border-zinc-900"
-                    : "pb-2 font-medium text-zinc-500 hover:text-zinc-900"
-                }
-                onClick={() => setMoveTableTab("tab2")}
-              >
-                Tab 2
-              </button>
-            </div>
+      {showEngineBest ? (
+        <div className="text-[10px] text-zinc-700">
+          Engine best: <span className="font-medium text-zinc-900">{engineBestMove ? `${engineBestMove.san ?? engineBestMove.uci}` : "—"}</span>
+        </div>
+      ) : null}
+
+      <div className="text-[10px] text-zinc-700">
+        Depth remaining (approx):{" "}
+        <span className="font-medium text-zinc-900">{opponentStats?.depthRemaining == null ? "—" : String(opponentStats.depthRemaining)}</span>
+      </div>
+
+      {state.status ? <div className="text-[10px] text-zinc-600">{state.status}</div> : null}
+
+      {enabled ? (
+        <div className="grid gap-3">
+          <div className="grid gap-0.5">
+            <div className="text-[10px] font-medium text-zinc-900">Next Moves</div>
+            <div className="text-[10px] text-zinc-500">Games imported: {opponentImportedCount}</div>
           </div>
 
-          <div className="mt-3">
-            {moveTableTab === "moves" ? (
+          <div className="grid gap-2">
+            {opponentStatsBusy ? (
+              <div className="text-[10px] text-zinc-600">Loading…</div>
+            ) : nextMoveList.moves?.length ? (
               <div className="grid gap-2">
-                {opponentStatsBusy ? (
-                  <div className="text-[10px] text-zinc-600">Loading…</div>
-                ) : nextMoveList.moves?.length ? (
-                  <div className="grid gap-2">
-                    <div
-                      className={`grid ${showEngineColumn ? "grid-cols-[72px_68px_64px_1fr_44px]" : "grid-cols-[72px_68px_1fr_44px]"} gap-2 text-[10px] font-medium text-zinc-500`}
-                    >
-                      <div>Move</div>
-                      <div>Games</div>
-                      {showEngineColumn ? <div>Engine</div> : null}
-                      <div>Results</div>
-                      <div className="text-right">%</div>
-                    </div>
-                    {nextMoveList.moves.slice(0, 12).map((m: MoveRow) => {
-                      const total = Math.max(1, m.played_count);
-                      const winPct = (m.win / total) * 100;
-                      const drawPct = (m.draw / total) * 100;
-                      const lossPct = (m.loss / total) * 100;
-                      const freq = nextMoveList.total > 0 ? m.played_count / nextMoveList.total : 0;
-                      const freqPct = Math.round(freq * 100);
-                      const isEngine = Boolean(engineBestMove?.uci && engineBestMove.uci === m.uci);
-                      const evalLabel = showEngineColumn ? (engineMoveEval[m.uci] ?? "…") : null;
+                <div
+                  className={`grid ${
+                    showEngineColumn ? "grid-cols-[72px_68px_64px_1fr_44px]" : "grid-cols-[72px_68px_1fr_44px]"
+                  } gap-2 text-[10px] font-medium text-zinc-500`}
+                >
+                  <div>Move</div>
+                  <div>Games</div>
+                  {showEngineColumn ? <div>Engine</div> : null}
+                  <div>Results</div>
+                  <div className="text-right">%</div>
+                </div>
+                {nextMoveList.moves.slice(0, 12).map((m: MoveRow) => {
+                  const total = Math.max(1, m.played_count);
+                  const winPct = (m.win / total) * 100;
+                  const drawPct = (m.draw / total) * 100;
+                  const lossPct = (m.loss / total) * 100;
+                  const freq = nextMoveList.total > 0 ? m.played_count / nextMoveList.total : 0;
+                  const freqPct = Math.round(freq * 100);
+                  const isEngine = Boolean(engineBestMove?.uci && engineBestMove.uci === m.uci);
+                  const evalLabel = showEngineColumn ? (engineMoveEval[m.uci] ?? "…") : null;
 
-                      return (
-                        <button
-                          key={m.uci}
-                          type="button"
-                          className={`grid ${showEngineColumn ? "grid-cols-[72px_68px_64px_1fr_44px]" : "grid-cols-[72px_68px_1fr_44px]"} items-center gap-2 rounded-lg px-1 py-0.5 text-left hover:bg-zinc-50 ${isEngine ? "ring-1 ring-emerald-200" : ""}`}
-                          onClick={() => playTableMove(m.uci)}
-                        >
-                          <div className="flex items-center gap-2 text-[10px] font-medium text-zinc-900">
-                            <span>{m.san ?? m.uci}</span>
-                            {isEngine ? (
-                              <span className="rounded-md bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">
-                                ENGINE
-                              </span>
-                            ) : null}
-                          </div>
-                          <div className="text-[10px] font-medium text-zinc-700">{formatGameCount(m.played_count)}</div>
-                          {showEngineColumn ? (
-                            <div className="text-[10px] font-medium text-zinc-500">{evalLabel}</div>
-                          ) : null}
-                          <div className="h-3 overflow-hidden rounded-full border border-zinc-200 bg-zinc-100">
-                            <div className="flex h-full w-full">
-                              <div className="h-full bg-emerald-500" style={{ width: `${winPct}%` }} />
-                              <div className="h-full bg-zinc-300" style={{ width: `${drawPct}%` }} />
-                              <div className="h-full bg-rose-500" style={{ width: `${lossPct}%` }} />
-                            </div>
-                          </div>
-                          <div className="text-right text-[10px] font-medium text-zinc-700">{freqPct}%</div>
-                        </button>
-                      );
-                    })}
-                    <div className="text-[10px] text-zinc-500">Showing top 12 moves.</div>
-                  </div>
-                ) : (
-                  <div className="text-[10px] text-zinc-600">No data for this position.</div>
-                )}
+                  return (
+                    <button
+                      key={m.uci}
+                      type="button"
+                      className={`grid ${
+                        showEngineColumn ? "grid-cols-[72px_68px_64px_1fr_44px]" : "grid-cols-[72px_68px_1fr_44px]"
+                      } items-center gap-2 rounded-lg px-1 py-0.5 text-left hover:bg-zinc-50 ${
+                        isEngine ? "ring-1 ring-emerald-200" : ""
+                      }`}
+                      onClick={() => playTableMove(m.uci)}
+                    >
+                      <div className="flex items-center gap-2 text-[10px] font-medium text-zinc-900">
+                        <span>{m.san ?? m.uci}</span>
+                        {isEngine ? (
+                          <span className="rounded-md bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">
+                            ENGINE
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="text-[10px] font-medium text-zinc-700">{formatGameCount(m.played_count)}</div>
+                      {showEngineColumn ? <div className="text-[10px] font-medium text-zinc-500">{evalLabel}</div> : null}
+                      <div className="h-3 overflow-hidden rounded-full border border-zinc-200 bg-zinc-100">
+                        <div className="flex h-full w-full">
+                          <div className="h-full bg-emerald-500" style={{ width: `${winPct}%` }} />
+                          <div className="h-full bg-zinc-300" style={{ width: `${drawPct}%` }} />
+                          <div className="h-full bg-rose-500" style={{ width: `${lossPct}%` }} />
+                        </div>
+                      </div>
+                      <div className="text-right text-[10px] font-medium text-zinc-700">{freqPct}%</div>
+                    </button>
+                  );
+                })}
+                <div className="text-[10px] text-zinc-500">Showing top 12 moves.</div>
               </div>
             ) : (
-              <div className="min-h-16" />
+              <div className="text-[10px] text-zinc-600">No data for this position.</div>
             )}
           </div>
         </div>
       ) : null}
     </div>
   );
-}
-
-export function buildAnalysisArrows(state: Props) {
-  const userColor = state.state.playerSide === "white" ? "w" : "b";
-  const opponentColor = userColor === "w" ? "b" : "w";
-  const isOppToMove = state.state.game.turn() === opponentColor;
-
-  const nextMoveList = (() => {
-    if (!state.opponentStats) return { total: 0, moves: [] as any[] };
-    if (isOppToMove) return { total: state.opponentStats.totalCountOpponent, moves: state.opponentStats.movesOpponent };
-    return { total: state.opponentStats.totalCountAgainst, moves: state.opponentStats.movesAgainst };
-  })();
-
-  if (!state.showArrow) return [];
-  const trimmed = state.opponentUsername.trim();
-  if (!trimmed) return [];
-  const first = nextMoveList.moves?.[0];
-  if (!first?.uci) return [];
-  const uci = String(first.uci);
-  if (uci.length < 4) return [];
-  return [
-    {
-      startSquare: uci.slice(0, 2),
-      endSquare: uci.slice(2, 4),
-      color: "rgba(37, 99, 235, 0.9)",
-    },
-  ];
 }

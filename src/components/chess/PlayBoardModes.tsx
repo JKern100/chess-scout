@@ -2,7 +2,16 @@
 
 import { Chess } from "chess.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, RotateCcw } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+  Filter,
+  GitBranch,
+  RotateCcw,
+  SlidersHorizontal,
+} from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { getBestMoveForPlay, type EngineScore } from "@/lib/engine/engineService";
 import { ChessBoardCore, type ChessBoardCoreState } from "./ChessBoardCore";
@@ -19,6 +28,8 @@ type Props = {
 type Mode = "simulation" | "analysis";
 
 type Strategy = "proportional" | "random";
+
+type AnalysisRightTab = "stats" | "filters" | "preferences";
 
 type SavedLine = {
   id: string;
@@ -670,13 +681,14 @@ export function PlayBoardModes({ initialFen }: Props) {
   }, [clocksEnabled, resetClocksToSelected]);
 
   const [analysisShowArrow, setAnalysisShowArrow] = useState(true);
-  const [analysisShowMoveTable, setAnalysisShowMoveTable] = useState(false);
   const [analysisShowEngineBest, setAnalysisShowEngineBest] = useState(false);
   const [analysisShowEval, setAnalysisShowEval] = useState(false);
+  const [analysisShowEngineColumn, setAnalysisShowEngineColumn] = useState(false);
   const [analysisEngineBestUci, setAnalysisEngineBestUci] = useState<string | null>(null);
   const [analysisEngineBestSan, setAnalysisEngineBestSan] = useState<string | null>(null);
   const [analysisStats, setAnalysisStats] = useState<Stats | null>(null);
   const [analysisStatsBusy, setAnalysisStatsBusy] = useState(false);
+  const [analysisRightTab, setAnalysisRightTab] = useState<AnalysisRightTab>("stats");
 
   const [analysisEval, setAnalysisEval] = useState<EngineScore | null>(null);
 
@@ -1019,39 +1031,40 @@ export function PlayBoardModes({ initialFen }: Props) {
     [clocksEnabled, resetClocksToSelected]
   );
 
-  const underBoard = (
-    <div className="grid gap-3">
-      <OpponentFiltersPanel
-        headerLeft="Opponent"
-        headerRight={
-          <select
-            className="h-8 min-w-[180px] rounded-xl border border-zinc-200 bg-white px-3 text-[10px] text-zinc-900 outline-none focus:border-zinc-400 disabled:opacity-60"
-            value={opponentUsername}
-            onChange={(e) => setOpponentUsername(e.target.value)}
-            disabled={availableOpponents.length === 0}
-          >
-            {availableOpponents.length === 0 ? <option value="">No imported opponents</option> : null}
-            {availableOpponents.map((o) => (
-              <option key={`${o.platform}:${o.username}`} value={o.username}>
-                {o.username}
-              </option>
-            ))}
-          </select>
-        }
-        speeds={filterSpeeds}
-        setSpeeds={setFilterSpeeds}
-        rated={filterRated}
-        setRated={setFilterRated}
-        datePreset={filterDatePreset}
-        setDatePreset={setFilterDatePreset}
-        fromDate={filterFromDate}
-        setFromDate={setFilterFromDate}
-        toDate={filterToDate}
-        setToDate={setFilterToDate}
-        footerNote={archivingNote ? <span>{archivingNote}</span> : null}
-      />
+  const analysisFiltersPanel = (
+    <OpponentFiltersPanel
+      headerLeft="Opponent"
+      headerRight={
+        <select
+          className="h-8 min-w-[180px] rounded-xl border border-zinc-200 bg-white px-3 text-[10px] text-zinc-900 outline-none focus:border-zinc-400 disabled:opacity-60"
+          value={opponentUsername}
+          onChange={(e) => setOpponentUsername(e.target.value)}
+          disabled={availableOpponents.length === 0}
+        >
+          {availableOpponents.length === 0 ? <option value="">No imported opponents</option> : null}
+          {availableOpponents.map((o) => (
+            <option key={`${o.platform}:${o.username}`} value={o.username}>
+              {o.username}
+            </option>
+          ))}
+        </select>
+      }
+      speeds={filterSpeeds}
+      setSpeeds={setFilterSpeeds}
+      rated={filterRated}
+      setRated={setFilterRated}
+      datePreset={filterDatePreset}
+      setDatePreset={setFilterDatePreset}
+      fromDate={filterFromDate}
+      setFromDate={setFilterFromDate}
+      toDate={filterToDate}
+      setToDate={setFilterToDate}
+      footerNote={archivingNote ? <span>{archivingNote}</span> : null}
+    />
+  );
 
-    </div>
+  const underBoard = mode === "analysis" ? null : (
+    <div className="grid gap-3">{analysisFiltersPanel}</div>
   );
 
   const underBoardWithToast = (
@@ -1287,6 +1300,8 @@ export function PlayBoardModes({ initialFen }: Props) {
         const shouldHydrateSavedLine = Boolean(savedLineId && mode === "analysis");
 
         if (mode === "analysis") {
+          const active = analysisRightTab;
+
           return (
             <>
               {savedLineId ? (
@@ -1298,32 +1313,104 @@ export function PlayBoardModes({ initialFen }: Props) {
                   onError={(msg) => showSavedLinePopup(msg)}
                 />
               ) : null}
-              <AnalysisBoard
-                state={state}
-                opponentUsername={opponentUsername}
-                opponentImportedCount={opponentImportedCount}
-                filtersKey={filtersKey}
-                requestOpponentMove={requestOpponentMove}
-                showArrow={analysisShowArrow}
-                setShowArrow={setAnalysisShowArrow}
-                showEval={analysisShowEval}
-                setShowEval={setAnalysisShowEval}
-                onEvalChange={setAnalysisEval}
-                showMoveTable={analysisShowMoveTable}
-                setShowMoveTable={setAnalysisShowMoveTable}
-                showEngineBest={analysisShowEngineBest}
-                setShowEngineBest={setAnalysisShowEngineBest}
-                engineBestMove={
-                  analysisEngineBestUci
-                    ? { uci: analysisEngineBestUci, san: analysisEngineBestSan }
-                    : null
-                }
-                setEngineBestMove={handleSetEngineBestMove}
-                opponentStatsBusy={analysisStatsBusy}
-                opponentStats={analysisStats}
-                setOpponentStats={setAnalysisStats}
-                setOpponentStatsBusy={setAnalysisStatsBusy}
-              />
+              <div className="rounded-2xl border border-zinc-200 bg-white shadow-sm">
+                <div className="flex items-center justify-between border-b border-zinc-200 px-2 py-2">
+                  <button
+                    type="button"
+                    className={`inline-flex h-9 w-9 items-center justify-center rounded-xl hover:bg-zinc-50 ${
+                      active === "filters" ? "bg-zinc-100 text-zinc-900" : "text-zinc-600"
+                    }`}
+                    title="Filters"
+                    onClick={() => setAnalysisRightTab("filters")}
+                  >
+                    <Filter className="h-5 w-5" />
+                  </button>
+                  <button
+                    type="button"
+                    className={`inline-flex h-9 w-9 items-center justify-center rounded-xl hover:bg-zinc-50 ${
+                      active === "preferences" ? "bg-zinc-100 text-zinc-900" : "text-zinc-600"
+                    }`}
+                    title="Preferences"
+                    onClick={() => setAnalysisRightTab("preferences")}
+                  >
+                    <SlidersHorizontal className="h-5 w-5" />
+                  </button>
+                  <button
+                    type="button"
+                    className={`inline-flex h-9 w-9 items-center justify-center rounded-xl hover:bg-zinc-50 ${
+                      active === "stats" ? "bg-zinc-100 text-zinc-900" : "text-zinc-600"
+                    }`}
+                    title="Candidates"
+                    onClick={() => setAnalysisRightTab("stats")}
+                  >
+                    <GitBranch className="h-5 w-5" />
+                  </button>
+                </div>
+
+                <div className="p-3">
+                  {active === "filters" ? (
+                    analysisFiltersPanel
+                  ) : active === "preferences" ? (
+                    <div className="grid gap-2 text-[10px] text-zinc-700">
+                      <div className="text-[10px] font-medium text-zinc-900">Preferences</div>
+                      <label className="inline-flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={analysisShowArrow}
+                          onChange={(e) => setAnalysisShowArrow(e.target.checked)}
+                        />
+                        Show candidate arrows
+                      </label>
+                      <label className="inline-flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={analysisShowEval}
+                          onChange={(e) => setAnalysisShowEval(e.target.checked)}
+                        />
+                        Show eval
+                      </label>
+                      <label className="inline-flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={analysisShowEngineBest}
+                          onChange={(e) => setAnalysisShowEngineBest(e.target.checked)}
+                        />
+                        Display engine’s best move
+                      </label>
+                      <label className="inline-flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={analysisShowEngineColumn}
+                          onChange={(e) => setAnalysisShowEngineColumn(e.target.checked)}
+                        />
+                        Show engine eval column
+                      </label>
+                    </div>
+                  ) : (
+                    <AnalysisBoard
+                      state={state}
+                      opponentUsername={opponentUsername}
+                      opponentImportedCount={opponentImportedCount}
+                      filtersKey={filtersKey}
+                      requestOpponentMove={requestOpponentMove}
+                      showArrow={analysisShowArrow}
+                      showEval={analysisShowEval}
+                      onEvalChange={setAnalysisEval}
+                      showEngineBest={analysisShowEngineBest}
+                      engineBestMove={
+                        analysisEngineBestUci ? { uci: analysisEngineBestUci, san: analysisEngineBestSan } : null
+                      }
+                      setEngineBestMove={handleSetEngineBestMove}
+                      opponentStatsBusy={analysisStatsBusy}
+                      opponentStats={analysisStats}
+                      setOpponentStats={setAnalysisStats}
+                      setOpponentStatsBusy={setAnalysisStatsBusy}
+                      enabled={active === "stats"}
+                      showEngineColumn={analysisShowEngineColumn}
+                    />
+                  )}
+                </div>
+              </div>
             </>
           );
         }
