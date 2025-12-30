@@ -28,6 +28,20 @@ type GameNorm = {
   moves_san: string[];
 };
 
+type OpponentMoveEventRow = {
+  platform_game_id: string | null;
+  played_at: string | null;
+  speed: string | null;
+  rated: boolean | null;
+  ply: number | null;
+  is_opponent_move: boolean | null;
+  san: string | null;
+  uci: string | null;
+  win: number | null;
+  loss: number | null;
+  draw: number | null;
+};
+
 export type OpponentProfileGameNorm = GameNorm;
 
 export type V2OpeningRow = {
@@ -191,8 +205,10 @@ function inferResultFromPgn(pgn: string): "1-0" | "0-1" | "1/2-1/2" | "*" {
 }
 
 function parseDateRangeIso(params: { from: string | null; to: string | null }) {
-  const fromIso = params.from ? new Date(params.from).toISOString() : null;
-  const toIso = params.to ? new Date(params.to).toISOString() : null;
+  const fromMs = params.from ? new Date(params.from).getTime() : NaN;
+  const toMs = params.to ? new Date(params.to).getTime() : NaN;
+  const fromIso = Number.isFinite(fromMs) ? new Date(fromMs).toISOString() : null;
+  const toIso = Number.isFinite(toMs) ? new Date(toMs).toISOString() : null;
   return { fromIso, toIso };
 }
 
@@ -597,8 +613,13 @@ export async function buildOpponentProfileV2(params: {
 }): Promise<{ profile: OpponentProfileV2; filtersUsed: OpponentProfileFilters; normalized?: GameNorm[] }>
 {
   const { fromIso, toIso } = parseDateRangeIso({ from: params.filters.from, to: params.filters.to });
+  const usernameKey = params.username.trim().toLowerCase();
 
-  const speedsFilter = (params.filters.speeds ?? []) as LichessSpeed[];
+  let speedsFilter = (params.filters.speeds ?? []) as LichessSpeed[];
+  const allSpeeds: LichessSpeed[] = ["bullet", "blitz", "rapid", "classical", "correspondence"];
+  if (speedsFilter.length >= allSpeeds.length && allSpeeds.every((s) => speedsFilter.includes(s))) {
+    speedsFilter = [];
+  }
   const ratedFilter = (params.filters.rated ?? "any") as "any" | "rated" | "casual";
 
   const batchSize = 500;
@@ -607,85 +628,220 @@ export async function buildOpponentProfileV2(params: {
 
   const maxGamesCap = params.maxGamesCap == null ? null : Number(params.maxGamesCap);
 
-  const rows: Array<{ id: string; played_at: string | null; pgn: string; platform_game_id: string | null }> = [];
+  async function fetchNormalizedFromGames(): Promise<GameNorm[]> {
+    const rows: Array<{ id: string; played_at: string | null; pgn: string; platform_game_id: string | null }> = [];
 
-  for (;;) {
-    if (maxGamesCap != null && fetchedTotal >= maxGamesCap) break;
-    const remaining = maxGamesCap == null ? batchSize : Math.min(batchSize, maxGamesCap - fetchedTotal);
-    if (remaining <= 0) break;
+    for (;;) {
+      if (maxGamesCap != null && fetchedTotal >= maxGamesCap) break;
+      const remaining = maxGamesCap == null ? batchSize : Math.min(batchSize, maxGamesCap - fetchedTotal);
+      if (remaining <= 0) break;
 
-    let query = params.supabase
-      .from("games")
-      .select("id, pgn, played_at, platform_game_id")
-      .eq("profile_id", params.profileId)
-      .eq("platform", params.platform)
-      .eq("username", params.username)
-      .order("played_at", { ascending: false });
+      let query = params.supabase
+        .from("games")
+        .select("id, pgn, played_at, platform_game_id")
+        .eq("profile_id", params.profileId)
+        .eq("platform", params.platform)
+        .ilike("username", usernameKey)
+        .order("played_at", { ascending: false });
 
-    if (fromIso) query = query.gte("played_at", fromIso);
-    if (toIso) query = query.lte("played_at", toIso);
+      if (fromIso) query = query.gte("played_at", fromIso);
+      if (toIso) query = query.lte("played_at", toIso);
 
-    const { data, error } = await query.range(offset, offset + remaining - 1);
-    if (error) throw error;
-    const batch = (data ?? []) as Array<{ id: string; played_at: string | null; pgn: string; platform_game_id: string | null }>;
-    if (batch.length === 0) break;
+      const { data, error } = await query.range(offset, offset + remaining - 1);
+      if (error) throw error;
+      const batch = (data ?? []) as Array<{ id: string; played_at: string | null; pgn: string; platform_game_id: string | null }>;
+      if (batch.length === 0) break;
 
-    rows.push(...batch);
-    fetchedTotal += batch.length;
-    offset += batch.length;
+      rows.push(...batch);
+      fetchedTotal += batch.length;
+      offset += batch.length;
 
-    if (batch.length < remaining) break;
+      if (batch.length < remaining) break;
+    }
+
+    const normalized: GameNorm[] = [];
+
+    for (const row of rows) {
+      const pgn = String((row as any)?.pgn ?? "");
+      if (!pgn) continue;
+
+      if (speedsFilter.length > 0) {
+        const s = inferSpeedFromPgn(pgn);
+        if (s && !speedsFilter.includes(s)) continue;
+      }
+
+      if (ratedFilter !== "any") {
+        const isRated = inferRatedFromPgn(pgn);
+        if (isRated !== null) {
+          if (ratedFilter === "rated" && !isRated) continue;
+          if (ratedFilter === "casual" && isRated) continue;
+        }
+      }
+
+      const oppColor = inferOpponentColorFromPgn(pgn, params.username);
+      if (!oppColor) continue;
+
+      const speed = inferSpeedFromPgn(pgn);
+      const rated = inferRatedFromPgn(pgn);
+
+      const resTag = inferResultFromPgn(pgn);
+      let result: GameNorm["result"] = "unknown";
+      if (resTag === "1/2-1/2") result = "draw";
+      else if (resTag === "1-0") result = oppColor === "w" ? "win" : "loss";
+      else if (resTag === "0-1") result = oppColor === "b" ? "win" : "loss";
+
+      const chess = new Chess();
+      try {
+        chess.loadPgn(pgn, { strict: false });
+      } catch {
+        continue;
+      }
+
+      const moves = (chess.history() ?? []).map((m) => String(m));
+
+      normalized.push({
+        id: String((row as any)?.id ?? (row as any)?.platform_game_id ?? ""),
+        played_at: row.played_at ? new Date(row.played_at).toISOString() : null,
+        speed,
+        rated,
+        opponent_color: oppColor,
+        result,
+        moves_san: moves,
+      });
+    }
+
+    return normalized;
   }
 
-  const normalized: GameNorm[] = [];
-
-  for (const row of rows) {
-    const pgn = String((row as any)?.pgn ?? "");
-    if (!pgn) continue;
-
-    if (speedsFilter.length > 0) {
-      const s = inferSpeedFromPgn(pgn);
-      if (s && !speedsFilter.includes(s)) continue;
-    }
-
-    if (ratedFilter !== "any") {
-      const isRated = inferRatedFromPgn(pgn);
-      if (isRated !== null) {
-        if (ratedFilter === "rated" && !isRated) continue;
-        if (ratedFilter === "casual" && isRated) continue;
+  async function fetchNormalizedFromEvents(): Promise<GameNorm[]> {
+    const eventBatchSize = 1000;
+    let eventOffset = 0;
+    const capGames = maxGamesCap == null ? 20000 : maxGamesCap;
+    const byGame = new Map<
+      string,
+      {
+        played_at: string | null;
+        speed: LichessSpeed | null;
+        rated: boolean | null;
+        zeroBasedPly: boolean;
+        opponent_color: "w" | "b";
+        result: GameNorm["result"];
+        movesByPly: string[];
       }
+    >();
+
+    for (;;) {
+      const { data, error } = await (() => {
+        let q = params.supabase
+          .from("opponent_move_events")
+          .select("platform_game_id, played_at, speed, rated, ply, is_opponent_move, san, uci, win, loss, draw")
+          .eq("profile_id", params.profileId)
+          .eq("platform", params.platform)
+          .ilike("username", usernameKey)
+          .order("played_at", { ascending: false })
+          .order("ply", { ascending: true })
+          .range(eventOffset, eventOffset + eventBatchSize - 1);
+
+        if (fromIso) q = q.gte("played_at", fromIso);
+        if (toIso) q = q.lte("played_at", toIso);
+        if (speedsFilter.length > 0) q = q.in("speed", speedsFilter);
+        if (ratedFilter !== "any") q = q.eq("rated", ratedFilter === "rated");
+
+        return q;
+      })();
+
+      if (error) throw error;
+      const batch = (data ?? []) as OpponentMoveEventRow[];
+      if (batch.length === 0) break;
+
+      for (const r of batch) {
+        const gameId = (r.platform_game_id ?? "").trim();
+        if (!gameId) continue;
+
+        const plyRaw = typeof r.ply === "number" ? r.ply : null;
+
+        let rec = byGame.get(gameId);
+        if (!rec) {
+          if (byGame.size >= capGames) continue;
+
+          const playedAtIso = r.played_at ? new Date(r.played_at).toISOString() : null;
+          const speed =
+            typeof r.speed === "string" &&
+            ["bullet", "blitz", "rapid", "classical", "correspondence"].includes(r.speed.toLowerCase())
+              ? (r.speed.toLowerCase() as LichessSpeed)
+              : null;
+
+          const rated = typeof r.rated === "boolean" ? r.rated : null;
+
+          const zeroBasedPly = plyRaw === 0;
+
+          // Infer opponent color from first ply. Support both 0-based and 1-based ply.
+          const isOpp = typeof r.is_opponent_move === "boolean" ? r.is_opponent_move : null;
+          const opponent_color: "w" | "b" = (plyRaw === 0 || plyRaw === 1) && isOpp === true ? "w" : "b";
+
+          const win = Number(r.win ?? 0);
+          const loss = Number(r.loss ?? 0);
+          const draw = Number(r.draw ?? 0);
+          const result: GameNorm["result"] = win > 0 ? "win" : loss > 0 ? "loss" : draw > 0 ? "draw" : "unknown";
+
+          rec = {
+            played_at: playedAtIso,
+            speed,
+            rated,
+            zeroBasedPly,
+            opponent_color,
+            result,
+            movesByPly: [],
+          };
+          byGame.set(gameId, rec);
+        }
+
+        // If the first event we see isn't ply=0 (e.g. legacy 1-based), keep 1-based.
+        // If this game uses 0-based ply, shift ALL moves by +1 so downstream code can treat it as 1-based.
+        const plyAdj =
+          plyRaw == null ? null : rec.zeroBasedPly ? plyRaw + 1 : plyRaw;
+
+        const ply = plyAdj;
+        if (!ply || ply <= 0) continue;
+        const move = (r.san ?? r.uci ?? "").trim();
+        if (!move) continue;
+        rec.movesByPly[ply - 1] = move;
+      }
+
+      if (byGame.size >= capGames) break;
+      eventOffset += batch.length;
+      if (batch.length < eventBatchSize) break;
     }
 
-    const oppColor = inferOpponentColorFromPgn(pgn, params.username);
-    if (!oppColor) continue;
+    return Array.from(byGame.entries())
+      .map(([gameId, g]) => ({
+        id: gameId,
+        played_at: g.played_at,
+        speed: g.speed,
+        rated: g.rated,
+        opponent_color: g.opponent_color,
+        result: g.result,
+        moves_san: g.movesByPly.filter((m) => typeof m === "string" && m.trim()),
+      }))
+      .sort((a, b) => {
+        const aa = a.played_at ?? "";
+        const bb = b.played_at ?? "";
+        return bb.localeCompare(aa);
+      });
+  }
 
-    const speed = inferSpeedFromPgn(pgn);
-    const rated = inferRatedFromPgn(pgn);
+  let normalized: GameNorm[] = [];
+  try {
+    normalized = await fetchNormalizedFromGames();
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const fallbackOk = msg.includes("relation") || msg.includes("games") || msg.includes("does not exist") || msg.includes("column");
+    if (!fallbackOk) throw e;
+    normalized = [];
+  }
 
-    const resTag = inferResultFromPgn(pgn);
-    let result: GameNorm["result"] = "unknown";
-    if (resTag === "1/2-1/2") result = "draw";
-    else if (resTag === "1-0") result = oppColor === "w" ? "win" : "loss";
-    else if (resTag === "0-1") result = oppColor === "b" ? "win" : "loss";
-
-    const chess = new Chess();
-    try {
-      chess.loadPgn(pgn, { strict: false });
-    } catch {
-      continue;
-    }
-
-    const moves = (chess.history() ?? []).map((m) => String(m));
-
-    normalized.push({
-      id: String((row as any)?.id ?? (row as any)?.platform_game_id ?? ""),
-      played_at: row.played_at ? new Date(row.played_at).toISOString() : null,
-      speed,
-      rated,
-      opponent_color: oppColor,
-      result,
-      moves_san: moves,
-    });
+  if (normalized.length === 0) {
+    normalized = await fetchNormalizedFromEvents();
   }
 
   const nowIso = new Date().toISOString();

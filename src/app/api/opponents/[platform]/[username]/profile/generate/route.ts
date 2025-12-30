@@ -15,6 +15,7 @@ export async function POST(request: Request, context: { params: Promise<Params> 
   const resolvedParams = await context.params;
   const platform = resolvedParams.platform as ChessPlatform;
   const username = String(resolvedParams.username ?? "").trim();
+  const usernameKey = username.toLowerCase();
 
   if (!username) {
     return NextResponse.json({ error: "username is required" }, { status: 400 });
@@ -52,14 +53,7 @@ export async function POST(request: Request, context: { params: Promise<Params> 
   const from = typeof body?.from === "string" ? String(body.from) : null;
   const to = typeof body?.to === "string" ? String(body.to) : null;
 
-  const [{ profile: statsV1 }, { profile: profileV2, normalized, filtersUsed }] = await Promise.all([
-    buildOpponentProfile({
-      supabase,
-      profileId: user.id,
-      platform,
-      username,
-      filters: { speeds, rated, from, to },
-    }),
+  const [{ profile: profileV2, normalized, filtersUsed }, statsV1Result] = await Promise.all([
     buildOpponentProfileV2({
       supabase,
       profileId: user.id,
@@ -68,10 +62,67 @@ export async function POST(request: Request, context: { params: Promise<Params> 
       filters: { speeds, rated, from, to },
       includeNormalized: true,
     }),
+    (async () => {
+      try {
+        return await buildOpponentProfile({
+          supabase,
+          profileId: user.id,
+          platform,
+          username,
+          filters: { speeds, rated, from, to },
+        });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        const canSkip =
+          msg.includes("relation") ||
+          msg.includes("games") ||
+          msg.includes("does not exist") ||
+          msg.includes("column") ||
+          msg.includes("pgn");
+        if (!canSkip) throw e;
+        return { profile: null, filtersUsed: { speeds, rated, from, to } } as any;
+      }
+    })(),
   ]);
+
+  const statsV1 = (statsV1Result as any)?.profile ?? null;
 
   const v3 = buildOpponentProfileV3Addon({ platform, normalized: normalized ?? [] });
   const profile: any = { ...profileV2, profile_version: 2, v3 };
+
+  let debugCounts: any = null;
+
+  if (Number(profile?.games_analyzed ?? 0) === 0) {
+    const debug: any = { platform, username, speeds, rated, from, to };
+
+    try {
+      const { count, error } = await supabase
+        .from("opponent_move_events")
+        .select("platform_game_id", { count: "exact", head: true })
+        .eq("profile_id", user.id)
+        .eq("platform", platform)
+        .ilike("username", usernameKey)
+        .eq("ply", 1);
+      debug.events_ply1_count = error ? null : typeof count === "number" ? count : 0;
+    } catch {
+      debug.events_ply1_count = null;
+    }
+
+    try {
+      const { count, error } = await supabase
+        .from("games")
+        .select("id", { count: "exact", head: true })
+        .eq("profile_id", user.id)
+        .eq("platform", platform)
+        .ilike("username", usernameKey);
+      debug.games_table_count = error ? null : typeof count === "number" ? count : 0;
+    } catch {
+      debug.games_table_count = null;
+    }
+
+    profile.debug_counts = debug;
+    debugCounts = debug;
+  }
 
   const { data: saved, error } = await supabase
     .from("opponent_profiles")
@@ -122,5 +173,5 @@ export async function POST(request: Request, context: { params: Promise<Params> 
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ opponent_profile: saved });
+  return NextResponse.json({ opponent_profile: saved, debug_counts: debugCounts });
 }

@@ -446,11 +446,31 @@ export function OpponentProfileClient({ platform, username }: Props) {
       setNeedsMigration(Boolean((json as any)?.needs_migration));
       setProfileRow(((json as any)?.opponent_profile as OpponentProfileRow | null) ?? null);
 
-      const msgV1 = (json as any)?.opponent_profile?.stats_json?.message;
+      const v2Games = Number((json as any)?.opponent_profile?.profile_json?.games_analyzed ?? NaN);
+
       const msgV2 = (json as any)?.opponent_profile?.profile_json?.message;
       const msgV3 = (json as any)?.opponent_profile?.profile_json?.v3?.message;
-      const msg = typeof msgV3 === "string" && msgV3.trim() ? msgV3 : typeof msgV2 === "string" && msgV2.trim() ? msgV2 : msgV1;
-      if (typeof msg === "string" && msg.trim()) setActionMessage(msg);
+      const msgV1 = (json as any)?.opponent_profile?.stats_json?.message;
+      const msgBase = typeof msgV3 === "string" && msgV3.trim() ? msgV3 : typeof msgV2 === "string" && msgV2.trim() ? msgV2 : null;
+      const msg = msgBase ?? (Number.isFinite(v2Games) && v2Games === 0 ? msgV1 : null);
+
+      const debugCounts =
+        (json as any)?.debug_counts ??
+        (json as any)?.opponent_profile?.profile_json?.debug_counts ??
+        (json as any)?.opponent_profile?.profile_json?.debugCounts ??
+        null;
+
+      if (debugCounts && typeof debugCounts === "object") {
+        const debugText = JSON.stringify(debugCounts);
+        setActionMessage(`${typeof msg === "string" && msg.trim() ? msg.trim() : "No games matched the selected filters."}\n\nDebug: ${debugText}`);
+      } else if (Number.isFinite(v2Games) && v2Games === 0) {
+        if (typeof msg === "string" && msg.trim()) setActionMessage(msg);
+        else setActionMessage("No games matched the selected filters.");
+      } else if (typeof msg === "string" && msg.trim()) {
+        setActionMessage(msg);
+      } else {
+        setActionMessage(null);
+      }
     } catch (e) {
       setActionMessage(e instanceof Error ? e.message : "Failed to generate profile");
     } finally {
@@ -1251,7 +1271,7 @@ export function OpponentProfileClient({ platform, username }: Props) {
                   </button>
                 </div>
 
-                {actionMessage ? <div className="text-xs text-neutral-700">{actionMessage}</div> : null}
+                {actionMessage ? <div className="whitespace-pre-wrap break-words text-xs text-neutral-700">{actionMessage}</div> : null}
               </div>
             </div>
           </div>
