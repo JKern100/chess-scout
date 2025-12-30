@@ -404,40 +404,8 @@ export function AnalysisBoard(props: Props) {
   return (
     <div className="flex flex-col gap-4">
       <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            className="inline-flex h-9 items-center justify-center rounded-xl bg-zinc-900 px-3 text-[10px] font-medium text-white hover:bg-zinc-800"
-            onClick={state.reset}
-          >
-            Reset
-          </button>
-          <button
-            type="button"
-            className="inline-flex h-9 items-center justify-center rounded-xl border border-zinc-200 bg-white px-3 text-[10px] font-medium text-zinc-900 hover:bg-zinc-50"
-            onClick={() => state.undoPlies(1)}
-          >
-            Undo
-          </button>
-          <button
-            type="button"
-            className="inline-flex h-9 items-center justify-center rounded-xl border border-zinc-200 bg-white px-3 text-[10px] font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
-            onClick={() => state.undoPlies(2)}
-            disabled={state.fenHistory.length <= 2}
-          >
-            Undo full move
-          </button>
-          <button
-            type="button"
-            className="inline-flex h-9 items-center justify-center rounded-xl border border-zinc-200 bg-white px-3 text-[10px] font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
-            onClick={() => state.redoPlies(1)}
-            disabled={state.redoFens.length === 0}
-          >
-            Redo
-          </button>
-          <div className="ml-auto text-[10px] text-zinc-600">
-            Turn: <span className="font-medium text-zinc-900">{state.game.turn() === "w" ? "White" : "Black"}</span>
-          </div>
+        <div className="text-[10px] text-zinc-600">
+          Turn: <span className="font-medium text-zinc-900">{state.game.turn() === "w" ? "White" : "Black"}</span>
         </div>
 
         {showEngineBest ? (

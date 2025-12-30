@@ -2,6 +2,7 @@
 
 import { Chess } from "chess.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, RotateCcw } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { getBestMoveForPlay, type EngineScore } from "@/lib/engine/engineService";
 import { ChessBoardCore, type ChessBoardCoreState } from "./ChessBoardCore";
@@ -51,6 +52,10 @@ function MovesSoFarPanel(props: { state: ChessBoardCoreState; opponentUsername: 
     if (delta > 0) state.redoPlies(delta);
     else state.undoPlies(-delta);
   }
+
+  const canGoBack = state.moveHistory.length > 0;
+  const canGoForward = state.redoMoves.length > 0;
+  const canReset = state.moveHistory.length > 0 || state.redoMoves.length > 0;
 
   useEffect(() => {
     if (!saveLineToast) return;
@@ -170,27 +175,61 @@ function MovesSoFarPanel(props: { state: ChessBoardCoreState; opponentUsername: 
       <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
         <div className="text-[10px] font-medium text-zinc-900">Moves so Far</div>
         <div className="mt-2 grid gap-2 text-[10px] text-zinc-700">
-          <div className="flex items-center justify-between">
-            <button
-              type="button"
-              className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-2 py-1 text-[10px] font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
-              disabled={state.moveHistory.length === 0}
-              onClick={() => state.undoPlies(1)}
-            >
-              Prev
-            </button>
-            <button
-              type="button"
-              className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-2 py-1 text-[10px] font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
-              disabled={state.redoMoves.length === 0}
-              onClick={() => state.redoPlies(1)}
-            >
-              Next
-            </button>
+          <div className="flex items-center justify-center">
+            <div className="flex w-full max-w-full items-center justify-center">
+              <div className="flex w-full max-w-full items-center justify-between gap-1 overflow-hidden rounded-xl border border-zinc-200 bg-white px-1 py-1">
+              <button
+                type="button"
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-zinc-700 hover:bg-zinc-50 disabled:opacity-40"
+                title="First move"
+                disabled={!canGoBack}
+                onClick={() => goToPly(-1)}
+              >
+                <ChevronsLeft className="h-5 w-5" />
+              </button>
+              <button
+                type="button"
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-zinc-700 hover:bg-zinc-50 disabled:opacity-40"
+                title="Previous move"
+                disabled={!canGoBack}
+                onClick={() => state.undoPlies(1)}
+              >
+                <ChevronLeft className="h-5 w-5" />
+              </button>
+              <button
+                type="button"
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-zinc-700 hover:bg-zinc-50 disabled:opacity-40"
+                title="Next move"
+                disabled={!canGoForward}
+                onClick={() => state.redoPlies(1)}
+              >
+                <ChevronRight className="h-5 w-5" />
+              </button>
+              <button
+                type="button"
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-zinc-700 hover:bg-zinc-50 disabled:opacity-40"
+                title="Last move"
+                disabled={!canGoForward}
+                onClick={() => goToPly(allMoves.length - 1)}
+              >
+                <ChevronsRight className="h-5 w-5" />
+              </button>
+              <div className="h-6 w-px shrink-0 bg-zinc-200" />
+              <button
+                type="button"
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-zinc-700 hover:bg-zinc-50 disabled:opacity-40"
+                title="Reset"
+                disabled={!canReset}
+                onClick={() => state.reset()}
+              >
+                <RotateCcw className="h-5 w-5" />
+              </button>
+              </div>
+            </div>
           </div>
 
           {allMoves.length ? (
-            <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
+            <div className="w-full min-w-0 overflow-hidden rounded-xl border border-zinc-200 bg-white">
               <div className="grid grid-cols-[44px_1fr_1fr] bg-zinc-50 text-[10px] font-medium text-zinc-500">
                 <div className="px-2 py-1">#</div>
                 <div className="px-2 py-1">White</div>
