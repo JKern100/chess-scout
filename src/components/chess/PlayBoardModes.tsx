@@ -723,6 +723,7 @@ export function PlayBoardModes({ initialFen }: Props) {
   const opponentSource = engineTakeover ? "engine" : "history";
 
   const [sessionAxisMarkers, setSessionAxisMarkers] = useState<StoredStyleMarker[]>([]);
+  const [sessionAxisMarkersBusy, setSessionAxisMarkersBusy] = useState(false);
 
   const fetchSessionAxisMarkers = useCallback(
     async (username: string) => {
@@ -733,6 +734,7 @@ export function PlayBoardModes({ initialFen }: Props) {
       }
 
       try {
+        setSessionAxisMarkersBusy(true);
         const res = await fetch(`/api/sim/session/markers?platform=lichess&username=${encodeURIComponent(trimmed)}`, {
           cache: "no-store",
         });
@@ -742,6 +744,8 @@ export function PlayBoardModes({ initialFen }: Props) {
         setSessionAxisMarkers(rows.filter(Boolean));
       } catch {
         setSessionAxisMarkers([]);
+      } finally {
+        setSessionAxisMarkersBusy(false);
       }
     },
     []
@@ -762,6 +766,7 @@ export function PlayBoardModes({ initialFen }: Props) {
   const styleSessionKey = `${opponentUsername.trim().toLowerCase()}|${filtersKey}`;
   const lastStyleSessionKeyRef = useRef<string | null>(null);
   const styleSessionInFlightRef = useRef(false);
+  const styleSessionDebounceRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!generateStyleMarkers) return;
@@ -770,34 +775,53 @@ export function PlayBoardModes({ initialFen }: Props) {
     if (styleSessionInFlightRef.current) return;
     if (lastStyleSessionKeyRef.current === styleSessionKey) return;
 
-    styleSessionInFlightRef.current = true;
-    void (async () => {
-      try {
-        const res = await fetch("/api/sim/session/start", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            platform: "lichess",
-            username: trimmed,
-            speeds: filterSpeeds,
-            rated: filterRated,
-            from: filterFromDate || null,
-            to: filterToDate || null,
-            enableStyleMarkers: true,
-          }),
-        });
+    if (styleSessionDebounceRef.current != null) {
+      window.clearTimeout(styleSessionDebounceRef.current);
+    }
 
-        if (!res.ok) {
-          // Do not advance the dedupe key on failure; allow retry.
-          return;
+    styleSessionDebounceRef.current = window.setTimeout(() => {
+      styleSessionDebounceRef.current = null;
+      if (styleSessionInFlightRef.current) return;
+
+      styleSessionInFlightRef.current = true;
+      setSessionAxisMarkersBusy(true);
+
+      void (async () => {
+        try {
+          const res = await fetch("/api/sim/session/start", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              platform: "lichess",
+              username: trimmed,
+              speeds: filterSpeeds,
+              rated: filterRated,
+              from: filterFromDate || null,
+              to: filterToDate || null,
+              enableStyleMarkers: true,
+            }),
+          });
+
+          if (!res.ok) {
+            // Do not advance the dedupe key on failure; allow retry.
+            return;
+          }
+
+          lastStyleSessionKeyRef.current = styleSessionKey;
+          await fetchSessionAxisMarkers(trimmed);
+        } finally {
+          styleSessionInFlightRef.current = false;
+          setSessionAxisMarkersBusy(false);
         }
+      })();
+    }, 450);
 
-        lastStyleSessionKeyRef.current = styleSessionKey;
-        await fetchSessionAxisMarkers(trimmed);
-      } finally {
-        styleSessionInFlightRef.current = false;
+    return () => {
+      if (styleSessionDebounceRef.current != null) {
+        window.clearTimeout(styleSessionDebounceRef.current);
+        styleSessionDebounceRef.current = null;
       }
-    })();
+    };
   }, [
     fetchSessionAxisMarkers,
     filterFromDate,
@@ -1172,12 +1196,15 @@ export function PlayBoardModes({ initialFen }: Props) {
       <div className="min-w-0 rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm">
         <div className="flex items-center justify-between gap-3">
           <div className="text-[10px] font-medium text-zinc-900">Style Markers</div>
-          <span
-            title="Dot shows where this opponent falls relative to the global benchmark tick (center). Left/right labels are the two style extremes."
-            className="inline-flex h-6 w-6 items-center justify-center rounded-lg border border-zinc-200 bg-white text-[10px] font-semibold text-zinc-600"
-          >
-            ?
-          </span>
+          <div className="flex items-center gap-2">
+            {sessionAxisMarkersBusy ? <span className="text-[10px] font-medium text-zinc-500">Regenerating…</span> : null}
+            <span
+              title="Dot shows where this opponent falls relative to the global benchmark tick (center). Left/right labels are the two style extremes."
+              className="inline-flex h-6 w-6 items-center justify-center rounded-lg border border-zinc-200 bg-white text-[10px] font-semibold text-zinc-600"
+            >
+              ?
+            </span>
+          </div>
         </div>
 
         <div className="mt-2 grid gap-3">
