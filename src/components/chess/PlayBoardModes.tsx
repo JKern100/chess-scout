@@ -762,10 +762,14 @@ export function PlayBoardModes({ initialFen }: Props) {
   const axisQueen = sessionAxisMarkers.find((m) => m.marker_key === "axis_queen_trades") ?? null;
   const axisCastle = sessionAxisMarkers.find((m) => m.marker_key === "axis_castling_timing") ?? null;
   const axisAggro = sessionAxisMarkers.find((m) => m.marker_key === "axis_aggression") ?? null;
+  const axisLength = sessionAxisMarkers.find((m) => m.marker_key === "axis_game_length") ?? null;
+  const axisOppCastle = sessionAxisMarkers.find((m) => m.marker_key === "axis_opposite_castling") ?? null;
 
   const queenPct = spectrumPctFromDiffRatio(axisQueen?.metrics_json?.diff_ratio);
   const castlePct = spectrumPctFromDiffRatio(axisCastle?.metrics_json?.diff_ratio);
   const aggroPct = spectrumPctFromDiffRatio(axisAggro?.metrics_json?.diff_ratio);
+  const lengthPct = spectrumPctFromDiffRatio(axisLength?.metrics_json?.diff_ratio);
+  const oppCastlePct = spectrumPctFromDiffRatio(axisOppCastle?.metrics_json?.diff_ratio);
 
   const styleSessionKey = `${opponentUsername.trim().toLowerCase()}|${filtersKey}`;
   const lastStyleSessionKeyRef = useRef<string | null>(null);
@@ -1210,25 +1214,62 @@ export function PlayBoardModes({ initialFen }: Props) {
         footerNote={archivingNote ? <span>{archivingNote}</span> : null}
       />
 
-      <div className="min-w-0 rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm">
+      <div className="relative min-w-0 rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm">
         <div className="flex items-center justify-between gap-3">
           <div className="text-[10px] font-medium text-zinc-900">Style Markers</div>
-          <div className="flex items-center gap-2">
-            {sessionAxisMarkersBusy ? <span className="text-[10px] font-medium text-zinc-500">Regenerating…</span> : null}
-            <span
-              title="Dot shows where this opponent falls relative to the global benchmark tick (center). Left/right labels are the two style extremes."
-              className="inline-flex h-6 w-6 items-center justify-center rounded-lg border border-zinc-200 bg-white text-[10px] font-semibold text-zinc-600"
-            >
-              ?
-            </span>
-          </div>
+          <span
+            title="Dot shows where this opponent falls relative to the global benchmark tick (center). Left/right labels are the two style extremes."
+            className="inline-flex h-6 w-6 items-center justify-center rounded-lg border border-zinc-200 bg-white text-[10px] font-semibold text-zinc-600"
+          >
+            ?
+          </span>
         </div>
 
-        <div className="mt-2 grid gap-3">
-          <StyleSpectrumBar title="Simplification" leftLabel="Keep Queens" rightLabel="Trade Queens" positionPct={queenPct} />
-          <StyleSpectrumBar title="Castling" leftLabel="Castle Early" rightLabel="Castle Late" positionPct={castlePct} />
-          <StyleSpectrumBar title="Aggression" leftLabel="Solid/Positional" rightLabel="Hyper-Aggressive" positionPct={aggroPct} />
+        <div className={`mt-2 grid gap-2 ${sessionAxisMarkersBusy ? "opacity-70" : ""}`}>
+          <StyleSpectrumBar
+            title="Simplification"
+            leftLabel="Keep Queens"
+            rightLabel="Trade Queens"
+            positionPct={queenPct}
+            animate={sessionAxisMarkersBusy}
+          />
+          <StyleSpectrumBar
+            title="Game Length"
+            leftLabel="Sprinter"
+            rightLabel="Marathon Runner"
+            positionPct={lengthPct}
+            animate={sessionAxisMarkersBusy}
+          />
+          <StyleSpectrumBar
+            title="Pawn Storms"
+            leftLabel="Symmetrical"
+            rightLabel="Chaos Creator"
+            positionPct={oppCastlePct}
+            animate={sessionAxisMarkersBusy}
+          />
+          <StyleSpectrumBar
+            title="Castling"
+            leftLabel="Castle Early"
+            rightLabel="Castle Late"
+            positionPct={castlePct}
+            animate={sessionAxisMarkersBusy}
+          />
+          <StyleSpectrumBar
+            title="Aggression"
+            leftLabel="Solid/Positional"
+            rightLabel="Hyper-Aggressive"
+            positionPct={aggroPct}
+            animate={sessionAxisMarkersBusy}
+          />
         </div>
+
+        {sessionAxisMarkersBusy ? (
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+            <div className="rounded-xl bg-white/80 px-4 py-2 text-sm font-bold text-zinc-800 animate-pulse" style={{ animationDuration: "1s" }}>
+              Regenerating…
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );

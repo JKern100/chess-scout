@@ -1,18 +1,41 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 export function StyleSpectrumBar(props: {
   title: string;
   leftLabel: string;
   rightLabel: string;
   positionPct: number;
+  animate?: boolean;
 }) {
   const pos = useMemo(() => {
     const n = Number(props.positionPct);
     if (!Number.isFinite(n)) return 50;
     return Math.max(0, Math.min(100, n));
   }, [props.positionPct]);
+
+  const [animPos, setAnimPos] = useState<number>(pos);
+
+  useEffect(() => {
+    if (!props.animate) {
+      setAnimPos(pos);
+      return;
+    }
+
+    let cancelled = false;
+    const id = window.setInterval(() => {
+      if (cancelled) return;
+      const jitter = (Math.random() - 0.5) * 50;
+      const next = Math.max(0, Math.min(100, pos + jitter));
+      setAnimPos(next);
+    }, 220);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [pos, props.animate]);
 
   return (
     <div className="grid gap-1">
@@ -27,8 +50,8 @@ export function StyleSpectrumBar(props: {
         />
 
         <div
-          className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-yellow-500 shadow"
-          style={{ left: `${pos}%` }}
+          className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-yellow-500 shadow transition-[left] duration-200 ease-in-out"
+          style={{ left: `${props.animate ? animPos : pos}%` }}
         />
       </div>
 

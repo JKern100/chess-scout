@@ -16,7 +16,7 @@ export default async function PlayPage() {
 
   return (
     <div className="min-h-screen bg-zinc-50">
-      <main className="mx-auto flex w-full max-w-none flex-col gap-6 px-6 py-10 text-[10px]">
+      <main className="mx-auto flex w-full max-w-none flex-col gap-6 p-2 text-[10px] sm:px-6 sm:py-10">
         <header className="flex flex-col gap-2">
           <div className="flex items-center justify-between gap-4">
             <div>

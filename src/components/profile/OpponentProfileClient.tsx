@@ -572,10 +572,14 @@ export function OpponentProfileClient({ platform, username }: Props) {
   const axisQueen = storedStyleMarkers.find((m) => m.marker_key === "axis_queen_trades") ?? null;
   const axisCastle = storedStyleMarkers.find((m) => m.marker_key === "axis_castling_timing") ?? null;
   const axisAggro = storedStyleMarkers.find((m) => m.marker_key === "axis_aggression") ?? null;
+  const axisLength = storedStyleMarkers.find((m) => m.marker_key === "axis_game_length") ?? null;
+  const axisOppCastle = storedStyleMarkers.find((m) => m.marker_key === "axis_opposite_castling") ?? null;
 
   const queenPct = spectrumPctFromDiffRatio(axisQueen?.metrics_json?.diff_ratio);
   const castlePct = spectrumPctFromDiffRatio(axisCastle?.metrics_json?.diff_ratio);
   const aggroPct = spectrumPctFromDiffRatio(axisAggro?.metrics_json?.diff_ratio);
+  const lengthPct = spectrumPctFromDiffRatio(axisLength?.metrics_json?.diff_ratio);
+  const oppCastlePct = spectrumPctFromDiffRatio(axisOppCastle?.metrics_json?.diff_ratio);
 
   function OpeningBarList(props: { rows: V2OpeningRow[]; title: string; sampleWarning?: string | null; ctx?: V3Context | null }) {
     const { rows, title, sampleWarning, ctx } = props;
@@ -880,12 +884,24 @@ export function OpponentProfileClient({ platform, username }: Props) {
               }
             >
               {styleMarkersOpen ? (
-                <div className="grid gap-3">
+                <div className="grid gap-2">
                   <StyleSpectrumBar
                     title="Simplification"
                     leftLabel="Keep Queens"
                     rightLabel="Trade Queens"
                     positionPct={queenPct}
+                  />
+                  <StyleSpectrumBar
+                    title="Game Length"
+                    leftLabel="Sprinter"
+                    rightLabel="Marathon Runner"
+                    positionPct={lengthPct}
+                  />
+                  <StyleSpectrumBar
+                    title="Pawn Storms"
+                    leftLabel="Symmetrical"
+                    rightLabel="Chaos Creator"
+                    positionPct={oppCastlePct}
                   />
                   <StyleSpectrumBar
                     title="Castling"

@@ -28,6 +28,8 @@ type BenchRow = {
   avg_castle_move: number | null;
   queen_trade_m20_rate: number | null;
   aggression_m15_avg: number | null;
+  avg_game_length: number | null;
+  opposite_castle_rate: number | null;
 };
 
 function normalizeMove(m: unknown) {
@@ -111,20 +113,18 @@ function computeMetrics(games: StyleMarkerGame[]) {
   let aggressionSum = 0;
   let aggressionCount = 0;
 
+  let gameLengthSum = 0;
+  let gameLengthCount = 0;
+
+  let oppositeCastleCount = 0;
+  let oppositeCastleTotal = 0;
+
   for (const g of games) {
     const moves = Array.isArray(g.moves_san) ? g.moves_san : [];
     const oppColor = g.opponent_color === "w" || g.opponent_color === "b" ? g.opponent_color : null;
     if (moves.length === 0 || !oppColor) continue;
 
-    const chess = new Chess();
-    try {
-      for (const mv of moves) {
-        if (!mv) break;
-        chess.move(mv, { sloppy: true } as any);
-      }
-    } catch {
-      continue;
-    }
+    const fullMoves = Math.ceil(moves.length / 2);
 
     // Queen trades by move 20 (ply 40): replay only the first 40 plies and check if both queens are gone.
     {
@@ -181,21 +181,60 @@ function computeMetrics(games: StyleMarkerGame[]) {
       aggressionSum += c;
       aggressionCount += 1;
     }
+
+    // Average game length (full moves), excluding very short games (< 10 full moves).
+    {
+      if (fullMoves >= 10) {
+        gameLengthSum += fullMoves;
+        gameLengthCount += 1;
+      }
+    }
+
+    // Opposite-side castling rate (O-O vs O-O-O), excluding very short games (< 10 full moves).
+    {
+      if (fullMoves >= 10) {
+        let w: "short" | "long" | null = null;
+        let b: "short" | "long" | null = null;
+        for (let i = 0; i < moves.length; i++) {
+          const mv = normalizeMove(moves[i]);
+          if (!mv) break;
+          const side = i % 2 === 0 ? "w" : "b";
+          if (mv === "O-O") {
+            if (side === "w" && w == null) w = "short";
+            if (side === "b" && b == null) b = "short";
+          } else if (mv === "O-O-O") {
+            if (side === "w" && w == null) w = "long";
+            if (side === "b" && b == null) b = "long";
+          }
+          if (w != null && b != null) break;
+        }
+
+        oppositeCastleTotal += 1;
+        if (w != null && b != null && w !== b) oppositeCastleCount += 1;
+      }
+    }
   }
 
   const queenTradeRate = queenTradeTotal > 0 ? queenTradeTraded / queenTradeTotal : 0;
   const avgCastlePly = castleCount > 0 ? castlePlySum / castleCount : null;
   const aggressionAvg = aggressionCount > 0 ? aggressionSum / aggressionCount : 0;
+  const avgGameLength = gameLengthCount > 0 ? gameLengthSum / gameLengthCount : null;
+  const oppositeCastleRate = oppositeCastleTotal > 0 ? oppositeCastleCount / oppositeCastleTotal : 0;
 
   return {
     queenTradeRate,
     avgCastlePly,
     aggressionAvg,
+    avgGameLength,
+    oppositeCastleRate,
     counts: {
       queen_trade_total: queenTradeTotal,
       queen_trade_traded: queenTradeTraded,
       castle_count: castleCount,
       aggression_count: aggressionCount,
+      game_length_count: gameLengthCount,
+      opposite_castle_total: oppositeCastleTotal,
+      opposite_castle_count: oppositeCastleCount,
     },
   };
 }
@@ -215,7 +254,7 @@ export async function calculateAndStoreMarkers(params: {
 
   const { data: benchData, error: benchError } = await params.supabase
     .from("scout_benchmarks")
-    .select("category, avg_castle_move, queen_trade_m20_rate, aggression_m15_avg")
+    .select("category, avg_castle_move, queen_trade_m20_rate, aggression_m15_avg, avg_game_length, opposite_castle_rate")
     .eq("category", category)
     .maybeSingle();
 
@@ -246,6 +285,44 @@ export async function calculateAndStoreMarkers(params: {
           diff_ratio: diffRatio,
           queen_trade_rate: metrics.queenTradeRate,
           benchmark: base,
+        },
+      });
+    }
+
+    // Game length axis
+    {
+      const base = bench.avg_game_length != null ? Number(bench.avg_game_length) : null;
+      const diffRatio = base != null && metrics.avgGameLength != null ? (base > 0 ? (metrics.avgGameLength - base) / base : metrics.avgGameLength) : 0;
+      axisRows.push({
+        marker_key: "axis_game_length",
+        label: "Game Length",
+        strength: diffStrength(diffRatio) ?? "Light",
+        tooltip: "Average game length (full moves) vs global benchmark",
+        metrics_json: {
+          category,
+          diff_ratio: diffRatio,
+          avg_game_length: metrics.avgGameLength,
+          benchmark: base,
+          min_full_moves: 10,
+        },
+      });
+    }
+
+    // Opposite-side castling axis
+    {
+      const base = bench.opposite_castle_rate != null ? Number(bench.opposite_castle_rate) : null;
+      const diffRatio = base != null ? (base > 0 ? (metrics.oppositeCastleRate - base) / base : metrics.oppositeCastleRate) : 0;
+      axisRows.push({
+        marker_key: "axis_opposite_castling",
+        label: "Pawn Storms",
+        strength: diffStrength(diffRatio) ?? "Light",
+        tooltip: "Opposite-side castling tendency vs global benchmark",
+        metrics_json: {
+          category,
+          diff_ratio: diffRatio,
+          opposite_castle_rate: metrics.oppositeCastleRate,
+          benchmark: base,
+          min_full_moves: 10,
         },
       });
     }
@@ -361,6 +438,68 @@ export async function calculateAndStoreMarkers(params: {
         }
       }
     }
+
+    if (bench.avg_game_length != null && metrics.avgGameLength != null) {
+      const base = Number(bench.avg_game_length);
+      const diffRatio = base > 0 ? (metrics.avgGameLength - base) / base : metrics.avgGameLength;
+      if (diffRatio > 0.15 || diffRatio < -0.15) {
+        const strength = diffStrength(diffRatio) ?? "Light";
+        if (metrics.avgGameLength > base) {
+          markers.push({
+            marker_key: "marathon_runner",
+            label: "Marathon Runner",
+            strength,
+            tooltip: "Prefers long, grinding endgames",
+            metrics_json: { category, avg_game_length: metrics.avgGameLength, benchmark: base, diff_ratio: diffRatio, min_full_moves: 10 },
+          });
+        } else {
+          markers.push({
+            marker_key: "sprinter",
+            label: "Sprinter",
+            strength,
+            tooltip: "Plays short, decisive games; wins early or resigns early",
+            metrics_json: { category, avg_game_length: metrics.avgGameLength, benchmark: base, diff_ratio: diffRatio, min_full_moves: 10 },
+          });
+        }
+      }
+    }
+
+    if (bench.opposite_castle_rate != null) {
+      const base = Number(bench.opposite_castle_rate);
+      const diffRatio = base > 0 ? (metrics.oppositeCastleRate - base) / base : metrics.oppositeCastleRate;
+      if (diffRatio > 0.2 || diffRatio < -0.2) {
+        const strength = diffStrength(diffRatio) ?? "Light";
+        if (metrics.oppositeCastleRate > base) {
+          markers.push({
+            marker_key: "chaos_creator",
+            label: "Chaos Creator",
+            strength,
+            tooltip: "Creates sharp, opposite-side castling imbalances",
+            metrics_json: {
+              category,
+              opposite_castle_rate: metrics.oppositeCastleRate,
+              benchmark: base,
+              diff_ratio: diffRatio,
+              min_full_moves: 10,
+            },
+          });
+        } else {
+          markers.push({
+            marker_key: "symmetrical",
+            label: "Symmetrical",
+            strength,
+            tooltip: "Avoids sharp opposite-castling positions",
+            metrics_json: {
+              category,
+              opposite_castle_rate: metrics.oppositeCastleRate,
+              benchmark: base,
+              diff_ratio: diffRatio,
+              min_full_moves: 10,
+            },
+          });
+        }
+      }
+    }
   }
 
   await params.supabase
@@ -393,6 +532,8 @@ export async function calculateAndStoreMarkers(params: {
       queen_trade_rate: pct(metrics.queenTradeRate),
       avg_castle_ply: metrics.avgCastlePly,
       aggression_m15_avg: metrics.aggressionAvg,
+      avg_game_length: metrics.avgGameLength,
+      opposite_castle_rate: pct(metrics.oppositeCastleRate),
       counts: metrics.counts,
     },
     benchmark: bench,
