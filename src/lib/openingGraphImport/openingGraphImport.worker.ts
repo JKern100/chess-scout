@@ -37,6 +37,7 @@ type FenAgg = {
 };
 
 type FlushPayload = {
+  filter_key: string;
   fen: string;
   played_by: FenAgg;
 };
@@ -67,6 +68,22 @@ let bytesRead = 0;
 const fenMap = new Map<string, FenAgg>();
 const dirtyFens = new Set<string>();
 
+type FilterGraph = {
+  nodes: Map<string, FenAgg>;
+  dirty: Set<string>;
+};
+
+const graphs = new Map<string, FilterGraph>();
+
+function ensureGraph(filterKey: string): FilterGraph {
+  let g = graphs.get(filterKey);
+  if (!g) {
+    g = { nodes: new Map(), dirty: new Set() };
+    graphs.set(filterKey, g);
+  }
+  return g;
+}
+
 function normalizeFen(fen: string) {
   const parts = fen.trim().split(/\s+/);
   if (parts.length < 4) return fen.trim();
@@ -78,6 +95,28 @@ function getPgnTag(pgn: string, tag: string): string | null {
   const m = pgn.match(re);
   const raw = (m?.[1] ?? "").trim();
   return raw ? raw : null;
+}
+
+function inferSpeedFromPgn(pgn: string): string | null {
+  const speedTag = (getPgnTag(pgn, "Speed") ?? "").trim().toLowerCase();
+  if (["bullet", "blitz", "rapid", "classical", "correspondence"].includes(speedTag)) return speedTag;
+  const event = (getPgnTag(pgn, "Event") ?? "").toLowerCase();
+  if (event.includes("bullet")) return "bullet";
+  if (event.includes("blitz")) return "blitz";
+  if (event.includes("rapid")) return "rapid";
+  if (event.includes("classical")) return "classical";
+  if (event.includes("correspondence")) return "correspondence";
+  return null;
+}
+
+function inferRatedFromPgn(pgn: string): boolean | null {
+  const ratedTag = (getPgnTag(pgn, "Rated") ?? "").trim().toLowerCase();
+  if (["true", "yes", "1"].includes(ratedTag)) return true;
+  if (["false", "no", "0"].includes(ratedTag)) return false;
+  const event = (getPgnTag(pgn, "Event") ?? "").toLowerCase();
+  if (event.includes("rated")) return true;
+  if (event.includes("casual")) return false;
+  return null;
 }
 
 function inferOpponentColorFromPgn(pgn: string, opponentUsername: string): "w" | "b" | null {
@@ -135,6 +174,17 @@ function ensureFenAgg(fen: string): FenAgg {
   return entry;
 }
 
+function ensureFenAggFor(filterKey: string, fen: string): FenAgg {
+  const g = ensureGraph(filterKey);
+  let entry = g.nodes.get(fen);
+  if (!entry) {
+    entry = { opponent: {}, against: {} };
+    g.nodes.set(fen, entry);
+  }
+  g.dirty.add(fen);
+  return entry;
+}
+
 function ensureMoveAgg(map: SideAgg, uci: string): MoveAgg {
   let agg = map[uci];
   if (!agg) {
@@ -156,13 +206,15 @@ function ensureMoveAgg(map: SideAgg, uci: string): MoveAgg {
 function flushNodes(maxNodes = 250): FlushPayload[] {
   const out: FlushPayload[] = [];
   let i = 0;
-  for (const fen of dirtyFens) {
-    const played_by = fenMap.get(fen);
-    if (!played_by) continue;
-    out.push({ fen, played_by });
-    dirtyFens.delete(fen);
-    i += 1;
-    if (i >= maxNodes) break;
+  for (const [filterKey, g] of graphs) {
+    for (const fen of g.dirty) {
+      const played_by = g.nodes.get(fen);
+      if (!played_by) continue;
+      out.push({ filter_key: filterKey, fen, played_by });
+      g.dirty.delete(fen);
+      i += 1;
+      if (i >= maxNodes) return out;
+    }
   }
   return out;
 }
@@ -173,6 +225,7 @@ async function runImport(params: ImportStartMessage) {
   bytesRead = 0;
   fenMap.clear();
   dirtyFens.clear();
+  graphs.clear();
 
   const user = params.username.trim();
   if (!user) {
@@ -256,6 +309,8 @@ async function runImport(params: ImportStartMessage) {
       const result = inferResultFromPgn(pgn);
       const outcome = inferOutcomeFlags({ oppColor, result });
       const oppElo = inferOpponentEloFromPgn(pgn, oppColor);
+      const ratedFlag = inferRatedFromPgn(pgn);
+      const speed = inferSpeedFromPgn(pgn);
 
       const ts = typeof parsed?.lastMoveAt === "number" ? parsed.lastMoveAt : typeof parsed?.createdAt === "number" ? parsed.createdAt : null;
       const playedAtIso = ts ? new Date(ts).toISOString() : null;
@@ -284,28 +339,51 @@ async function runImport(params: ImportStartMessage) {
         }
         if (!played) break;
 
-        const fenAgg = ensureFenAgg(fenKey);
-        const side = moveColor === oppColor ? fenAgg.opponent : fenAgg.against;
-        const agg = ensureMoveAgg(side, uci);
+        // Always aggregate into the 'all' graph.
+        const baseAll = ensureFenAggFor("all", fenKey);
+        const sideAll = moveColor === oppColor ? baseAll.opponent : baseAll.against;
+        const aggAll = ensureMoveAgg(sideAll, uci);
 
-        // Mark the current position as dirty (ensureFenAgg does too, but this is cheap and safe).
-        dirtyFens.add(fenKey);
+        const keys: string[] = [];
+        if (ratedFlag === true) keys.push("rated");
+        if (ratedFlag === false) keys.push("casual");
+        if (speed) keys.push(`speed:${speed}`);
 
-        agg.count += 1;
-        agg.win += outcome.win;
-        agg.loss += outcome.loss;
-        agg.draw += outcome.draw;
-        if (!agg.san) agg.san = mv?.san != null ? String(mv.san) : null;
+        for (const k of keys) {
+          const g = ensureFenAggFor(k, fenKey);
+          const side = moveColor === oppColor ? g.opponent : g.against;
+          const agg = ensureMoveAgg(side, uci);
+          agg.count += 1;
+          agg.win += outcome.win;
+          agg.loss += outcome.loss;
+          agg.draw += outcome.draw;
+          if (!agg.san) agg.san = mv?.san != null ? String(mv.san) : null;
+          if (playedAtIso) {
+            if (!agg.last_played_at || agg.last_played_at < playedAtIso) {
+              agg.last_played_at = playedAtIso;
+            }
+          }
+          if (oppElo != null) {
+            agg.opp_elo_sum += oppElo;
+            agg.opp_elo_count += 1;
+          }
+        }
+
+        aggAll.count += 1;
+        aggAll.win += outcome.win;
+        aggAll.loss += outcome.loss;
+        aggAll.draw += outcome.draw;
+        if (!aggAll.san) aggAll.san = mv?.san != null ? String(mv.san) : null;
 
         if (playedAtIso) {
-          if (!agg.last_played_at || agg.last_played_at < playedAtIso) {
-            agg.last_played_at = playedAtIso;
+          if (!aggAll.last_played_at || aggAll.last_played_at < playedAtIso) {
+            aggAll.last_played_at = playedAtIso;
           }
         }
 
         if (oppElo != null) {
-          agg.opp_elo_sum += oppElo;
-          agg.opp_elo_count += 1;
+          aggAll.opp_elo_sum += oppElo;
+          aggAll.opp_elo_count += 1;
         }
       }
 
@@ -334,7 +412,14 @@ async function runImport(params: ImportStartMessage) {
 
   (self as any).postMessage({ type: "flush", nodes: flushNodes(), gamesProcessed } satisfies WorkerFlush);
   // Flush any remaining dirty nodes.
-  while (dirtyFens.size > 0) {
+  const hasDirty = () => {
+    for (const [, g] of graphs) {
+      if (g.dirty.size > 0) return true;
+    }
+    return false;
+  };
+
+  while (hasDirty()) {
     (self as any).postMessage({ type: "flush", nodes: flushNodes(500), gamesProcessed } satisfies WorkerFlush);
   }
   (self as any).postMessage({ type: "done", gamesProcessed } satisfies WorkerDone);

@@ -2,6 +2,7 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { normalizeFen } from "@/server/opponentModel";
 
 type WorkerFlushNode = {
+  filter_key: string;
   fen: string;
   played_by: {
     opponent: Record<string, any>;
@@ -52,10 +53,13 @@ export function createOpeningGraphImporter(params: {
     if (writeDisabled) return;
     if (!profileId) throw new Error("Not authenticated");
 
+    const usernameNormalized = username.trim().toLowerCase();
+
     const rows = nodes.map((n) => ({
       profile_id: profileId,
       platform,
-      username,
+      username: usernameNormalized,
+      filter_key: String((n as any)?.filter_key ?? "all"),
       fen: normalizeFen(n.fen),
       played_by: n.played_by,
       updated_at: new Date().toISOString(),
@@ -65,7 +69,7 @@ export function createOpeningGraphImporter(params: {
     for (let i = 0; i < rows.length; i += chunkSize) {
       const chunk = rows.slice(i, i + chunkSize);
       const { error } = await supabase.from("opening_graph_nodes").upsert(chunk, {
-        onConflict: "profile_id,platform,username,fen",
+        onConflict: "profile_id,platform,username,filter_key,fen",
       });
       if (error) {
         // If we hit RLS/permission issues, stop spamming and surface a clear error.
@@ -124,7 +128,7 @@ export function createOpeningGraphImporter(params: {
 
       if (msg.type === "flush") {
         const platform = p.platform;
-        const username = p.username;
+        const username = p.username.trim().toLowerCase();
         const nodes = Array.isArray(msg.nodes) ? msg.nodes : [];
 
         writeQueue = writeQueue

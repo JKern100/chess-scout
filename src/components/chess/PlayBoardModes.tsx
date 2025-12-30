@@ -728,12 +728,27 @@ export function PlayBoardModes({ initialFen }: Props) {
       }),
     });
 
-    const json = await res.json();
+    let json: any = null;
+    let text: string | null = null;
+    try {
+      json = await res.json();
+    } catch {
+      try {
+        text = await res.text();
+      } catch {
+        text = null;
+      }
+    }
+
     if (!res.ok) {
-      const message = String(json?.error ?? "Opponent simulation failed");
+      const message =
+        (json && typeof json === "object" && json?.error ? String(json.error) : null) ??
+        (text && text.trim() ? text.trim() : null) ??
+        `Opponent simulation failed (${res.status})`;
       throw new Error(message);
     }
-    return json as any;
+
+    return (json ?? {}) as any;
   }
 
   useEffect(() => {

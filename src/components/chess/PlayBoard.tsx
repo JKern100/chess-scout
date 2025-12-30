@@ -229,11 +229,27 @@ export function PlayBoard({ initialFen }: Props) {
         prefetch: params.prefetch ?? false,
       }),
     });
-    const json = await res.json();
-    if (!res.ok) {
-      throw new Error(json?.error ?? "Opponent simulation failed");
+    let json: any = null;
+    let text: string | null = null;
+    try {
+      json = await res.json();
+    } catch {
+      try {
+        text = await res.text();
+      } catch {
+        text = null;
+      }
     }
-    return json as any;
+
+    if (!res.ok) {
+      const message =
+        (json && typeof json === "object" && json?.error ? String(json.error) : null) ??
+        (text && text.trim() ? text.trim() : null) ??
+        `Opponent simulation failed (${res.status})`;
+      throw new Error(message);
+    }
+
+    return (json ?? {}) as any;
   }
 
   async function fetchOpponentStats(params: { fen: string; username: string }) {

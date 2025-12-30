@@ -28,8 +28,9 @@ export async function GET(request: Request) {
 
   const url = new URL(request.url);
   const platform = String(url.searchParams.get("platform") ?? "lichess");
-  const username = String(url.searchParams.get("username") ?? "").trim();
+  const username = String(url.searchParams.get("username") ?? "").trim().toLowerCase();
   const fenRaw = String(url.searchParams.get("fen") ?? "").trim();
+  const filterKey = String(url.searchParams.get("filter_key") ?? "all");
 
   if (!username) {
     return NextResponse.json({ error: "username is required" }, { status: 400 });
@@ -47,6 +48,7 @@ export async function GET(request: Request) {
     .eq("profile_id", user.id)
     .eq("platform", platform)
     .eq("username", username)
+    .eq("filter_key", filterKey)
     .eq("fen", fen)
     .maybeSingle();
 
@@ -85,6 +87,7 @@ export async function GET(request: Request) {
   return NextResponse.json({
     platform,
     username,
+    filter_key: filterKey,
     fen,
     available_count: moves.length,
     available_total_count: totalCount,

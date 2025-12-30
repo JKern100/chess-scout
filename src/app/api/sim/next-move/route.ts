@@ -5,6 +5,7 @@ import { normalizeFen, type MoveSelectionStrategy } from "@/server/opponentModel
 type Mode = MoveSelectionStrategy;
 
 export async function POST(request: Request) {
+  try {
   const supabase = await createSupabaseServerClient();
 
   const {
@@ -26,7 +27,7 @@ export async function POST(request: Request) {
   }
 
   const platform = String(body?.platform ?? "lichess");
-  const username = String(body?.username ?? "").trim();
+  const username = String(body?.username ?? "").trim().toLowerCase();
   const fen = String(body?.fen ?? "").trim();
   const mode = (String(body?.mode ?? "proportional") as Mode) ?? "proportional";
   const maxDepth = Math.min(Math.max(Number(body?.max_depth ?? 16), 1), 40);
@@ -63,16 +64,20 @@ export async function POST(request: Request) {
   const canUseOpeningGraph =
     normalizedSpeeds.length === 0 && rated === "any" && !from && !to && platform === "lichess";
 
+  const openingGraphKey = canUseOpeningGraph ? "all" : null;
+
   async function fetchMovesFromOpeningGraph(params: {
     fenKey: string;
     side: "opponent" | "against";
   }): Promise<Array<{ uci: string; san: string | null; played_count: number; win: number; loss: number; draw: number }>> {
+    if (!openingGraphKey) return [];
     const { data, error } = await supabase
       .from("opening_graph_nodes")
       .select("played_by")
       .eq("profile_id", profileId)
       .eq("platform", platform)
       .eq("username", username)
+      .eq("filter_key", openingGraphKey)
       .eq("fen", params.fenKey)
       .maybeSingle();
 
@@ -205,4 +210,8 @@ export async function POST(request: Request) {
     moves: movesOpponent.slice(0, 30),
     moves_against: movesAgainst.slice(0, 30),
   });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Internal Server Error";
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
 }
