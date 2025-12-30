@@ -227,7 +227,66 @@ export async function calculateAndStoreMarkers(params: {
 
   const markers: StyleMarkerRow[] = [];
 
+  // Axis rows are always stored so the UI can render spectrum bars even when deviations are small.
+  // These are not meant to be shown as individual marker "pills".
+  const axisRows: StyleMarkerRow[] = [];
+
   if (bench) {
+    // Queen trade axis (simplification)
+    {
+      const base = bench.queen_trade_m20_rate != null ? Number(bench.queen_trade_m20_rate) : null;
+      const diffRatio = base != null ? (base > 0 ? (metrics.queenTradeRate - base) / base : metrics.queenTradeRate) : 0;
+      axisRows.push({
+        marker_key: "axis_queen_trades",
+        label: "Simplification",
+        strength: diffStrength(diffRatio) ?? "Light",
+        tooltip: "Queen trade tendency vs global benchmark",
+        metrics_json: {
+          category,
+          diff_ratio: diffRatio,
+          queen_trade_rate: metrics.queenTradeRate,
+          benchmark: base,
+        },
+      });
+    }
+
+    // Castling axis (timing)
+    {
+      const base = bench.avg_castle_move != null ? Number(bench.avg_castle_move) * 2 : null;
+      const diffRatio =
+        base != null && metrics.avgCastlePly != null ? (base > 0 ? (metrics.avgCastlePly - base) / base : metrics.avgCastlePly) : 0;
+      axisRows.push({
+        marker_key: "axis_castling_timing",
+        label: "Castling",
+        strength: diffStrength(diffRatio) ?? "Light",
+        tooltip: "Castling timing vs global benchmark",
+        metrics_json: {
+          category,
+          diff_ratio: diffRatio,
+          avg_castle_ply: metrics.avgCastlePly,
+          benchmark_ply: base,
+        },
+      });
+    }
+
+    // Aggression axis
+    {
+      const base = bench.aggression_m15_avg != null ? Number(bench.aggression_m15_avg) : null;
+      const diffRatio = base != null ? (base > 0 ? (metrics.aggressionAvg - base) / base : metrics.aggressionAvg) : 0;
+      axisRows.push({
+        marker_key: "axis_aggression",
+        label: "Aggression",
+        strength: diffStrength(diffRatio) ?? "Light",
+        tooltip: "Aggression (checks + captures by move 15) vs global benchmark",
+        metrics_json: {
+          category,
+          diff_ratio: diffRatio,
+          aggression_m15_avg: metrics.aggressionAvg,
+          benchmark: base,
+        },
+      });
+    }
+
     if (bench.queen_trade_m20_rate != null) {
       const base = Number(bench.queen_trade_m20_rate);
       const diffRatio = base > 0 ? (metrics.queenTradeRate - base) / base : metrics.queenTradeRate;
@@ -312,7 +371,7 @@ export async function calculateAndStoreMarkers(params: {
     .eq("username", usernameKey)
     .eq("source_type", params.sourceType);
 
-  const rows = markers.map((m) => ({
+  const rows = [...axisRows, ...markers].map((m) => ({
     profile_id: params.profileId,
     platform: params.platform,
     username: usernameKey,

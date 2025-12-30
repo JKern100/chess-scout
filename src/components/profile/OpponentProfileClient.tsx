@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { OpponentFiltersPanel } from "@/components/chess/OpponentFiltersPanel";
 import { useOpponentFilters } from "@/components/chess/useOpponentFilters";
+import { StyleSpectrumBar } from "@/components/profile/StyleSpectrumBar";
 
 type ChessPlatform = "lichess" | "chesscom";
 
@@ -217,6 +218,13 @@ type StoredStyleMarker = {
   tooltip: string;
   metrics_json?: any;
 };
+
+function spectrumPctFromDiffRatio(diffRatio: unknown) {
+  const d = typeof diffRatio === "number" ? diffRatio : Number(diffRatio);
+  if (!Number.isFinite(d)) return 50;
+  const clamped = Math.max(-0.4, Math.min(0.4, d));
+  return 50 + (clamped / 0.4) * 50;
+}
 
 function formatPlatformLabel(platform: ChessPlatform) {
   return platform === "lichess" ? "Lichess" : "Chess.com";
@@ -561,7 +569,13 @@ export function OpponentProfileClient({ platform, username }: Props) {
 
   const accent = "#EAB308";
 
-  const styleMarkers = storedStyleMarkers;
+  const axisQueen = storedStyleMarkers.find((m) => m.marker_key === "axis_queen_trades") ?? null;
+  const axisCastle = storedStyleMarkers.find((m) => m.marker_key === "axis_castling_timing") ?? null;
+  const axisAggro = storedStyleMarkers.find((m) => m.marker_key === "axis_aggression") ?? null;
+
+  const queenPct = spectrumPctFromDiffRatio(axisQueen?.metrics_json?.diff_ratio);
+  const castlePct = spectrumPctFromDiffRatio(axisCastle?.metrics_json?.diff_ratio);
+  const aggroPct = spectrumPctFromDiffRatio(axisAggro?.metrics_json?.diff_ratio);
 
   function OpeningBarList(props: { rows: V2OpeningRow[]; title: string; sampleWarning?: string | null; ctx?: V3Context | null }) {
     const { rows, title, sampleWarning, ctx } = props;
@@ -844,12 +858,12 @@ export function OpponentProfileClient({ platform, username }: Props) {
             </div>
 
             <BentoCard
-              title={styleMarkersOpen ? "Style Markers" : `Style Markers • ${styleMarkers.length}`}
+              title={"Style Markers"}
               headerRight={
                 <div className="flex items-center gap-2">
                   <span
                     title={
-                      "Strength compares this opponent’s metrics to benchmarks for their opening category. Light: >5% difference. Medium: >20%. Strong: >40%."
+                      "Dot shows where this opponent falls relative to the global benchmark tick (center). Left/right labels are the two style extremes."
                     }
                     className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-neutral-200 bg-white text-[10px] font-semibold text-neutral-700 shadow-sm"
                   >
@@ -866,24 +880,26 @@ export function OpponentProfileClient({ platform, username }: Props) {
               }
             >
               {styleMarkersOpen ? (
-                styleMarkers.length === 0 ? (
-                  <div className="text-xs text-neutral-500">No notable deviations detected for this sample.</div>
-                ) : (
-                  <div className="flex flex-wrap gap-2">
-                    {styleMarkers.map((m) => (
-                      <div
-                        key={`${m.marker_key}|${m.label}|${m.strength}`}
-                        title={m.tooltip}
-                        className="inline-flex items-center gap-2 rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1 text-xs text-neutral-900"
-                      >
-                        <span className="font-medium">{m.label}</span>
-                        <span className="rounded-full bg-neutral-200 px-2 py-0.5 text-[10px] font-semibold text-neutral-700">
-                          {m.strength}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )
+                <div className="grid gap-3">
+                  <StyleSpectrumBar
+                    title="Simplification"
+                    leftLabel="Keep Queens"
+                    rightLabel="Trade Queens"
+                    positionPct={queenPct}
+                  />
+                  <StyleSpectrumBar
+                    title="Castling"
+                    leftLabel="Castle Early"
+                    rightLabel="Castle Late"
+                    positionPct={castlePct}
+                  />
+                  <StyleSpectrumBar
+                    title="Aggression"
+                    leftLabel="Solid/Positional"
+                    rightLabel="Hyper-Aggressive"
+                    positionPct={aggroPct}
+                  />
+                </div>
               ) : null}
             </BentoCard>
 

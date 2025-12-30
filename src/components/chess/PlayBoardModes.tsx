@@ -17,13 +17,29 @@ import { getBestMoveForPlay, type EngineScore } from "@/lib/engine/engineService
 import { ChessBoardCore, type ChessBoardCoreState } from "./ChessBoardCore";
 import { SimulationBoard } from "./SimulationBoard";
 import { AnalysisBoard } from "./AnalysisBoard";
-import { OpponentFiltersPanel } from "./OpponentFiltersPanel";
-import { useOpponentFilters } from "./useOpponentFilters";
+import { OpponentFiltersPanel } from "@/components/chess/OpponentFiltersPanel";
+import { useOpponentFilters } from "@/components/chess/useOpponentFilters";
+import { StyleSpectrumBar } from "@/components/profile/StyleSpectrumBar";
 import { useImportsRealtime } from "@/lib/hooks/useImportsRealtime";
 
 type Props = {
   initialFen?: string;
 };
+
+type StoredStyleMarker = {
+  marker_key: string;
+  label: string;
+  strength: "Strong" | "Medium" | "Light";
+  tooltip: string;
+  metrics_json?: any;
+};
+
+function spectrumPctFromDiffRatio(diffRatio: unknown) {
+  const d = typeof diffRatio === "number" ? diffRatio : Number(diffRatio);
+  if (!Number.isFinite(d)) return 50;
+  const clamped = Math.max(-0.4, Math.min(0.4, d));
+  return 50 + (clamped / 0.4) * 50;
+}
 
 type Mode = "simulation" | "analysis";
 
@@ -706,32 +722,92 @@ export function PlayBoardModes({ initialFen }: Props) {
 
   const opponentSource = engineTakeover ? "engine" : "history";
 
+  const [sessionAxisMarkers, setSessionAxisMarkers] = useState<StoredStyleMarker[]>([]);
+
+  const fetchSessionAxisMarkers = useCallback(
+    async (username: string) => {
+      const trimmed = username.trim();
+      if (!trimmed) {
+        setSessionAxisMarkers([]);
+        return;
+      }
+
+      try {
+        const res = await fetch(`/api/sim/session/markers?platform=lichess&username=${encodeURIComponent(trimmed)}`, {
+          cache: "no-store",
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(String((json as any)?.error ?? "Failed to load session markers"));
+        const rows = Array.isArray((json as any)?.markers) ? ((json as any).markers as StoredStyleMarker[]) : [];
+        setSessionAxisMarkers(rows.filter(Boolean));
+      } catch {
+        setSessionAxisMarkers([]);
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    void fetchSessionAxisMarkers(opponentUsername);
+  }, [fetchSessionAxisMarkers, opponentUsername, filtersKey]);
+
+  const axisQueen = sessionAxisMarkers.find((m) => m.marker_key === "axis_queen_trades") ?? null;
+  const axisCastle = sessionAxisMarkers.find((m) => m.marker_key === "axis_castling_timing") ?? null;
+  const axisAggro = sessionAxisMarkers.find((m) => m.marker_key === "axis_aggression") ?? null;
+
+  const queenPct = spectrumPctFromDiffRatio(axisQueen?.metrics_json?.diff_ratio);
+  const castlePct = spectrumPctFromDiffRatio(axisCastle?.metrics_json?.diff_ratio);
+  const aggroPct = spectrumPctFromDiffRatio(axisAggro?.metrics_json?.diff_ratio);
+
   const styleSessionKey = `${opponentUsername.trim().toLowerCase()}|${filtersKey}`;
   const lastStyleSessionKeyRef = useRef<string | null>(null);
+  const styleSessionInFlightRef = useRef(false);
 
   useEffect(() => {
     if (!generateStyleMarkers) return;
     const trimmed = opponentUsername.trim();
     if (!trimmed) return;
+    if (styleSessionInFlightRef.current) return;
     if (lastStyleSessionKeyRef.current === styleSessionKey) return;
-    lastStyleSessionKeyRef.current = styleSessionKey;
 
-    void fetch("/api/sim/session/start", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        platform: "lichess",
-        username: trimmed,
-        speeds: filterSpeeds,
-        rated: filterRated,
-        from: filterFromDate || null,
-        to: filterToDate || null,
-        enableStyleMarkers: true,
-      }),
-    }).catch(() => {
-      // ignore
-    });
-  }, [generateStyleMarkers, opponentUsername, styleSessionKey, filterSpeeds, filterRated, filterFromDate, filterToDate]);
+    styleSessionInFlightRef.current = true;
+    void (async () => {
+      try {
+        const res = await fetch("/api/sim/session/start", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            platform: "lichess",
+            username: trimmed,
+            speeds: filterSpeeds,
+            rated: filterRated,
+            from: filterFromDate || null,
+            to: filterToDate || null,
+            enableStyleMarkers: true,
+          }),
+        });
+
+        if (!res.ok) {
+          // Do not advance the dedupe key on failure; allow retry.
+          return;
+        }
+
+        lastStyleSessionKeyRef.current = styleSessionKey;
+        await fetchSessionAxisMarkers(trimmed);
+      } finally {
+        styleSessionInFlightRef.current = false;
+      }
+    })();
+  }, [
+    fetchSessionAxisMarkers,
+    filterFromDate,
+    filterRated,
+    filterSpeeds,
+    filterToDate,
+    generateStyleMarkers,
+    opponentUsername,
+    styleSessionKey,
+  ]);
 
   function formatCompactCount(value: number | null) {
     const n = Number(value);
@@ -1060,37 +1136,57 @@ export function PlayBoardModes({ initialFen }: Props) {
   );
 
   const analysisFiltersPanel = (
-    <OpponentFiltersPanel
-      headerLeft="Opponent"
-      headerRight={
-        <select
-          className="h-8 w-full min-w-0 rounded-xl border border-zinc-200 bg-white px-3 text-[10px] text-zinc-900 outline-none focus:border-zinc-400 disabled:opacity-60"
-          value={opponentUsername}
-          onChange={(e) => setOpponentUsername(e.target.value)}
-          disabled={availableOpponents.length === 0}
-        >
-          {availableOpponents.length === 0 ? <option value="">No imported opponents</option> : null}
-          {availableOpponents.map((o) => (
-            <option key={`${o.platform}:${o.username}`} value={o.username}>
-              {o.username}
-            </option>
-          ))}
-        </select>
-      }
-      speeds={filterSpeeds}
-      setSpeeds={setFilterSpeeds}
-      rated={filterRated}
-      setRated={setFilterRated}
-      datePreset={filterDatePreset}
-      setDatePreset={setFilterDatePreset}
-      fromDate={filterFromDate}
-      setFromDate={setFilterFromDate}
-      toDate={filterToDate}
-      setToDate={setFilterToDate}
-      generateStyleMarkers={generateStyleMarkers}
-      setGenerateStyleMarkers={setGenerateStyleMarkers}
-      footerNote={archivingNote ? <span>{archivingNote}</span> : null}
-    />
+    <div className="grid gap-3">
+      <OpponentFiltersPanel
+        headerLeft="Opponent"
+        headerRight={
+          <select
+            className="h-8 w-full min-w-0 rounded-xl border border-zinc-200 bg-white px-3 text-[10px] text-zinc-900 outline-none focus:border-zinc-400 disabled:opacity-60"
+            value={opponentUsername}
+            onChange={(e) => setOpponentUsername(e.target.value)}
+            disabled={availableOpponents.length === 0}
+          >
+            {availableOpponents.length === 0 ? <option value="">No imported opponents</option> : null}
+            {availableOpponents.map((o) => (
+              <option key={`${o.platform}:${o.username}`} value={o.username}>
+                {o.username}
+              </option>
+            ))}
+          </select>
+        }
+        speeds={filterSpeeds}
+        setSpeeds={setFilterSpeeds}
+        rated={filterRated}
+        setRated={setFilterRated}
+        datePreset={filterDatePreset}
+        setDatePreset={setFilterDatePreset}
+        fromDate={filterFromDate}
+        setFromDate={setFilterFromDate}
+        toDate={filterToDate}
+        setToDate={setFilterToDate}
+        generateStyleMarkers={generateStyleMarkers}
+        setGenerateStyleMarkers={setGenerateStyleMarkers}
+        footerNote={archivingNote ? <span>{archivingNote}</span> : null}
+      />
+
+      <div className="min-w-0 rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm">
+        <div className="flex items-center justify-between gap-3">
+          <div className="text-[10px] font-medium text-zinc-900">Style Markers</div>
+          <span
+            title="Dot shows where this opponent falls relative to the global benchmark tick (center). Left/right labels are the two style extremes."
+            className="inline-flex h-6 w-6 items-center justify-center rounded-lg border border-zinc-200 bg-white text-[10px] font-semibold text-zinc-600"
+          >
+            ?
+          </span>
+        </div>
+
+        <div className="mt-2 grid gap-3">
+          <StyleSpectrumBar title="Simplification" leftLabel="Keep Queens" rightLabel="Trade Queens" positionPct={queenPct} />
+          <StyleSpectrumBar title="Castling" leftLabel="Castle Early" rightLabel="Castle Late" positionPct={castlePct} />
+          <StyleSpectrumBar title="Aggression" leftLabel="Solid/Positional" rightLabel="Hyper-Aggressive" positionPct={aggroPct} />
+        </div>
+      </div>
+    </div>
   );
 
   const underBoard = mode === "analysis" ? null : (
