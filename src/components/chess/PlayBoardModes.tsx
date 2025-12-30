@@ -445,6 +445,7 @@ export function PlayBoardModes({ initialFen }: Props) {
     setToDate: setFilterToDate,
     filtersKey,
   } = useOpponentFilters();
+  const [generateStyleMarkers, setGenerateStyleMarkers] = useState(true);
   const [opponentMode, setOpponentMode] = useState<Strategy>("proportional");
   const [depthRemaining, setDepthRemaining] = useState<number | null>(null);
   const [lastOpponentMove, setLastOpponentMove] = useState<{ uci: string; san: string | null } | null>(null);
@@ -704,6 +705,33 @@ export function PlayBoardModes({ initialFen }: Props) {
   }, [mode, analysisShowEval]);
 
   const opponentSource = engineTakeover ? "engine" : "history";
+
+  const styleSessionKey = `${opponentUsername.trim().toLowerCase()}|${filtersKey}`;
+  const lastStyleSessionKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!generateStyleMarkers) return;
+    const trimmed = opponentUsername.trim();
+    if (!trimmed) return;
+    if (lastStyleSessionKeyRef.current === styleSessionKey) return;
+    lastStyleSessionKeyRef.current = styleSessionKey;
+
+    void fetch("/api/sim/session/start", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        platform: "lichess",
+        username: trimmed,
+        speeds: filterSpeeds,
+        rated: filterRated,
+        from: filterFromDate || null,
+        to: filterToDate || null,
+        enableStyleMarkers: true,
+      }),
+    }).catch(() => {
+      // ignore
+    });
+  }, [generateStyleMarkers, opponentUsername, styleSessionKey, filterSpeeds, filterRated, filterFromDate, filterToDate]);
 
   function formatCompactCount(value: number | null) {
     const n = Number(value);
@@ -1059,6 +1087,8 @@ export function PlayBoardModes({ initialFen }: Props) {
       setFromDate={setFilterFromDate}
       toDate={filterToDate}
       setToDate={setFilterToDate}
+      generateStyleMarkers={generateStyleMarkers}
+      setGenerateStyleMarkers={setGenerateStyleMarkers}
       footerNote={archivingNote ? <span>{archivingNote}</span> : null}
     />
   );

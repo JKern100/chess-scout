@@ -16,6 +16,8 @@ type Props = {
   setFromDate: (v: string) => void;
   toDate: string;
   setToDate: (v: string) => void;
+  generateStyleMarkers?: boolean;
+  setGenerateStyleMarkers?: (v: boolean) => void;
   headerLeft?: string;
   headerRight?: ReactNode;
   footerNote?: ReactNode;
@@ -33,12 +35,17 @@ export function OpponentFiltersPanel(props: Props) {
     setFromDate,
     toDate,
     setToDate,
+    generateStyleMarkers: generateStyleMarkersProp,
+    setGenerateStyleMarkers: setGenerateStyleMarkersProp,
     headerLeft,
     headerRight,
     footerNote,
   } = props;
 
-  const [generateStyleMarkers, setGenerateStyleMarkers] = useState(true);
+  const [generateStyleMarkersLocal, setGenerateStyleMarkersLocal] = useState(true);
+  const generateStyleMarkers = typeof generateStyleMarkersProp === "boolean" ? generateStyleMarkersProp : generateStyleMarkersLocal;
+  const setGenerateStyleMarkers =
+    typeof setGenerateStyleMarkersProp === "function" ? setGenerateStyleMarkersProp : setGenerateStyleMarkersLocal;
 
   return (
     <div className="min-w-0 rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm">

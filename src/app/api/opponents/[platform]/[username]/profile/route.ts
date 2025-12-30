@@ -12,6 +12,7 @@ export async function GET(_request: Request, context: { params: Promise<Params> 
   const resolvedParams = await context.params;
   const platform = resolvedParams.platform as ChessPlatform;
   const username = String(resolvedParams.username ?? "").trim();
+  const usernameKey = username.toLowerCase();
 
   if (!username) {
     return NextResponse.json({ error: "username is required" }, { status: 400 });
@@ -71,8 +72,26 @@ export async function GET(_request: Request, context: { params: Promise<Params> 
       return NextResponse.json({ error: fallbackError.message }, { status: 500 });
     }
 
-    return NextResponse.json({ opponent_profile: fallbackData ?? null, needs_migration: true });
+    const { data: markerData } = await supabase
+      .from("opponent_style_markers")
+      .select("marker_key, label, strength, tooltip, metrics_json")
+      .eq("profile_id", user.id)
+      .eq("platform", platform)
+      .eq("username", usernameKey)
+      .eq("source_type", "PROFILE")
+      .order("created_at", { ascending: false });
+
+    return NextResponse.json({ opponent_profile: fallbackData ?? null, needs_migration: true, style_markers: markerData ?? [] });
   }
 
-  return NextResponse.json({ opponent_profile: data ?? null });
+  const { data: markerData } = await supabase
+    .from("opponent_style_markers")
+    .select("marker_key, label, strength, tooltip, metrics_json")
+    .eq("profile_id", user.id)
+    .eq("platform", platform)
+    .eq("username", usernameKey)
+    .eq("source_type", "PROFILE")
+    .order("created_at", { ascending: false });
+
+  return NextResponse.json({ opponent_profile: data ?? null, style_markers: markerData ?? [] });
 }

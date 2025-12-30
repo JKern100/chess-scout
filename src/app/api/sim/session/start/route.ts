@@ -1,0 +1,91 @@
+import { NextResponse } from "next/server";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { buildOpponentProfileV2, type ChessPlatform, type LichessSpeed } from "@/server/opponentProfileV2";
+import { calculateAndStoreMarkers } from "@/server/styleMarkerService";
+
+export const runtime = "nodejs";
+
+export async function POST(request: Request) {
+  const supabase = await createSupabaseServerClient();
+
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+
+  if (userError || !user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  let body: any = {};
+  try {
+    body = await request.json();
+  } catch {
+    body = {};
+  }
+
+  const platformRaw = String(body?.platform ?? "lichess");
+  const platform: ChessPlatform = platformRaw === "chesscom" ? "chesscom" : "lichess";
+  const username = String(body?.username ?? "").trim();
+
+  if (!username) {
+    return NextResponse.json({ error: "username is required" }, { status: 400 });
+  }
+
+  const enableStyleMarkers = Boolean(body?.enableStyleMarkers);
+  if (!enableStyleMarkers) {
+    return NextResponse.json({ ok: true, skipped: true });
+  }
+
+  const speedsProvided = Array.isArray(body?.speeds) || typeof body?.speeds === "string";
+  const speedsRaw = Array.isArray(body?.speeds) ? (body.speeds as any[]) : typeof body?.speeds === "string" ? [body.speeds] : [];
+  const speeds = speedsRaw
+    .map((s) => String(s))
+    .filter((s) => ["bullet", "blitz", "rapid", "classical", "correspondence"].includes(s)) as LichessSpeed[];
+
+  const ratedRaw = String(body?.rated ?? "any");
+  const rated = ratedRaw === "rated" ? "rated" : ratedRaw === "casual" ? "casual" : "any";
+
+  const from = typeof body?.from === "string" ? String(body.from) : null;
+  const to = typeof body?.to === "string" ? String(body.to) : null;
+
+  // Semantics:
+  // - speeds not provided => treat as "any" (no speed filter)
+  // - speeds provided but empty => treat as "none" (match nothing)
+  // - all 5 speeds selected => treat as "any"
+  const speedsFilter: LichessSpeed[] = !speedsProvided ? [] : speeds;
+
+  try {
+    const { normalized } = await buildOpponentProfileV2({
+      supabase,
+      profileId: user.id,
+      platform,
+      username,
+      filters: { speeds: speedsFilter, rated, from, to },
+      includeNormalized: true,
+      // Keep sessions responsive; can be raised if needed.
+      maxGamesCap: 5000,
+    });
+
+    if (Array.isArray(normalized) && normalized.length > 0) {
+      await calculateAndStoreMarkers({
+        supabase,
+        profileId: user.id,
+        platform,
+        username,
+        games: normalized,
+        sourceType: "SESSION",
+      });
+    }
+
+    return NextResponse.json({ ok: true, games_analyzed: Array.isArray(normalized) ? normalized.length : 0 });
+  } catch (e) {
+    console.error("Style markers (SESSION) failed", {
+      platform,
+      username,
+      error: e instanceof Error ? e.message : e,
+    });
+    const msg = e instanceof Error ? e.message : "Failed to compute style markers";
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
+}

@@ -3,6 +3,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { buildOpponentProfile, type ChessPlatform, type LichessSpeed } from "@/server/opponentProfile";
 import { buildOpponentProfileV2 } from "@/server/opponentProfileV2";
 import { buildOpponentProfileV3Addon } from "@/server/opponentProfileV3";
+import { calculateAndStoreMarkers } from "@/server/styleMarkerService";
 
 export const runtime = "nodejs";
 
@@ -50,6 +51,8 @@ export async function POST(request: Request, context: { params: Promise<Params> 
   const ratedRaw = String(body?.rated ?? "any");
   const rated = ratedRaw === "rated" ? "rated" : ratedRaw === "casual" ? "casual" : "any";
 
+  const enableStyleMarkers = Boolean(body?.enable_style_markers);
+
   const from = typeof body?.from === "string" ? String(body.from) : null;
   const to = typeof body?.to === "string" ? String(body.to) : null;
 
@@ -89,6 +92,26 @@ export async function POST(request: Request, context: { params: Promise<Params> 
 
   const v3 = buildOpponentProfileV3Addon({ platform, normalized: normalized ?? [] });
   const profile: any = { ...profileV2, profile_version: 2, v3 };
+
+  if (enableStyleMarkers && Array.isArray(normalized) && normalized.length > 0) {
+    try {
+      await calculateAndStoreMarkers({
+        supabase,
+        profileId: user.id,
+        platform,
+        username,
+        games: normalized,
+        sourceType: "PROFILE",
+      });
+    } catch (e) {
+      // best-effort; profile generation should still succeed
+      console.error("Style markers (PROFILE) failed", {
+        platform,
+        username,
+        error: e instanceof Error ? e.message : e,
+      });
+    }
+  }
 
   let debugCounts: any = null;
 
