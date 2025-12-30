@@ -41,12 +41,12 @@ export function OpponentFiltersPanel(props: Props) {
   const [generateStyleMarkers, setGenerateStyleMarkers] = useState(true);
 
   return (
-    <div className="rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm">
+    <div className="min-w-0 rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm">
       <div className="grid gap-2">
         {headerLeft || headerRight ? (
-          <div className="flex items-center justify-between gap-4">
-            <div className="text-[10px] font-medium text-zinc-900">{headerLeft}</div>
-            {headerRight ? <div>{headerRight}</div> : null}
+          <div className="flex min-w-0 items-center justify-between gap-2">
+            <div className="shrink-0 text-[10px] font-medium text-zinc-900">{headerLeft}</div>
+            {headerRight ? <div className="min-w-0 flex-1">{headerRight}</div> : null}
           </div>
         ) : null}
 
@@ -75,12 +75,12 @@ export function OpponentFiltersPanel(props: Props) {
             })}
           </div>
 
-          <div className="grid gap-2">
-            <div className="flex items-center gap-2">
+          <div className="grid min-w-0 gap-2">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
               <div className="text-[10px] font-medium text-zinc-900">Mode</div>
               <select
                 id="opp-filter-rated"
-                className="h-8 rounded-xl border border-zinc-200 bg-white px-3 text-[10px] text-zinc-900 outline-none focus:border-zinc-400"
+                className="h-8 min-w-0 flex-1 rounded-xl border border-zinc-200 bg-white px-3 text-[10px] text-zinc-900 outline-none focus:border-zinc-400"
                 value={rated}
                 onChange={(e) => setRated(e.target.value as any)}
               >

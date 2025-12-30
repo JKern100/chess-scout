@@ -396,8 +396,11 @@ export function AnalysisBoard(props: Props) {
       </div>
 
       {showEngineBest ? (
-        <div className="text-[10px] text-zinc-700">
-          Engine best: <span className="font-medium text-zinc-900">{engineBestMove ? `${engineBestMove.san ?? engineBestMove.uci}` : "—"}</span>
+        <div className="min-w-0 text-[10px] text-zinc-700">
+          Engine best:{" "}
+          <span className="block min-w-0 truncate font-medium text-zinc-900">
+            {engineBestMove ? `${engineBestMove.san ?? engineBestMove.uci}` : "—"}
+          </span>
         </div>
       ) : null}
 
@@ -409,7 +412,7 @@ export function AnalysisBoard(props: Props) {
       {state.status ? <div className="text-[10px] text-zinc-600">{state.status}</div> : null}
 
       {enabled ? (
-        <div className="grid gap-3">
+        <div className="grid min-w-0 gap-3">
           <div className="grid gap-0.5">
             <div className="text-[10px] font-medium text-zinc-900">Next Moves</div>
             <div className="text-[10px] text-zinc-500">Games imported: {opponentImportedCount}</div>
@@ -419,61 +422,65 @@ export function AnalysisBoard(props: Props) {
             {opponentStatsBusy ? (
               <div className="text-[10px] text-zinc-600">Loading…</div>
             ) : nextMoveList.moves?.length ? (
-              <div className="grid gap-2">
-                <div
-                  className={`grid ${
-                    showEngineColumn ? "grid-cols-[72px_68px_64px_1fr_44px]" : "grid-cols-[72px_68px_1fr_44px]"
-                  } gap-2 text-[10px] font-medium text-zinc-500`}
-                >
-                  <div>Move</div>
-                  <div>Games</div>
-                  {showEngineColumn ? <div>Engine</div> : null}
-                  <div>Results</div>
-                  <div className="text-right">%</div>
-                </div>
-                {nextMoveList.moves.slice(0, 12).map((m: MoveRow) => {
-                  const total = Math.max(1, m.played_count);
-                  const winPct = (m.win / total) * 100;
-                  const drawPct = (m.draw / total) * 100;
-                  const lossPct = (m.loss / total) * 100;
-                  const freq = nextMoveList.total > 0 ? m.played_count / nextMoveList.total : 0;
-                  const freqPct = Math.round(freq * 100);
-                  const isEngine = Boolean(engineBestMove?.uci && engineBestMove.uci === m.uci);
-                  const evalLabel = showEngineColumn ? (engineMoveEval[m.uci] ?? "…") : null;
+              <div className="overflow-x-auto">
+                <div className="grid min-w-[360px] gap-2">
+                  <div
+                    className={`grid ${
+                      showEngineColumn ? "grid-cols-[72px_68px_64px_1fr_44px]" : "grid-cols-[72px_68px_1fr_44px]"
+                    } gap-2 text-[10px] font-medium text-zinc-500`}
+                  >
+                    <div>Move</div>
+                    <div>Games</div>
+                    {showEngineColumn ? <div>Engine</div> : null}
+                    <div>Results</div>
+                    <div className="text-right">%</div>
+                  </div>
+                  {nextMoveList.moves.slice(0, 12).map((m: MoveRow) => {
+                    const total = Math.max(1, m.played_count);
+                    const winPct = (m.win / total) * 100;
+                    const drawPct = (m.draw / total) * 100;
+                    const lossPct = (m.loss / total) * 100;
+                    const freq = nextMoveList.total > 0 ? m.played_count / nextMoveList.total : 0;
+                    const freqPct = Math.round(freq * 100);
+                    const isEngine = Boolean(engineBestMove?.uci && engineBestMove.uci === m.uci);
+                    const evalLabel = showEngineColumn ? (engineMoveEval[m.uci] ?? "…") : null;
 
-                  return (
-                    <button
-                      key={m.uci}
-                      type="button"
-                      className={`grid ${
-                        showEngineColumn ? "grid-cols-[72px_68px_64px_1fr_44px]" : "grid-cols-[72px_68px_1fr_44px]"
-                      } items-center gap-2 rounded-lg px-1 py-0.5 text-left hover:bg-zinc-50 ${
-                        isEngine ? "ring-1 ring-emerald-200" : ""
-                      }`}
-                      onClick={() => playTableMove(m.uci)}
-                    >
-                      <div className="flex items-center gap-2 text-[10px] font-medium text-zinc-900">
-                        <span>{m.san ?? m.uci}</span>
-                        {isEngine ? (
-                          <span className="rounded-md bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">
-                            ENGINE
-                          </span>
-                        ) : null}
-                      </div>
-                      <div className="text-[10px] font-medium text-zinc-700">{formatGameCount(m.played_count)}</div>
-                      {showEngineColumn ? <div className="text-[10px] font-medium text-zinc-500">{evalLabel}</div> : null}
-                      <div className="h-3 overflow-hidden rounded-full border border-zinc-200 bg-zinc-100">
-                        <div className="flex h-full w-full">
-                          <div className="h-full bg-emerald-500" style={{ width: `${winPct}%` }} />
-                          <div className="h-full bg-zinc-300" style={{ width: `${drawPct}%` }} />
-                          <div className="h-full bg-rose-500" style={{ width: `${lossPct}%` }} />
+                    return (
+                      <button
+                        key={m.uci}
+                        type="button"
+                        className={`grid ${
+                          showEngineColumn ? "grid-cols-[72px_68px_64px_1fr_44px]" : "grid-cols-[72px_68px_1fr_44px]"
+                        } items-center gap-2 rounded-lg px-1 py-0.5 text-left hover:bg-zinc-50 ${
+                          isEngine ? "ring-1 ring-emerald-200" : ""
+                        }`}
+                        onClick={() => playTableMove(m.uci)}
+                      >
+                        <div className="flex min-w-0 items-center gap-2 text-[10px] font-medium text-zinc-900">
+                          <span className="min-w-0 truncate">{m.san ?? m.uci}</span>
+                          {isEngine ? (
+                            <span className="rounded-md bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">
+                              ENGINE
+                            </span>
+                          ) : null}
                         </div>
-                      </div>
-                      <div className="text-right text-[10px] font-medium text-zinc-700">{freqPct}%</div>
-                    </button>
-                  );
-                })}
-                <div className="text-[10px] text-zinc-500">Showing top 12 moves.</div>
+                        <div className="text-[10px] font-medium text-zinc-700">{formatGameCount(m.played_count)}</div>
+                        {showEngineColumn ? (
+                          <div className="min-w-0 truncate text-[10px] font-medium text-zinc-500">{evalLabel}</div>
+                        ) : null}
+                        <div className="h-3 overflow-hidden rounded-full border border-zinc-200 bg-zinc-100">
+                          <div className="flex h-full w-full">
+                            <div className="h-full bg-emerald-500" style={{ width: `${winPct}%` }} />
+                            <div className="h-full bg-zinc-300" style={{ width: `${drawPct}%` }} />
+                            <div className="h-full bg-rose-500" style={{ width: `${lossPct}%` }} />
+                          </div>
+                        </div>
+                        <div className="text-right text-[10px] font-medium text-zinc-700">{freqPct}%</div>
+                      </button>
+                    );
+                  })}
+                  <div className="text-[10px] text-zinc-500">Showing top 12 moves.</div>
+                </div>
               </div>
             ) : (
               <div className="text-[10px] text-zinc-600">No data for this position.</div>

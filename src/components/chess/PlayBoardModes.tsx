@@ -1036,7 +1036,7 @@ export function PlayBoardModes({ initialFen }: Props) {
       headerLeft="Opponent"
       headerRight={
         <select
-          className="h-8 min-w-[180px] rounded-xl border border-zinc-200 bg-white px-3 text-[10px] text-zinc-900 outline-none focus:border-zinc-400 disabled:opacity-60"
+          className="h-8 w-full min-w-0 rounded-xl border border-zinc-200 bg-white px-3 text-[10px] text-zinc-900 outline-none focus:border-zinc-400 disabled:opacity-60"
           value={opponentUsername}
           onChange={(e) => setOpponentUsername(e.target.value)}
           disabled={availableOpponents.length === 0}
@@ -1313,8 +1313,8 @@ export function PlayBoardModes({ initialFen }: Props) {
                   onError={(msg) => showSavedLinePopup(msg)}
                 />
               ) : null}
-              <div className="rounded-2xl border border-zinc-200 bg-white shadow-sm">
-                <div className="flex items-center justify-between border-b border-zinc-200 px-2 py-2">
+              <div className="min-w-0 overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm">
+                <div className="flex min-w-0 items-center justify-between border-b border-zinc-200 px-2 py-2">
                   <button
                     type="button"
                     className={`inline-flex h-9 w-9 items-center justify-center rounded-xl hover:bg-zinc-50 ${
@@ -1347,7 +1347,7 @@ export function PlayBoardModes({ initialFen }: Props) {
                   </button>
                 </div>
 
-                <div className="p-3">
+                <div className="min-w-0 overflow-auto p-3">
                   {active === "filters" ? (
                     analysisFiltersPanel
                   ) : active === "preferences" ? (
