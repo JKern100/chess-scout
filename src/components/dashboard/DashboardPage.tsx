@@ -674,7 +674,8 @@ export function DashboardPage({ initialOpponents }: Props) {
               const tieredStatus = formatTieredStatus(importRow as any, isActive);
               const downloadedCount = typeof (importRow as any)?.imported_count === "number" ? (importRow as any).imported_count : 0;
               const recordsCountBase = typeof latest.games_count === "number" ? latest.games_count : 0;
-              const recordsCountLive = Math.max(recordsCountBase, downloadedCount);
+              const fastCountLive = fastTargetKey === key ? Math.max(0, Number(fastStatus.gamesProcessed ?? 0)) : 0;
+              const importedGamesCount = Math.max(recordsCountBase, downloadedCount, fastCountLive);
               const canUseScout = downloadedCount >= MIN_GAMES_FOR_ANALYSIS || isActive;
 
               const isSavedOpen = Boolean(savedLinesOpen[key]);
@@ -720,7 +721,7 @@ export function DashboardPage({ initialOpponents }: Props) {
                         <div className="truncate text-sm font-medium text-zinc-900">{latest.username}</div>
                       </div>
                       <div className="mt-1 text-xs text-zinc-600">
-                        Records: {recordsCountLive} · Last refreshed:{" "}
+                        Imported games: {importedGamesCount} · Last refreshed:{" "}
                         <span suppressHydrationWarning>
                           {latest.last_refreshed_at ? formatRelative(latest.last_refreshed_at) : "never"}
                         </span>
