@@ -1,9 +1,9 @@
 "use client";
 
 import { Chess } from "chess.js";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { evaluateBestMove, evaluatePositionShallow, type EngineScore } from "@/lib/engine/engineService";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChessBoardCoreState } from "./ChessBoardCore";
+import { evaluateBestMove, evaluatePositionShallow, type EngineScore } from "@/lib/engine/engineService";
 
 type Strategy = "proportional" | "random";
 
@@ -41,6 +41,65 @@ type MoveRow = {
   loss: number;
   draw: number;
 };
+
+type CandidateMoveRowProps = {
+  uci: string;
+  san: string | null;
+  playedCount: number;
+  winPct: number;
+  drawPct: number;
+  lossPct: number;
+  freqPct: number;
+  isEngine: boolean;
+  showEngineColumn: boolean;
+  evalLabel: string | null;
+  onPlay: (uci: string) => void;
+  formatGameCount: (n: number) => string;
+};
+
+const CandidateMoveRow = memo(function CandidateMoveRow(props: CandidateMoveRowProps) {
+  const {
+    uci,
+    san,
+    playedCount,
+    winPct,
+    drawPct,
+    lossPct,
+    freqPct,
+    isEngine,
+    showEngineColumn,
+    evalLabel,
+    onPlay,
+    formatGameCount,
+  } = props;
+
+  return (
+    <button
+      type="button"
+      className={`grid ${
+        showEngineColumn ? "grid-cols-[72px_68px_64px_1fr_44px]" : "grid-cols-[72px_68px_1fr_44px]"
+      } items-center gap-2 rounded-lg px-1 py-0.5 text-left hover:bg-zinc-50 ${isEngine ? "ring-1 ring-emerald-200" : ""}`}
+      onClick={() => onPlay(uci)}
+    >
+      <div className="flex min-w-0 items-center gap-2 text-[10px] font-medium text-zinc-900">
+        <span className="min-w-0 truncate">{san ?? uci}</span>
+        {isEngine ? (
+          <span className="rounded-md bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">ENGINE</span>
+        ) : null}
+      </div>
+      <div className="text-[10px] font-medium text-zinc-700">{formatGameCount(playedCount)}</div>
+      {showEngineColumn ? <div className="min-w-0 truncate text-[10px] font-medium text-zinc-500">{evalLabel}</div> : null}
+      <div className="h-3 overflow-hidden rounded-full border border-zinc-200 bg-zinc-100">
+        <div className="flex h-full w-full">
+          <div className="h-full bg-emerald-500 transition-[width] duration-200" style={{ width: `${winPct}%` }} />
+          <div className="h-full bg-zinc-300 transition-[width] duration-200" style={{ width: `${drawPct}%` }} />
+          <div className="h-full bg-rose-500 transition-[width] duration-200" style={{ width: `${lossPct}%` }} />
+        </div>
+      </div>
+      <div className="text-right text-[10px] font-medium text-zinc-700">{freqPct}%</div>
+    </button>
+  );
+});
 
 export function AnalysisBoard(props: Props) {
   const {
@@ -115,22 +174,32 @@ export function AnalysisBoard(props: Props) {
     };
   }, [showEval, state.fen, state.game, onEvalChange]);
 
-  function playTableMove(uci: string) {
-    try {
-      const from = uci.slice(0, 2);
-      const to = uci.slice(2, 4);
-      const promotion = uci.length > 4 ? uci.slice(4) : undefined;
+  const playTableMove = useCallback(
+    (uci: string) => {
+      try {
+        const from = uci.slice(0, 2);
+        const to = uci.slice(2, 4);
+        const promotion = uci.length > 4 ? uci.slice(4) : undefined;
 
-      const next = new Chess(state.fen);
-      const played = next.move({ from, to, promotion: (promotion as any) ?? undefined });
-      if (!played) return;
+        const next = new Chess(state.fen);
+        const played = next.move({ from, to, promotion: (promotion as any) ?? undefined });
+        if (!played) return;
 
-      state.setStatus(null);
-      state.commitGame(next, played.san ?? null);
-    } catch {
-      // ignore invalid move
-    }
-  }
+        state.setStatus(null);
+        state.commitGame(next, played.san ?? null);
+      } catch {
+        // ignore invalid move
+      }
+    },
+    [state]
+  );
+
+  const onPlayMove = useCallback(
+    (uci: string) => {
+      playTableMove(uci);
+    },
+    [playTableMove]
+  );
 
   async function fetchOpponentStats(params: { fen: string; username: string }) {
     const json = await requestOpponentMove({
@@ -380,14 +449,14 @@ export function AnalysisBoard(props: Props) {
     };
   }, [enabled, showEngineColumn, state.fen, visibleMovesKey, nextMoveList.moves]);
 
-  function formatGameCount(value: number) {
+  const formatGameCount = useCallback((value: number) => {
     const n = Number(value);
     if (!Number.isFinite(n) || n <= 0) return "0";
     if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
     if (n >= 10_000) return `${Math.round(n / 1_000)}K`;
     if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
     return String(Math.round(n));
-  }
+  }, []);
 
   return (
     <div className="flex flex-col gap-4">
@@ -419,9 +488,7 @@ export function AnalysisBoard(props: Props) {
           </div>
 
           <div className="grid gap-2">
-            {opponentStatsBusy ? (
-              <div className="text-[10px] text-zinc-600">Loading…</div>
-            ) : nextMoveList.moves?.length ? (
+            {nextMoveList.moves?.length ? (
               <div className="overflow-x-auto">
                 <div className="grid min-w-[360px] gap-2">
                   <div
@@ -446,44 +513,28 @@ export function AnalysisBoard(props: Props) {
                     const evalLabel = showEngineColumn ? (engineMoveEval[m.uci] ?? "…") : null;
 
                     return (
-                      <button
-                        key={m.uci}
-                        type="button"
-                        className={`grid ${
-                          showEngineColumn ? "grid-cols-[72px_68px_64px_1fr_44px]" : "grid-cols-[72px_68px_1fr_44px]"
-                        } items-center gap-2 rounded-lg px-1 py-0.5 text-left hover:bg-zinc-50 ${
-                          isEngine ? "ring-1 ring-emerald-200" : ""
-                        }`}
-                        onClick={() => playTableMove(m.uci)}
-                      >
-                        <div className="flex min-w-0 items-center gap-2 text-[10px] font-medium text-zinc-900">
-                          <span className="min-w-0 truncate">{m.san ?? m.uci}</span>
-                          {isEngine ? (
-                            <span className="rounded-md bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">
-                              ENGINE
-                            </span>
-                          ) : null}
-                        </div>
-                        <div className="text-[10px] font-medium text-zinc-700">{formatGameCount(m.played_count)}</div>
-                        {showEngineColumn ? (
-                          <div className="min-w-0 truncate text-[10px] font-medium text-zinc-500">{evalLabel}</div>
-                        ) : null}
-                        <div className="h-3 overflow-hidden rounded-full border border-zinc-200 bg-zinc-100">
-                          <div className="flex h-full w-full">
-                            <div className="h-full bg-emerald-500" style={{ width: `${winPct}%` }} />
-                            <div className="h-full bg-zinc-300" style={{ width: `${drawPct}%` }} />
-                            <div className="h-full bg-rose-500" style={{ width: `${lossPct}%` }} />
-                          </div>
-                        </div>
-                        <div className="text-right text-[10px] font-medium text-zinc-700">{freqPct}%</div>
-                      </button>
+                      <CandidateMoveRow
+                        key={m.san ?? m.uci}
+                        uci={m.uci}
+                        san={m.san}
+                        playedCount={m.played_count}
+                        winPct={winPct}
+                        drawPct={drawPct}
+                        lossPct={lossPct}
+                        freqPct={freqPct}
+                        isEngine={isEngine}
+                        showEngineColumn={showEngineColumn}
+                        evalLabel={evalLabel}
+                        onPlay={onPlayMove}
+                        formatGameCount={formatGameCount}
+                      />
                     );
                   })}
                   <div className="text-[10px] text-zinc-500">Showing top 12 moves.</div>
                 </div>
               </div>
             ) : (
-              <div className="text-[10px] text-zinc-600">No data for this position.</div>
+              <div className="text-[10px] text-zinc-600">{opponentStatsBusy ? "Loading…" : "No data for this position."}</div>
             )}
           </div>
         </div>
