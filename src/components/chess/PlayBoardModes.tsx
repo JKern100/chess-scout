@@ -3,6 +3,7 @@
 import { Chess } from "chess.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  BookOpen,
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
@@ -17,10 +18,12 @@ import { getBestMoveForPlay, type EngineScore } from "@/lib/engine/engineService
 import { ChessBoardCore, type ChessBoardCoreState } from "./ChessBoardCore";
 import { SimulationBoard } from "./SimulationBoard";
 import { AnalysisBoard } from "./AnalysisBoard";
+import { LichessBookTab } from "./LichessBookTab";
 import { OpponentFiltersPanel } from "@/components/chess/OpponentFiltersPanel";
 import { useOpponentFilters } from "@/components/chess/useOpponentFilters";
 import { StyleSpectrumBar } from "@/components/profile/StyleSpectrumBar";
 import { useImportsRealtime } from "@/lib/hooks/useImportsRealtime";
+import { fetchLichessStats, type LichessExplorerMove } from "@/lib/lichess/explorer";
 
 type Props = {
   initialFen?: string;
@@ -45,7 +48,7 @@ type Mode = "simulation" | "analysis";
 
 type Strategy = "proportional" | "random";
 
-type AnalysisRightTab = "stats" | "filters" | "preferences";
+type AnalysisRightTab = "stats" | "filters" | "preferences" | "lichess";
 
 type SavedLine = {
   id: string;
@@ -706,6 +709,12 @@ export function PlayBoardModes({ initialFen }: Props) {
   const [analysisStats, setAnalysisStats] = useState<Stats | null>(null);
   const [analysisStatsBusy, setAnalysisStatsBusy] = useState(false);
   const [analysisRightTab, setAnalysisRightTab] = useState<AnalysisRightTab>("stats");
+
+  const [lichessMoves, setLichessMoves] = useState<LichessExplorerMove[] | null>(null);
+  const [lichessBusy, setLichessBusy] = useState(false);
+  const [lichessError, setLichessError] = useState<string | null>(null);
+  const lichessReqIdRef = useRef(0);
+  const lichessDebounceRef = useRef<number | null>(null);
 
   const [analysisEval, setAnalysisEval] = useState<EngineScore | null>(null);
 
@@ -1511,120 +1520,44 @@ export function PlayBoardModes({ initialFen }: Props) {
         const shouldHydrateSavedLine = Boolean(savedLineId && mode === "analysis");
 
         if (mode === "analysis") {
-          const active = analysisRightTab;
-
           return (
-            <>
-              {savedLineId ? (
-                <SavedLineHydrator
-                  state={state}
-                  savedLineId={savedLineId}
-                  enabled={shouldHydrateSavedLine}
-                  onLoaded={(name) => showSavedLinePopup(`Loaded from Saved Line: ${name}`)}
-                  onError={(msg) => showSavedLinePopup(msg)}
-                />
-              ) : null}
-              <div className="min-w-0 overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm">
-                <div className="flex min-w-0 items-center justify-between border-b border-zinc-200 px-2 py-2">
-                  <button
-                    type="button"
-                    className={`inline-flex h-9 w-9 items-center justify-center rounded-xl hover:bg-zinc-50 ${
-                      active === "filters" ? "bg-zinc-100 text-zinc-900" : "text-zinc-600"
-                    }`}
-                    title="Filters"
-                    onClick={() => setAnalysisRightTab("filters")}
-                  >
-                    <Filter className="h-5 w-5" />
-                  </button>
-                  <button
-                    type="button"
-                    className={`inline-flex h-9 w-9 items-center justify-center rounded-xl hover:bg-zinc-50 ${
-                      active === "preferences" ? "bg-zinc-100 text-zinc-900" : "text-zinc-600"
-                    }`}
-                    title="Preferences"
-                    onClick={() => setAnalysisRightTab("preferences")}
-                  >
-                    <SlidersHorizontal className="h-5 w-5" />
-                  </button>
-                  <button
-                    type="button"
-                    className={`inline-flex h-9 w-9 items-center justify-center rounded-xl hover:bg-zinc-50 ${
-                      active === "stats" ? "bg-zinc-100 text-zinc-900" : "text-zinc-600"
-                    }`}
-                    title="Candidates"
-                    onClick={() => setAnalysisRightTab("stats")}
-                  >
-                    <GitBranch className="h-5 w-5" />
-                  </button>
-                </div>
-
-                <div className="min-w-0 overflow-auto p-3">
-                  {active === "filters" ? (
-                    analysisFiltersPanel
-                  ) : active === "preferences" ? (
-                    <div className="grid gap-2 text-[10px] text-zinc-700">
-                      <div className="text-[10px] font-medium text-zinc-900">Preferences</div>
-                      <label className="inline-flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={analysisShowArrow}
-                          onChange={(e) => setAnalysisShowArrow(e.target.checked)}
-                        />
-                        Show candidate arrows
-                      </label>
-                      <label className="inline-flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={analysisShowEval}
-                          onChange={(e) => setAnalysisShowEval(e.target.checked)}
-                        />
-                        Show eval
-                      </label>
-                      <label className="inline-flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={analysisShowEngineBest}
-                          onChange={(e) => setAnalysisShowEngineBest(e.target.checked)}
-                        />
-                        Display engine’s best move
-                      </label>
-                      <label className="inline-flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={analysisShowEngineColumn}
-                          onChange={(e) => setAnalysisShowEngineColumn(e.target.checked)}
-                        />
-                        Show engine eval column
-                      </label>
-                    </div>
-                  ) : null}
-
-                  <div className={active === "stats" ? "" : "hidden"}>
-                    <AnalysisBoard
-                      state={state}
-                      opponentUsername={opponentUsername}
-                      opponentImportedCount={opponentImportedCount}
-                      filtersKey={filtersKey}
-                      requestOpponentMove={requestOpponentMove}
-                      showArrow={analysisShowArrow}
-                      showEval={analysisShowEval}
-                      onEvalChange={setAnalysisEval}
-                      showEngineBest={analysisShowEngineBest}
-                      engineBestMove={
-                        analysisEngineBestUci ? { uci: analysisEngineBestUci, san: analysisEngineBestSan } : null
-                      }
-                      setEngineBestMove={handleSetEngineBestMove}
-                      opponentStatsBusy={analysisStatsBusy}
-                      opponentStats={analysisStats}
-                      setOpponentStats={setAnalysisStats}
-                      setOpponentStatsBusy={setAnalysisStatsBusy}
-                      enabled={active === "stats"}
-                      showEngineColumn={analysisShowEngineColumn}
-                    />
-                  </div>
-                </div>
-              </div>
-            </>
+            <AnalysisRightSidebar
+              state={state}
+              savedLineId={savedLineId}
+              shouldHydrateSavedLine={shouldHydrateSavedLine}
+              showSavedLinePopup={showSavedLinePopup}
+              analysisFiltersPanel={analysisFiltersPanel}
+              analysisRightTab={analysisRightTab}
+              setAnalysisRightTab={setAnalysisRightTab}
+              analysisShowArrow={analysisShowArrow}
+              setAnalysisShowArrow={setAnalysisShowArrow}
+              analysisShowEval={analysisShowEval}
+              setAnalysisShowEval={setAnalysisShowEval}
+              analysisShowEngineBest={analysisShowEngineBest}
+              setAnalysisShowEngineBest={setAnalysisShowEngineBest}
+              analysisShowEngineColumn={analysisShowEngineColumn}
+              setAnalysisShowEngineColumn={setAnalysisShowEngineColumn}
+              setAnalysisEval={setAnalysisEval}
+              opponentUsername={opponentUsername}
+              opponentImportedCount={opponentImportedCount}
+              filtersKey={filtersKey}
+              requestOpponentMove={requestOpponentMove}
+              analysisEngineBestUci={analysisEngineBestUci}
+              analysisEngineBestSan={analysisEngineBestSan}
+              handleSetEngineBestMove={handleSetEngineBestMove}
+              analysisStatsBusy={analysisStatsBusy}
+              analysisStats={analysisStats}
+              setAnalysisStats={setAnalysisStats}
+              setAnalysisStatsBusy={setAnalysisStatsBusy}
+              lichessMoves={lichessMoves}
+              setLichessMoves={setLichessMoves}
+              lichessBusy={lichessBusy}
+              setLichessBusy={setLichessBusy}
+              lichessError={lichessError}
+              setLichessError={setLichessError}
+              lichessReqIdRef={lichessReqIdRef}
+              lichessDebounceRef={lichessDebounceRef}
+            />
           );
         }
 
@@ -1667,5 +1600,260 @@ export function PlayBoardModes({ initialFen }: Props) {
         );
       }}
     </ChessBoardCore>
+  );
+}
+
+function AnalysisRightSidebar(props: {
+  state: ChessBoardCoreState;
+  savedLineId: string | null;
+  shouldHydrateSavedLine: boolean;
+  showSavedLinePopup: (msg: string) => void;
+  analysisFiltersPanel: React.ReactNode;
+  analysisRightTab: AnalysisRightTab;
+  setAnalysisRightTab: (t: AnalysisRightTab) => void;
+  analysisShowArrow: boolean;
+  setAnalysisShowArrow: (v: boolean) => void;
+  analysisShowEval: boolean;
+  setAnalysisShowEval: (v: boolean) => void;
+  analysisShowEngineBest: boolean;
+  setAnalysisShowEngineBest: (v: boolean) => void;
+  analysisShowEngineColumn: boolean;
+  setAnalysisShowEngineColumn: (v: boolean) => void;
+  setAnalysisEval: (s: EngineScore | null) => void;
+  opponentUsername: string;
+  opponentImportedCount: number;
+  filtersKey: string;
+  requestOpponentMove: (params: { fen: string; username: string; mode: Strategy; prefetch?: boolean }) => Promise<any>;
+  analysisEngineBestUci: string | null;
+  analysisEngineBestSan: string | null;
+  handleSetEngineBestMove: (m: { uci: string; san: string | null } | null) => void;
+  analysisStatsBusy: boolean;
+  analysisStats: Stats | null;
+  setAnalysisStats: (s: Stats | null) => void;
+  setAnalysisStatsBusy: (v: boolean) => void;
+  lichessMoves: LichessExplorerMove[] | null;
+  setLichessMoves: (m: LichessExplorerMove[] | null) => void;
+  lichessBusy: boolean;
+  setLichessBusy: (v: boolean) => void;
+  lichessError: string | null;
+  setLichessError: (v: string | null) => void;
+  lichessReqIdRef: React.MutableRefObject<number>;
+  lichessDebounceRef: React.MutableRefObject<number | null>;
+}) {
+  const {
+    state,
+    savedLineId,
+    shouldHydrateSavedLine,
+    showSavedLinePopup,
+    analysisFiltersPanel,
+    analysisRightTab,
+    setAnalysisRightTab,
+    analysisShowArrow,
+    setAnalysisShowArrow,
+    analysisShowEval,
+    setAnalysisShowEval,
+    analysisShowEngineBest,
+    setAnalysisShowEngineBest,
+    analysisShowEngineColumn,
+    setAnalysisShowEngineColumn,
+    setAnalysisEval,
+    opponentUsername,
+    opponentImportedCount,
+    filtersKey,
+    requestOpponentMove,
+    analysisEngineBestUci,
+    analysisEngineBestSan,
+    handleSetEngineBestMove,
+    analysisStatsBusy,
+    analysisStats,
+    setAnalysisStats,
+    setAnalysisStatsBusy,
+    lichessMoves,
+    setLichessMoves,
+    lichessBusy,
+    setLichessBusy,
+    lichessError,
+    setLichessError,
+    lichessReqIdRef,
+    lichessDebounceRef,
+  } = props;
+
+  const active = analysisRightTab;
+
+  useEffect(() => {
+    if (active !== "lichess") return;
+
+    if (lichessDebounceRef.current != null) {
+      window.clearTimeout(lichessDebounceRef.current);
+    }
+
+    const reqId = (lichessReqIdRef.current += 1);
+
+    lichessDebounceRef.current = window.setTimeout(() => {
+      lichessDebounceRef.current = null;
+      setLichessBusy(true);
+      setLichessError(null);
+
+      void (async () => {
+        try {
+          const moves = await fetchLichessStats(state.fen, "standard");
+          if (lichessReqIdRef.current !== reqId) return;
+          setLichessMoves(moves);
+          setLichessBusy(false);
+        } catch (e) {
+          if (lichessReqIdRef.current !== reqId) return;
+          const msg = e instanceof Error ? e.message : "Failed to load Lichess explorer";
+          setLichessError(msg);
+          setLichessBusy(false);
+        }
+      })();
+    }, 300);
+
+    return () => {
+      if (lichessDebounceRef.current != null) {
+        window.clearTimeout(lichessDebounceRef.current);
+        lichessDebounceRef.current = null;
+      }
+    };
+  }, [active, state.fen, lichessDebounceRef, lichessReqIdRef, setLichessBusy, setLichessError, setLichessMoves]);
+
+  return (
+    <>
+      {savedLineId ? (
+        <SavedLineHydrator
+          state={state}
+          savedLineId={savedLineId}
+          enabled={shouldHydrateSavedLine}
+          onLoaded={(name) => showSavedLinePopup(`Loaded from Saved Line: ${name}`)}
+          onError={(msg) => showSavedLinePopup(msg)}
+        />
+      ) : null}
+      <div className="min-w-0 overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm">
+        <div className="flex min-w-0 items-center justify-between border-b border-zinc-200 px-2 py-2">
+          <button
+            type="button"
+            className={`inline-flex h-9 w-9 items-center justify-center rounded-xl hover:bg-zinc-50 ${
+              active === "filters" ? "bg-zinc-100 text-zinc-900" : "text-zinc-600"
+            }`}
+            title="Filters"
+            onClick={() => setAnalysisRightTab("filters")}
+          >
+            <Filter className="h-5 w-5" />
+          </button>
+          <button
+            type="button"
+            className={`inline-flex h-9 w-9 items-center justify-center rounded-xl hover:bg-zinc-50 ${
+              active === "preferences" ? "bg-zinc-100 text-zinc-900" : "text-zinc-600"
+            }`}
+            title="Preferences"
+            onClick={() => setAnalysisRightTab("preferences")}
+          >
+            <SlidersHorizontal className="h-5 w-5" />
+          </button>
+          <button
+            type="button"
+            className={`inline-flex h-9 w-9 items-center justify-center rounded-xl hover:bg-zinc-50 ${
+              active === "stats" ? "bg-zinc-100 text-zinc-900" : "text-zinc-600"
+            }`}
+            title="Candidates"
+            onClick={() => setAnalysisRightTab("stats")}
+          >
+            <GitBranch className="h-5 w-5" />
+          </button>
+          <button
+            type="button"
+            className={`inline-flex h-9 w-9 items-center justify-center rounded-xl hover:bg-zinc-50 ${
+              active === "lichess" ? "bg-zinc-100 text-zinc-900" : "text-zinc-600"
+            }`}
+            title="Lichess Book"
+            onClick={() => setAnalysisRightTab("lichess")}
+          >
+            <BookOpen className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="min-w-0 overflow-auto p-3">
+          {active === "filters" ? (
+            analysisFiltersPanel
+          ) : active === "preferences" ? (
+            <div className="grid gap-2 text-[10px] text-zinc-700">
+              <div className="text-[10px] font-medium text-zinc-900">Preferences</div>
+              <label className="inline-flex items-center gap-2">
+                <input type="checkbox" checked={analysisShowArrow} onChange={(e) => setAnalysisShowArrow(e.target.checked)} />
+                Show candidate arrows
+              </label>
+              <label className="inline-flex items-center gap-2">
+                <input type="checkbox" checked={analysisShowEval} onChange={(e) => setAnalysisShowEval(e.target.checked)} />
+                Show eval
+              </label>
+              <label className="inline-flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={analysisShowEngineBest}
+                  onChange={(e) => setAnalysisShowEngineBest(e.target.checked)}
+                />
+                Display engine’s best move
+              </label>
+              <label className="inline-flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={analysisShowEngineColumn}
+                  onChange={(e) => setAnalysisShowEngineColumn(e.target.checked)}
+                />
+                Show engine eval column
+              </label>
+            </div>
+          ) : null}
+
+          <div className={active === "stats" ? "" : "hidden"}>
+            <AnalysisBoard
+              state={state}
+              opponentUsername={opponentUsername}
+              opponentImportedCount={opponentImportedCount}
+              filtersKey={filtersKey}
+              requestOpponentMove={requestOpponentMove}
+              showArrow={analysisShowArrow}
+              showEval={analysisShowEval}
+              onEvalChange={setAnalysisEval}
+              showEngineBest={analysisShowEngineBest}
+              engineBestMove={analysisEngineBestUci ? { uci: analysisEngineBestUci, san: analysisEngineBestSan } : null}
+              setEngineBestMove={handleSetEngineBestMove}
+              opponentStatsBusy={analysisStatsBusy}
+              opponentStats={analysisStats}
+              setOpponentStats={setAnalysisStats}
+              setOpponentStatsBusy={setAnalysisStatsBusy}
+              enabled={active === "stats"}
+              showEngineColumn={analysisShowEngineColumn}
+            />
+          </div>
+
+          <div className={active === "lichess" ? "" : "hidden"}>
+            <LichessBookTab
+              moves={lichessMoves}
+              busy={lichessBusy}
+              error={lichessError}
+              onRetry={() => {
+                const reqId = (lichessReqIdRef.current += 1);
+                setLichessBusy(true);
+                setLichessError(null);
+                void (async () => {
+                  try {
+                    const moves = await fetchLichessStats(state.fen, "standard");
+                    if (lichessReqIdRef.current !== reqId) return;
+                    setLichessMoves(moves);
+                    setLichessBusy(false);
+                  } catch (e) {
+                    if (lichessReqIdRef.current !== reqId) return;
+                    const msg = e instanceof Error ? e.message : "Failed to load Lichess explorer";
+                    setLichessError(msg);
+                    setLichessBusy(false);
+                  }
+                })();
+              }}
+            />
+          </div>
+        </div>
+      </div>
+    </>
   );
 }
