@@ -1597,7 +1597,9 @@ export function PlayBoardModes({ initialFen }: Props) {
                         Show engine eval column
                       </label>
                     </div>
-                  ) : (
+                  ) : null}
+
+                  <div className={active === "stats" ? "" : "hidden"}>
                     <AnalysisBoard
                       state={state}
                       opponentUsername={opponentUsername}
@@ -1619,7 +1621,7 @@ export function PlayBoardModes({ initialFen }: Props) {
                       enabled={active === "stats"}
                       showEngineColumn={analysisShowEngineColumn}
                     />
-                  )}
+                  </div>
                 </div>
               </div>
             </>
