@@ -6,10 +6,14 @@ create table if not exists public.opponents (
   username text not null,
   created_at timestamptz not null default now(),
   last_refreshed_at timestamptz null,
+  archived_at timestamptz null,
   constraint opponents_platform_check check (platform in ('lichess', 'chesscom')),
   constraint opponents_username_check check (char_length(username) > 0),
   primary key (user_id, platform, username)
 );
+
+alter table public.opponents
+  add column if not exists archived_at timestamptz null;
 
 alter table public.opponents enable row level security;
 

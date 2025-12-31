@@ -24,6 +24,7 @@ import { useOpponentFilters } from "@/components/chess/useOpponentFilters";
 import { StyleSpectrumBar } from "@/components/profile/StyleSpectrumBar";
 import { useImportsRealtime } from "@/lib/hooks/useImportsRealtime";
 import { fetchLichessStats, type LichessExplorerMove } from "@/lib/lichess/explorer";
+import { useImportQueue } from "@/context/ImportQueueContext";
 
 type Props = {
   initialFen?: string;
@@ -452,6 +453,12 @@ export function PlayBoardModes({ initialFen }: Props) {
   const [availableOpponents, setAvailableOpponents] = useState<Array<{ platform: string; username: string }>>([]);
   const { imports } = useImportsRealtime();
   const {
+    isImporting: globalIsImporting,
+    progress: globalProgress,
+    currentOpponent: globalCurrentOpponent,
+    progressByOpponent,
+  } = useImportQueue();
+  const {
     speeds: filterSpeeds,
     setSpeeds: setFilterSpeeds,
     rated: filterRated,
@@ -570,7 +577,14 @@ export function PlayBoardModes({ initialFen }: Props) {
     );
   }, [imports, opponentUsername]);
 
-  const opponentImportedCount = typeof opponentImport?.imported_count === "number" ? opponentImport.imported_count : 0;
+  const opponentImportedCount = useMemo(() => {
+    const base = typeof opponentImport?.imported_count === "number" ? opponentImport.imported_count : 0;
+    const u = opponentUsername.trim().toLowerCase();
+    const key = u ? `lichess:${u}` : "";
+    const live = globalIsImporting && key && globalCurrentOpponent === key ? Math.max(0, Number(globalProgress ?? 0)) : 0;
+    const persisted = key ? Math.max(0, Number(progressByOpponent[key] ?? 0)) : 0;
+    return Math.max(base, persisted, live);
+  }, [globalCurrentOpponent, globalIsImporting, globalProgress, opponentImport?.imported_count, opponentUsername, progressByOpponent]);
 
   const archivingNote = useMemo(() => {
     if (!opponentImport) return null;

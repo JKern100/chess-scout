@@ -3,8 +3,11 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Chessboard } from "react-chessboard";
+import { MoreVertical } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useImportsRealtime } from "@/lib/hooks/useImportsRealtime";
-import { createOpeningGraphImporter, type OpeningGraphImportStatus } from "@/lib/openingGraphImport/openingGraphImportService";
+import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import { useImportQueue } from "@/context/ImportQueueContext";
 
 type ChessPlatform = "lichess" | "chesscom";
 
@@ -14,6 +17,12 @@ type OpponentRow = {
   created_at: string;
   last_refreshed_at: string | null;
   games_count?: number;
+  style_markers?: Array<{
+    marker_key: string;
+    label: string;
+    strength: string;
+    tooltip: string;
+  }>;
 };
 
 type SavedLineRow = {
@@ -63,21 +72,19 @@ function formatSavedLineDate(iso: string) {
 
 export function DashboardPage({ initialOpponents }: Props) {
   const MIN_GAMES_FOR_ANALYSIS = 10;
+  const router = useRouter();
   const [opponents, setOpponents] = useState<OpponentRow[]>(initialOpponents);
   const [status, setStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [fastStatus, setFastStatus] = useState<OpeningGraphImportStatus>({
-    phase: "idle",
-    gamesProcessed: 0,
-    bytesRead: 0,
-    lastError: null,
-  });
-  const [fastTargetKey, setFastTargetKey] = useState<string | null>(null);
-  const fastImporterRef = useRef<ReturnType<typeof createOpeningGraphImporter> | null>(null);
+  const [openMenuKey, setOpenMenuKey] = useState<string | null>(null);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
   const [continueBusy, setContinueBusy] = useState(false);
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [displayIndexedCount, setDisplayIndexedCount] = useState(0);
   const [indeterminateArmed, setIndeterminateArmed] = useState(false);
+
+  const { addToQueue, startImport, isImporting, progress, currentOpponent, progressByOpponent, queue } = useImportQueue();
 
   const { imports } = useImportsRealtime();
 
@@ -88,6 +95,31 @@ export function DashboardPage({ initialOpponents }: Props) {
 
   const [platform, setPlatform] = useState<ChessPlatform>("lichess");
   const [username, setUsername] = useState<string>("");
+
+  useEffect(() => {
+    function onDocClick() {
+      setOpenMenuKey(null);
+      setUserMenuOpen(false);
+    }
+
+    window.addEventListener("click", onDocClick);
+    return () => window.removeEventListener("click", onDocClick);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const supabase = createSupabaseBrowserClient();
+    void supabase.auth
+      .getUser()
+      .then(({ data }) => {
+        if (cancelled) return;
+        setUserEmail(data?.user?.email ?? null);
+      })
+      .catch(() => null);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const activeImportRef = useRef<{ id: string; username: string; platform: ChessPlatform } | null>(null);
   const stopRequestedRef = useRef(false);
@@ -113,35 +145,6 @@ export function DashboardPage({ initialOpponents }: Props) {
     return m;
   }, [opponents]);
 
-  async function startFastImport(o: OpponentRow) {
-    if (loading) return;
-    if (o.platform !== "lichess") {
-      setStatus("Fast import currently supports Lichess only");
-      return;
-    }
-
-    const key = `${o.platform}:${o.username.toLowerCase()}`;
-    setFastTargetKey(key);
-    setStatus(null);
-
-    if (!fastImporterRef.current) {
-      fastImporterRef.current = createOpeningGraphImporter({
-        onStatus: (s) => setFastStatus(s),
-      });
-    }
-
-    try {
-      await fastImporterRef.current.start({
-        platform: "lichess",
-        username: o.username,
-        color: "both",
-        rated: "any",
-      });
-    } catch (e) {
-      setStatus(e instanceof Error ? e.message : "Failed to start fast import");
-    }
-  }
-
   async function reloadOpponents() {
     const res = await fetch("/api/opponents", { cache: "no-store" });
     const json = await res.json();
@@ -164,72 +167,31 @@ export function DashboardPage({ initialOpponents }: Props) {
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error ?? "Failed to add opponent");
 
-      await reloadOpponents();
+      const optimistic: OpponentRow = {
+        platform,
+        username: trimmed,
+        created_at: new Date().toISOString(),
+        last_refreshed_at: null,
+        games_count: 0,
+        style_markers: [],
+      };
+
+      setOpponents((prev) => {
+        const key = `${platform}:${trimmed.toLowerCase()}`;
+        const next = prev.filter((p) => `${p.platform}:${p.username.toLowerCase()}` !== key);
+        return [optimistic, ...next];
+      });
+
+      if (optimistic.platform !== "lichess") {
+        setStatus("Fast import currently supports Lichess only");
+      } else {
+        const key = `${optimistic.platform}:${optimistic.username.toLowerCase()}`;
+        addToQueue(key);
+        startImport();
+      }
+      void reloadOpponents();
       setUsername("");
       setStatus(null);
-    } catch (e) {
-      setStatus(e instanceof Error ? e.message : "Failed to add opponent");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function addOpponentAndFastImport() {
-    setLoading(true);
-    setStatus(null);
-    try {
-      const trimmed = username.trim();
-      if (!trimmed) throw new Error("Username is required");
-      if (platform !== "lichess") throw new Error("Fast import currently supports Lichess only");
-
-      const res = await fetch("/api/opponents", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ platform, username: trimmed }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json?.error ?? "Failed to add opponent");
-
-      await reloadOpponents();
-      setUsername("");
-
-      await startFastImport({
-        platform,
-        username: trimmed,
-        created_at: new Date().toISOString(),
-        last_refreshed_at: null,
-      });
-    } catch (e) {
-      setStatus(e instanceof Error ? e.message : "Failed to add opponent");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function addOpponentAndImport() {
-    setLoading(true);
-    setStatus(null);
-    try {
-      const trimmed = username.trim();
-      if (!trimmed) throw new Error("Username is required");
-
-      const res = await fetch("/api/opponents", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ platform, username: trimmed }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json?.error ?? "Failed to add opponent");
-
-      await reloadOpponents();
-      setUsername("");
-
-      await startRefresh({
-        platform,
-        username: trimmed,
-        created_at: new Date().toISOString(),
-        last_refreshed_at: null,
-      });
     } catch (e) {
       setStatus(e instanceof Error ? e.message : "Failed to add opponent");
     } finally {
@@ -249,31 +211,54 @@ export function DashboardPage({ initialOpponents }: Props) {
     return json;
   }
 
-  async function deleteOpponent(o: OpponentRow) {
+  async function archiveOpponent(o: OpponentRow) {
     if (loading) return;
     if (activeImport && activeImport.platform === o.platform && activeImport.username.toLowerCase() === o.username.toLowerCase()) {
-      setStatus("Stop the active import before deleting this opponent.");
+      setStatus("Stop the active import before archiving this opponent.");
       return;
     }
 
     const ok = window.confirm(
-      `Delete ${o.platform === "lichess" ? "Lichess" : "Chess.com"} opponent '${o.username}'?\n\nImported games will be kept and reused if you add them back.`
+      `Archive ${o.platform === "lichess" ? "Lichess" : "Chess.com"} opponent '${o.username}'?\n\nYou can add them back later.`
     );
     if (!ok) return;
 
     setLoading(true);
     setStatus(null);
     try {
-      const qs = new URLSearchParams({ platform: o.platform, username: o.username });
-      const res = await fetch(`/api/opponents?${qs.toString()}`, { method: "DELETE" });
+      const res = await fetch(`/api/opponents`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ platform: o.platform, username: o.username, archived: true }),
+      });
       const json = await res.json();
-      if (!res.ok) throw new Error(json?.error ?? "Failed to delete opponent");
+      if (!res.ok) throw new Error(json?.error ?? "Failed to archive opponent");
       await reloadOpponents();
     } catch (e) {
-      setStatus(e instanceof Error ? e.message : "Failed to delete opponent");
+      setStatus(e instanceof Error ? e.message : "Failed to archive opponent");
     } finally {
       setLoading(false);
     }
+  }
+
+  function badgeClass(strength: string) {
+    const v = String(strength ?? "").toLowerCase();
+    if (v === "strong") return "border-amber-200 bg-amber-50 text-amber-800";
+    if (v === "medium") return "border-blue-200 bg-blue-50 text-blue-800";
+    return "border-zinc-200 bg-zinc-50 text-zinc-700";
+  }
+
+  function truncateEmail(e: string) {
+    const v = String(e ?? "");
+    if (!v) return "";
+    if (v.length <= 22) return v;
+    const at = v.indexOf("@");
+    if (at > 0) {
+      const head = v.slice(0, Math.min(10, at));
+      const tail = v.slice(at);
+      return `${head}…${tail}`;
+    }
+    return `${v.slice(0, 12)}…${v.slice(-6)}`;
   }
 
   async function startRefresh(o: OpponentRow) {
@@ -359,7 +344,7 @@ export function DashboardPage({ initialOpponents }: Props) {
     } catch {
       // ignore
     }
-    window.location.href = "/play?mode=analysis";
+    router.push("/play?mode=analysis");
   }
 
   const activeReady = Boolean(activeImport?.ready);
@@ -435,87 +420,88 @@ export function DashboardPage({ initialOpponents }: Props) {
 
   return (
     <div className="min-h-screen bg-zinc-50">
-      <main className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-6 py-10">
+      <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-10">
         <header className="flex items-center justify-between gap-4">
           <div>
             <div className="text-xs font-medium text-zinc-600">ChessScout</div>
             <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">Dashboard</h1>
           </div>
-          <Link
-            href="/"
-            className="inline-flex h-9 items-center justify-center rounded-xl border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-900 hover:bg-zinc-50"
-          >
-            Home
-          </Link>
+          <div className="relative" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-900 hover:bg-zinc-50"
+              onClick={() => setUserMenuOpen((v) => !v)}
+              title={userEmail ?? undefined}
+            >
+              <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-zinc-100 text-[10px] font-semibold text-zinc-700">
+                {(userEmail ?? "U").slice(0, 1).toUpperCase()}
+              </span>
+              <span className="hidden max-w-[200px] truncate sm:inline">{userEmail ? truncateEmail(userEmail) : "Account"}</span>
+            </button>
+
+            {userMenuOpen ? (
+              <div className="absolute right-0 top-10 z-30 w-48 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-lg">
+                <button
+                  type="button"
+                  className="flex w-full items-center px-3 py-2 text-left text-sm text-zinc-800 hover:bg-zinc-50"
+                  onClick={() => {
+                    const supabase = createSupabaseBrowserClient();
+                    void supabase.auth
+                      .signOut()
+                      .then(() => window.location.reload())
+                      .catch(() => window.location.reload());
+                  }}
+                >
+                  Sign out
+                </button>
+                <div className="h-px bg-zinc-100" />
+                <Link
+                  href="/"
+                  className="flex w-full items-center px-3 py-2 text-left text-sm text-zinc-800 hover:bg-zinc-50"
+                >
+                  Home
+                </Link>
+              </div>
+            ) : null}
+          </div>
         </header>
 
         <section className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
           <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
             <div>
               <div className="text-lg font-medium text-zinc-900">Opponents</div>
-              <div className="mt-1 text-sm text-zinc-600">Add opponents and manually refresh their games.</div>
+              <div className="mt-1 text-sm text-zinc-600">Add an opponent and we’ll sync their games automatically.</div>
             </div>
 
-            <div className="grid gap-3 md:grid-cols-3">
-              <div className="flex flex-col gap-1">
-                <label className="text-sm font-medium text-zinc-900" htmlFor="dash-platform">
-                  Platform
-                </label>
-                <select
-                  id="dash-platform"
-                  className="h-11 rounded-xl border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none focus:border-zinc-400"
-                  value={platform}
-                  onChange={(e) => setPlatform(e.target.value as any)}
-                  disabled={loading}
-                >
-                  <option value="lichess">Lichess</option>
-                  <option value="chesscom">Chess.com</option>
-                </select>
-              </div>
+            <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
+              <select
+                id="dash-platform"
+                className="h-11 w-full rounded-xl border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none focus:border-zinc-400 sm:w-[160px]"
+                value={platform}
+                onChange={(e) => setPlatform(e.target.value as any)}
+                disabled={loading}
+              >
+                <option value="lichess">Lichess</option>
+                <option value="chesscom">Chess.com</option>
+              </select>
 
-              <div className="flex flex-col gap-1">
-                <label className="text-sm font-medium text-zinc-900" htmlFor="dash-username">
-                  Username
-                </label>
-                <input
-                  id="dash-username"
-                  className="h-11 rounded-xl border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none focus:border-zinc-400"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  placeholder={platform === "lichess" ? "lichess_username" : "chesscom_username"}
-                  disabled={loading}
-                />
-              </div>
+              <input
+                id="dash-username"
+                className="h-11 w-full rounded-xl border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none focus:border-zinc-400 sm:w-[260px]"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder={platform === "lichess" ? "lichess_username" : "chesscom_username"}
+                disabled={loading}
+              />
 
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  className="inline-flex h-11 items-center justify-center rounded-xl border border-zinc-200 bg-white px-4 text-sm font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
-                  disabled={loading || !username.trim()}
-                  onClick={addOpponent}
-                >
-                  Add
-                </button>
-                <button
-                  type="button"
-                  className="inline-flex h-11 items-center justify-center rounded-xl bg-zinc-900 px-4 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-60"
-                  disabled={loading || !username.trim()}
-                  onClick={addOpponentAndImport}
-                  title={platform !== "lichess" ? "Chess.com import coming soon" : undefined}
-                >
-                  Import (Legacy)
-                </button>
-
-                <button
-                  type="button"
-                  className="inline-flex h-11 items-center justify-center rounded-xl border border-zinc-200 bg-white px-4 text-sm font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
-                  disabled={loading || !username.trim() || platform !== "lichess"}
-                  onClick={addOpponentAndFastImport}
-                  title={platform !== "lichess" ? "Fast import currently supports Lichess only" : "Fast Import (beta): streams from Lichess and writes aggregated opening graph"}
-                >
-                  Fast Import
-                </button>
-              </div>
+              <button
+                type="button"
+                className="inline-flex h-11 w-full items-center justify-center rounded-xl bg-zinc-900 px-4 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-60 sm:w-auto"
+                disabled={loading || !username.trim()}
+                onClick={addOpponent}
+              >
+                Add Opponent
+              </button>
             </div>
           </div>
 
@@ -654,9 +640,9 @@ export function DashboardPage({ initialOpponents }: Props) {
             </div>
           ) : null}
 
-          <div className="mt-6 grid gap-3">
+          <div className="mt-6 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
             {opponents.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-zinc-200 bg-zinc-50 p-6 text-sm text-zinc-600">
+              <div className="rounded-xl border border-dashed border-zinc-200 bg-zinc-50 p-6 text-sm text-zinc-600 md:col-span-2 lg:col-span-3">
                 No opponents yet.
               </div>
             ) : null}
@@ -674,9 +660,20 @@ export function DashboardPage({ initialOpponents }: Props) {
               const tieredStatus = formatTieredStatus(importRow as any, isActive);
               const downloadedCount = typeof (importRow as any)?.imported_count === "number" ? (importRow as any).imported_count : 0;
               const recordsCountBase = typeof latest.games_count === "number" ? latest.games_count : 0;
-              const fastCountLive = fastTargetKey === key ? Math.max(0, Number(fastStatus.gamesProcessed ?? 0)) : 0;
-              const importedGamesCount = Math.max(recordsCountBase, downloadedCount, fastCountLive);
+              const currentKey = latest.platform === "lichess" ? `lichess:${latest.username.toLowerCase()}` : null;
+              const isGlobalCurrent = Boolean(isImporting && currentKey && currentOpponent === currentKey);
+              const globalCountLive = isGlobalCurrent ? Math.max(0, Number(progress ?? 0)) : 0;
+              const persistedFastCount = currentKey ? Math.max(0, Number(progressByOpponent[currentKey] ?? 0)) : 0;
+              const importedGamesCount = Math.max(recordsCountBase, downloadedCount, persistedFastCount, globalCountLive);
               const canUseScout = downloadedCount >= MIN_GAMES_FOR_ANALYSIS || isActive;
+
+              const isFastRunning = isGlobalCurrent;
+              const isFastQueued = currentKey ? queue.includes(currentKey) && !isGlobalCurrent : false;
+              const markerBadges = Array.isArray((latest as any)?.style_markers) ? (((latest as any).style_markers as any[]) ?? []) : [];
+
+              const menuOpen = openMenuKey === key;
+              const primaryLabel = canUseScout ? "Analyze" : "Prepare";
+              const primaryEnabled = !loading && (primaryLabel === "Prepare" || canUseScout);
 
               const isSavedOpen = Boolean(savedLinesOpen[key]);
               const savedLines = savedLinesByOpponent[key] ?? null;
@@ -711,105 +708,130 @@ export function DashboardPage({ initialOpponents }: Props) {
               }
 
               return (
-                <div key={key} className="rounded-xl border border-zinc-200 bg-white px-4 py-3">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
+                <div key={key} className="rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm">
+                  <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-semibold text-zinc-700">
-                          {latest.platform === "lichess" ? "Lichess" : "Chess.com"}
-                        </span>
-                        <div className="truncate text-sm font-medium text-zinc-900">{latest.username}</div>
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-zinc-100 text-base font-semibold text-zinc-900">
+                          {latest.username.slice(0, 1).toUpperCase()}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="truncate text-base font-semibold text-zinc-900">{latest.username}</div>
+                          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                            {markerBadges.length ? (
+                              markerBadges.slice(0, 2).map((m: any) => (
+                                <span
+                                  key={String(m?.marker_key ?? m?.label ?? "")}
+                                  title={String(m?.tooltip ?? "") || undefined}
+                                  className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${badgeClass(String(m?.strength ?? ""))}`}
+                                >
+                                  {String(m?.label ?? "")}
+                                </span>
+                              ))
+                            ) : (
+                              <span className="inline-flex items-center rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[10px] font-semibold text-zinc-700">
+                                No style markers yet
+                              </span>
+                            )}
+                            {isFastRunning ? (
+                              <span className="inline-flex items-center rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-zinc-700">
+                                Syncing…
+                              </span>
+                            ) : isFastQueued ? (
+                              <span className="inline-flex items-center rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-zinc-700">
+                                Queued
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
                       </div>
-                      <div className="mt-1 text-xs text-zinc-600">
-                        Imported games: {importedGamesCount} · Last refreshed:{" "}
-                        <span suppressHydrationWarning>
-                          {latest.last_refreshed_at ? formatRelative(latest.last_refreshed_at) : "never"}
-                        </span>
+
+                      <div className="mt-3 text-xs text-neutral-500">
+                        {latest.platform === "lichess" ? "Lichess" : "Chess.com"} · {importedGamesCount} games
+                        {latest.last_refreshed_at ? (
+                          <span suppressHydrationWarning> · Updated {formatRelative(latest.last_refreshed_at)}</span>
+                        ) : null}
                       </div>
+
                       {isActive ? (
-                        <div className="mt-1 text-xs font-medium text-zinc-700">
+                        <div className="mt-2 text-xs font-medium text-zinc-700">
                           Importing · imported: {activeImport?.importedCount ?? 0}
                         </div>
                       ) : null}
 
                       {tieredStatus ? (
-                        <div className="mt-1 text-xs text-zinc-700">{tieredStatus}</div>
+                        <div className="mt-2 text-xs text-zinc-700">{tieredStatus}</div>
                       ) : null}
 
-                      {fastTargetKey === key && fastStatus.phase !== "idle" ? (
-                        <div className="mt-1 text-xs text-zinc-700">
-                          Fast import: <span className="font-medium">{fastStatus.phase}</span> · games: {fastStatus.gamesProcessed}
-                          {fastStatus.lastError ? <span className="text-red-600"> · {fastStatus.lastError}</span> : null}
+                      {isFastRunning ? (
+                        <div className="mt-2 text-xs text-zinc-700">Syncing… imported: {Math.max(0, Number(progress ?? 0))}</div>
+                      ) : null}
+                    </div>
+
+                    <div className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-neutral-200 bg-white text-zinc-700 hover:bg-zinc-50"
+                        title="Actions"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setOpenMenuKey((prev) => (prev === key ? null : key));
+                        }}
+                      >
+                        <MoreVertical className="h-4 w-4" />
+                      </button>
+
+                      {menuOpen ? (
+                        <div className="absolute right-0 top-10 z-20 w-44 overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-lg">
+                          <button
+                            type="button"
+                            className="flex w-full items-center px-3 py-2 text-left text-sm text-zinc-800 hover:bg-zinc-50 disabled:opacity-60"
+                            disabled={
+                              loading ||
+                              latest.platform !== "lichess" ||
+                              (latest.platform === "lichess" && queue.includes(`lichess:${latest.username.toLowerCase()}`))
+                            }
+                            onClick={() => {
+                              if (latest.platform !== "lichess") return;
+                              addToQueue(`lichess:${latest.username.toLowerCase()}`);
+                              startImport();
+                              setOpenMenuKey(null);
+                            }}
+                            title={latest.platform !== "lichess" ? "Sync Games currently supports Lichess only" : "Sync Games (beta): streams from Lichess and writes aggregated opening graph"}
+                          >
+                            Sync Games
+                          </button>
+                          <div className="h-px bg-neutral-100" />
+                          <button
+                            type="button"
+                            className="flex w-full items-center px-3 py-2 text-left text-sm text-rose-700 hover:bg-rose-50 disabled:opacity-60"
+                            disabled={loading || isActive}
+                            onClick={() => void archiveOpponent(latest)}
+                            title={isActive ? "Stop import before archiving" : undefined}
+                          >
+                            Archive
+                          </button>
                         </div>
                       ) : null}
                     </div>
+                  </div>
 
-                    <div className="flex items-center gap-2">
-                      <Link
-                        href={`/opponents/${encodeURIComponent(latest.platform)}/${encodeURIComponent(latest.username)}/profile`}
-                        className="inline-flex h-9 items-center justify-center rounded-lg border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-900 hover:bg-zinc-50"
-                      >
-                        Profile
-                      </Link>
-                      <button
-                        type="button"
-                        className="inline-flex h-9 items-center justify-center rounded-lg bg-zinc-900 px-3 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-60"
-                        disabled={loading || !canUseScout}
-                        title={canUseScout ? undefined : `Waiting for ${MIN_GAMES_FOR_ANALYSIS} games to download...`}
-                        onClick={() => prepare(latest)}
-                      >
-                        Prepare
-                      </button>
-                      <button
-                        type="button"
-                        className="inline-flex h-9 items-center justify-center rounded-lg border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
-                        disabled={loading}
-                        onClick={() => void startRefresh(latest)}
-                        title={latest.platform !== "lichess" ? "Chess.com refresh coming soon" : undefined}
-                      >
-                        Refresh
-                      </button>
-
-                      <button
-                        type="button"
-                        className="inline-flex h-9 items-center justify-center rounded-lg border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
-                        disabled={loading || fastStatus.phase === "running"}
-                        onClick={() => void startFastImport(latest)}
-                        title="Fast Import (beta): streams from Lichess and writes aggregated opening graph"
-                      >
-                        Fast Import
-                      </button>
-
-                      <button
-                        type="button"
-                        className="inline-flex h-9 items-center justify-center rounded-lg border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
-                        disabled={loading || isActive}
-                        onClick={() => void deleteOpponent(latest)}
-                        title={isActive ? "Stop import before deleting" : undefined}
-                      >
-                        Delete
-                      </button>
-                      {isActive ? (
-                        <button
-                          type="button"
-                          className="inline-flex h-9 items-center justify-center rounded-lg border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
-                          disabled={loading === false}
-                          onClick={() =>
-                            activeImport
-                              ? void stopImport(activeImport.id)
-                                  .then(() => {
-                                    setStatus("Stopping import...");
-                                  })
-                                  .catch((e) => {
-                                    setStatus(e instanceof Error ? e.message : "Failed to stop import");
-                                  })
-                              : null
-                          }
-                        >
-                          Stop
-                        </button>
-                      ) : null}
-                    </div>
+                  <div className="mt-4 grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      className="inline-flex h-10 w-full items-center justify-center rounded-xl bg-zinc-900 px-4 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-60"
+                      disabled={!primaryEnabled}
+                      title={primaryLabel === "Analyze" && !canUseScout ? `Waiting for ${MIN_GAMES_FOR_ANALYSIS} games to download...` : undefined}
+                      onClick={() => prepare(latest)}
+                    >
+                      {primaryLabel}
+                    </button>
+                    <Link
+                      href={`/opponents/${encodeURIComponent(latest.platform)}/${encodeURIComponent(latest.username)}/profile`}
+                      className="inline-flex h-10 w-full items-center justify-center rounded-xl border border-neutral-200 bg-white px-4 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+                    >
+                      Profile
+                    </Link>
                   </div>
 
                   <div className="mt-3 border-t border-zinc-100 pt-3">
