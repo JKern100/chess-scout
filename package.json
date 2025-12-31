@@ -6,7 +6,7 @@
     "dev": "next dev --port 3002 --webpack",
     "clean": "node scripts/clean-next.mjs",
     "dev:clean": "node scripts/ensure-port-free.mjs && npm run clean && next dev --port 3002 --webpack",
-    "build": "next build",
+    "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint",
     "postinstall": "node scripts/copy-stockfish.mjs"
