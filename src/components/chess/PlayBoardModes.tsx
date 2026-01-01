@@ -586,6 +586,12 @@ export function PlayBoardModes({ initialFen }: Props) {
     return Math.max(base, persisted, live);
   }, [globalCurrentOpponent, globalIsImporting, globalProgress, opponentImport?.imported_count, opponentUsername, progressByOpponent]);
 
+  const analysisIsSyncingOpponent = useMemo(() => {
+    const u = opponentUsername.trim().toLowerCase();
+    const key = u ? `lichess:${u}` : "";
+    return Boolean(globalIsImporting && key && globalCurrentOpponent === key);
+  }, [globalCurrentOpponent, globalIsImporting, opponentUsername]);
+
   const archivingNote = useMemo(() => {
     if (!opponentImport) return null;
     if (!opponentImport.ready) return null;
@@ -933,6 +939,7 @@ export function PlayBoardModes({ initialFen }: Props) {
     username: string;
     mode: Strategy;
     prefetch?: boolean;
+    force_rpc?: boolean;
   }) {
     const res = await fetch("/api/sim/next-move", {
       method: "POST",
@@ -948,6 +955,7 @@ export function PlayBoardModes({ initialFen }: Props) {
         from: filterFromDate || null,
         to: filterToDate || null,
         prefetch: params.prefetch ?? false,
+        force_rpc: params.force_rpc ?? false,
       }),
     });
 
@@ -1554,6 +1562,7 @@ export function PlayBoardModes({ initialFen }: Props) {
               setAnalysisEval={setAnalysisEval}
               opponentUsername={opponentUsername}
               opponentImportedCount={opponentImportedCount}
+              analysisIsSyncingOpponent={analysisIsSyncingOpponent}
               filtersKey={filtersKey}
               requestOpponentMove={requestOpponentMove}
               analysisEngineBestUci={analysisEngineBestUci}
@@ -1636,6 +1645,7 @@ function AnalysisRightSidebar(props: {
   setAnalysisEval: (s: EngineScore | null) => void;
   opponentUsername: string;
   opponentImportedCount: number;
+  analysisIsSyncingOpponent: boolean;
   filtersKey: string;
   requestOpponentMove: (params: { fen: string; username: string; mode: Strategy; prefetch?: boolean }) => Promise<any>;
   analysisEngineBestUci: string | null;
@@ -1673,6 +1683,7 @@ function AnalysisRightSidebar(props: {
     setAnalysisEval,
     opponentUsername,
     opponentImportedCount,
+    analysisIsSyncingOpponent,
     filtersKey,
     requestOpponentMove,
     analysisEngineBestUci,
@@ -1824,6 +1835,7 @@ function AnalysisRightSidebar(props: {
               state={state}
               opponentUsername={opponentUsername}
               opponentImportedCount={opponentImportedCount}
+              isSyncing={analysisIsSyncingOpponent}
               filtersKey={filtersKey}
               requestOpponentMove={requestOpponentMove}
               showArrow={analysisShowArrow}

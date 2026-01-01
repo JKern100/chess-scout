@@ -177,7 +177,7 @@ export async function upsertOpponentMoveEvents(params: {
     const { error } = await supabase
       .from("opponent_move_events")
       .upsert(chunk, {
-        onConflict: "profile_id,platform,platform_game_id,ply",
+        onConflict: "profile_id,platform,username,platform_game_id,ply",
         ignoreDuplicates: true,
       });
 

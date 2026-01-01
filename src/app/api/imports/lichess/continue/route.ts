@@ -54,7 +54,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Import not found" }, { status: 404 });
   }
 
-  if (imp.status !== "running") {
+  const importedCountGate = typeof imp.imported_count === "number" ? imp.imported_count : 0;
+  const indexedCountGate = typeof (imp as any)?.archived_count === "number" ? (imp as any).archived_count : 0;
+  const canCatchUpIndexing = imp.target_type === "opponent" && indexedCountGate < importedCountGate;
+
+  if (imp.status !== "running" && !canCatchUpIndexing) {
     return NextResponse.json({ import: imp, message: "Not running" });
   }
 
@@ -75,8 +79,8 @@ export async function POST(request: Request) {
 
     const stage = typeof (imp as any)?.stage === "string" ? String((imp as any).stage) : "indexing";
     const ready = Boolean((imp as any)?.ready);
-    const importedCountBefore = typeof imp.imported_count === "number" ? imp.imported_count : 0;
-    const indexedCountBefore = typeof (imp as any)?.archived_count === "number" ? (imp as any).archived_count : 0;
+    const importedCountBefore = importedCountGate;
+    const indexedCountBefore = indexedCountGate;
 
     const batchMax = ready || stage === "archiving" ? STAGE2_BATCH_MAX : STAGE1_BATCH_MAX;
 
@@ -103,6 +107,95 @@ export async function POST(request: Request) {
     );
 
     if (batch.games.length === 0) {
+      // No more games to fetch. If this is an opponent import and we still haven't indexed
+      // the already-synced games into opponent_move_events, keep working through them.
+      if (imp.target_type === "opponent" && indexedCountBefore < importedCountBefore) {
+        let indexedGameCount = 0;
+        try {
+          const start = Math.max(0, indexedCountBefore);
+          const end = start + STAGE2_BATCH_MAX - 1;
+          const { data: existing, error: existingErr } = await supabase
+            .from("games")
+            .select("platform_game_id, played_at, pgn")
+            .eq("profile_id", user.id)
+            .eq("platform", "lichess")
+            .eq("username", imp.username)
+            .order("played_at", { ascending: false })
+            .range(start, end);
+
+          if (existingErr) throw existingErr;
+
+          const rows = Array.isArray(existing) ? existing : [];
+          const events = rows.flatMap((g: any) => {
+            const platformGameId = String(g?.platform_game_id ?? "");
+            return buildOpponentMoveEventsFromGame({
+              profileId: user.id,
+              platform: "lichess",
+              username: imp.username,
+              platformGameId,
+              playedAt: (g?.played_at as string | null) ?? null,
+              pgn: String(g?.pgn ?? ""),
+              maxPlies: undefined,
+            });
+          });
+
+          await upsertOpponentMoveEvents({ supabase, rows: events });
+          indexedGameCount = rows.length;
+        } catch {
+          indexedGameCount = 0;
+        }
+
+        const indexedCountAfter = indexedCountBefore + indexedGameCount;
+        const shouldMarkComplete = indexedCountAfter >= importedCountBefore || indexedGameCount === 0;
+
+        const { data: updated, error: updateErr } = await supabase
+          .from("imports")
+          .update({
+            status: shouldMarkComplete ? "complete" : "running",
+            stage: shouldMarkComplete ? "complete" : "archiving",
+            ready: true,
+            archived_count: indexedCountAfter,
+            last_success_at: new Date().toISOString(),
+            last_error: null,
+          })
+          .eq("id", imp.id)
+          .select(
+            "id, profile_id, target_type, platform, username, status, imported_count, last_game_at, cursor_until, newest_game_at, ready, stage, archived_count, last_success_at, expires_at, last_error, updated_at"
+          )
+          .single();
+
+        if (updateErr) {
+          return NextResponse.json({ error: updateErr.message }, { status: 500 });
+        }
+
+        if (updated?.target_type === "opponent" && updated?.status === "complete") {
+          try {
+            const ratings = await fetchLichessUserRatingsSnapshot({ username: updated.username });
+            await supabase.from("opponent_profiles").upsert(
+              {
+                profile_id: user.id,
+                platform: updated.platform,
+                username: updated.username,
+                ratings,
+                fetched_at: new Date().toISOString(),
+              },
+              { onConflict: "profile_id,platform,username" }
+            );
+          } catch {
+            // best-effort
+          }
+
+          await supabase
+            .from("opponents")
+            .update({ last_refreshed_at: new Date().toISOString() })
+            .eq("user_id", user.id)
+            .eq("platform", updated.platform)
+            .eq("username", updated.username);
+        }
+
+        return NextResponse.json({ import: updated, batchCount: 0, indexedGames: indexedGameCount });
+      }
+
       const { data: updated, error: updateErr } = await supabase
         .from("imports")
         .update({
@@ -184,12 +277,12 @@ export async function POST(request: Request) {
 
     let indexedGameCount = 0;
 
-    // If we didn't insert any new games (duplicates / already imported), stage-1 indexing can stall.
+    // If we didn't insert any new games (duplicates / already imported), indexing can stall.
     // Keep indexing from the existing games table using archived_count as an offset.
-    if (insertedCount === 0 && shouldIndexMovesStage1) {
+    if (insertedCount === 0 && (shouldIndexMovesStage1 || shouldIndexMovesStage2)) {
       try {
         const start = Math.max(0, indexedCountBefore);
-        const end = start + STAGE1_INDEX_MAX - 1;
+        const end = start + (shouldIndexMovesStage2 ? STAGE2_BATCH_MAX : STAGE1_INDEX_MAX) - 1;
         const { data: existing, error: existingErr } = await supabase
           .from("games")
           .select("platform_game_id, played_at, pgn")
@@ -211,7 +304,7 @@ export async function POST(request: Request) {
             platformGameId,
             playedAt: (g?.played_at as string | null) ?? null,
             pgn: String(g?.pgn ?? ""),
-            maxPlies: STAGE1_MAX_PLIES,
+            maxPlies: shouldIndexMovesStage2 ? undefined : STAGE1_MAX_PLIES,
           });
         });
 

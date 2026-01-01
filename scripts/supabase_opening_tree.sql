@@ -18,8 +18,33 @@ create table if not exists public.opponent_move_events (
   draw int not null,
   constraint opponent_move_events_platform_check check (platform in ('lichess', 'chesscom')),
   constraint opponent_move_events_speed_check check (speed is null or speed in ('bullet', 'blitz', 'rapid', 'classical', 'correspondence')),
-  primary key (profile_id, platform, platform_game_id, ply)
+  primary key (profile_id, platform, username, platform_game_id, ply)
 );
+
+do $$
+begin
+  -- Older schema used a PK that omitted username. Replace it so multiple opponents can
+  -- share the same platform_game_id without clobbering each other's events.
+  if exists (
+    select 1
+    from pg_constraint
+    where conname = 'opponent_move_events_pkey'
+      and conrelid = 'public.opponent_move_events'::regclass
+  ) then
+    begin
+      alter table public.opponent_move_events drop constraint opponent_move_events_pkey;
+    exception when undefined_object then
+      -- ignore
+    end;
+  end if;
+
+  alter table public.opponent_move_events
+    add constraint opponent_move_events_pkey
+    primary key (profile_id, platform, username, platform_game_id, ply);
+exception when duplicate_object then
+  -- already upgraded
+end
+$$;
 
 create index if not exists opponent_move_events_lookup_idx
   on public.opponent_move_events (profile_id, platform, username, fen, is_opponent_move);

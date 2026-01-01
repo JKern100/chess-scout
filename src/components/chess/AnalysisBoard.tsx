@@ -11,8 +11,9 @@ type Props = {
   state: ChessBoardCoreState;
   opponentUsername: string;
   opponentImportedCount: number;
+  isSyncing: boolean;
   filtersKey: string;
-  requestOpponentMove: (params: { fen: string; username: string; mode: Strategy; prefetch?: boolean }) => Promise<any>;
+  requestOpponentMove: (params: { fen: string; username: string; mode: Strategy; prefetch?: boolean; force_rpc?: boolean }) => Promise<any>;
   showArrow: boolean;
   showEval: boolean;
   onEvalChange: (score: EngineScore | null) => void;
@@ -106,6 +107,7 @@ export function AnalysisBoard(props: Props) {
     state,
     opponentUsername,
     opponentImportedCount,
+    isSyncing,
     filtersKey,
     requestOpponentMove,
     showArrow,
@@ -127,6 +129,11 @@ export function AnalysisBoard(props: Props) {
   const engineColumnReqIdRef = useRef(0);
   const [engineMoveEval, setEngineMoveEval] = useState<Record<string, string>>({});
   const prevImportedCountRef = useRef(0);
+  const pollInFlightRef = useRef(false);
+  const lastSnapKeyRef = useRef<string>("");
+  const lastAnimatedImportedCountRef = useRef<number>(0);
+  const [displayTotalInPos, setDisplayTotalInPos] = useState(0);
+  const [displayMoveCounts, setDisplayMoveCounts] = useState<Record<string, number>>({});
 
   useEffect(() => {
     if (!showArrow) return;
@@ -207,6 +214,7 @@ export function AnalysisBoard(props: Props) {
       username: params.username,
       mode: "proportional",
       prefetch: false,
+      force_rpc: isSyncing,
     });
 
     const moves = Array.isArray(json?.moves) ? (json.moves as any[]) : [];
@@ -271,6 +279,34 @@ export function AnalysisBoard(props: Props) {
       cancelled = true;
     };
   }, [opponentUsername, filtersKey, showArrow, enabled, state.fen, opponentImportedCount, setOpponentStatsBusy, setOpponentStats]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    const trimmed = opponentUsername.trim();
+    if (!trimmed) return;
+    if (!isSyncing) return;
+
+    const timer = window.setInterval(() => {
+      if (pollInFlightRef.current) return;
+      pollInFlightRef.current = true;
+      setOpponentStatsBusy(true);
+      void fetchOpponentStats({ fen: state.fen, username: trimmed })
+        .then((stats) => {
+          setOpponentStats(stats);
+        })
+        .catch(() => {
+          // keep last good stats
+        })
+        .finally(() => {
+          pollInFlightRef.current = false;
+          setOpponentStatsBusy(false);
+        });
+    }, 1200);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [enabled, isSyncing, opponentUsername, state.fen, filtersKey, setOpponentStats, setOpponentStatsBusy]);
 
   useEffect(() => {
     const trimmed = opponentUsername.trim();
@@ -358,6 +394,85 @@ export function AnalysisBoard(props: Props) {
       .map((m) => String(m.uci))
       .join("|");
   }, [nextMoveList.moves]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    const targetTotal = Math.max(0, Math.trunc(nextMoveList.total ?? 0));
+    const targetMoves = nextMoveList.moves.slice(0, 12);
+
+    const snapKey = `${filtersKey}|${state.fen}|${visibleMovesKey}`;
+    const snapChanged = lastSnapKeyRef.current !== snapKey;
+    if (snapChanged) {
+      lastSnapKeyRef.current = snapKey;
+    }
+
+    const shouldAnimate = Boolean(isSyncing && !snapChanged && opponentImportedCount > lastAnimatedImportedCountRef.current);
+    if (shouldAnimate) {
+      lastAnimatedImportedCountRef.current = opponentImportedCount;
+    }
+
+    if (!shouldAnimate) {
+      setDisplayTotalInPos(targetTotal);
+      setDisplayMoveCounts(() => {
+        const next: Record<string, number> = {};
+        for (const m of targetMoves) {
+          next[String(m.uci)] = Math.max(0, Math.trunc(m.played_count ?? 0));
+        }
+        return next;
+      });
+      return;
+    }
+
+    // Initialize missing keys so the animation has stable baselines.
+    setDisplayMoveCounts((prev) => {
+      let changed = false;
+      const next: Record<string, number> = { ...prev };
+      for (const m of targetMoves) {
+        const key = String(m.uci);
+        if (next[key] == null) {
+          next[key] = 0;
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+
+    setDisplayTotalInPos((prev) => {
+      if (prev === 0) return targetTotal;
+      if (prev > targetTotal) return targetTotal;
+      return prev;
+    });
+
+    const timer = window.setInterval(() => {
+      setDisplayTotalInPos((prev) => {
+        if (prev >= targetTotal) return targetTotal;
+        return prev + 1;
+      });
+
+      setDisplayMoveCounts((prev) => {
+        let changed = false;
+        const next: Record<string, number> = { ...prev };
+        for (const m of targetMoves) {
+          const k = String(m.uci);
+          const target = Math.max(0, Math.trunc(m.played_count ?? 0));
+          const cur = Math.max(0, Math.trunc(next[k] ?? 0));
+          if (cur === target) continue;
+          if (cur > target) {
+            next[k] = target;
+            changed = true;
+            continue;
+          }
+          next[k] = cur + 1;
+          changed = true;
+        }
+        return changed ? next : prev;
+      });
+    }, 50);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [enabled, isSyncing, opponentImportedCount, filtersKey, state.fen, nextMoveList.total, visibleMovesKey]);
 
   function formatEngineScore(score: EngineScore | null) {
     if (!score) return "—";
@@ -484,7 +599,8 @@ export function AnalysisBoard(props: Props) {
         <div className="grid min-w-0 gap-3">
           <div className="grid gap-0.5">
             <div className="text-[10px] font-medium text-zinc-900">Next Moves</div>
-            <div className="text-[10px] text-zinc-500">Games imported: {opponentImportedCount}</div>
+            <div className="text-[10px] text-zinc-500">Games in this position: {displayTotalInPos}</div>
+            <div className="text-[10px] text-zinc-500">Games synced: {opponentImportedCount}</div>
           </div>
 
           <div className="grid gap-2">
@@ -503,6 +619,7 @@ export function AnalysisBoard(props: Props) {
                     <div className="text-right">%</div>
                   </div>
                   {nextMoveList.moves.slice(0, 12).map((m: MoveRow) => {
+                    const displayPlayed = typeof displayMoveCounts[m.uci] === "number" ? displayMoveCounts[m.uci]! : m.played_count;
                     const total = Math.max(1, m.played_count);
                     const winPct = (m.win / total) * 100;
                     const drawPct = (m.draw / total) * 100;
@@ -517,7 +634,7 @@ export function AnalysisBoard(props: Props) {
                         key={m.san ?? m.uci}
                         uci={m.uci}
                         san={m.san}
-                        playedCount={m.played_count}
+                        playedCount={displayPlayed}
                         winPct={winPct}
                         drawPct={drawPct}
                         lossPct={lossPct}

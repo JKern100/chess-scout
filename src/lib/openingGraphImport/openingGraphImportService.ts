@@ -128,7 +128,7 @@ export function createOpeningGraphImporter(params: {
     for (let i = 0; i < rows.length; i += chunkSize) {
       const chunk = rows.slice(i, i + chunkSize);
       const { error } = await supabase.from("opponent_move_events").upsert(chunk, {
-        onConflict: "profile_id,platform,platform_game_id,ply",
+        onConflict: "profile_id,platform,username,platform_game_id,ply",
       });
       if (error) {
         const statusCode = (error as any)?.status;

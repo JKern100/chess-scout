@@ -73,11 +73,16 @@ function formatSavedLineDate(iso: string) {
 export function DashboardPage({ initialOpponents }: Props) {
   const MIN_GAMES_FOR_ANALYSIS = 10;
   const router = useRouter();
+  const [isMounted, setIsMounted] = useState(false);
   const [opponents, setOpponents] = useState<OpponentRow[]>(initialOpponents);
   const [status, setStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [openMenuKey, setOpenMenuKey] = useState<string | null>(null);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [continueBusy, setContinueBusy] = useState(false);
   const [importModalOpen, setImportModalOpen] = useState(false);
@@ -662,9 +667,10 @@ export function DashboardPage({ initialOpponents }: Props) {
               const recordsCountBase = typeof latest.games_count === "number" ? latest.games_count : 0;
               const currentKey = latest.platform === "lichess" ? `lichess:${latest.username.toLowerCase()}` : null;
               const isGlobalCurrent = Boolean(isImporting && currentKey && currentOpponent === currentKey);
-              const globalCountLive = isGlobalCurrent ? Math.max(0, Number(progress ?? 0)) : 0;
-              const persistedFastCount = currentKey ? Math.max(0, Number(progressByOpponent[currentKey] ?? 0)) : 0;
-              const importedGamesCount = Math.max(recordsCountBase, downloadedCount, persistedFastCount, globalCountLive);
+              const globalCountLive = isMounted && isGlobalCurrent ? Math.max(0, Number(progress ?? 0)) : 0;
+              const persistedFastCount = isMounted && currentKey ? Math.max(0, Number(progressByOpponent[currentKey] ?? 0)) : 0;
+              const syncedGamesCount = Math.max(recordsCountBase, downloadedCount);
+              const estimatedGamesCount = Math.max(persistedFastCount, globalCountLive);
               const canUseScout = downloadedCount >= MIN_GAMES_FOR_ANALYSIS || isActive;
 
               const isFastRunning = isGlobalCurrent;
@@ -747,7 +753,7 @@ export function DashboardPage({ initialOpponents }: Props) {
                       </div>
 
                       <div className="mt-3 text-xs text-neutral-500">
-                        {latest.platform === "lichess" ? "Lichess" : "Chess.com"} · {importedGamesCount} games
+                        {latest.platform === "lichess" ? "Lichess" : "Chess.com"} · {syncedGamesCount} games synced
                         {latest.last_refreshed_at ? (
                           <span suppressHydrationWarning> · Updated {formatRelative(latest.last_refreshed_at)}</span>
                         ) : null}

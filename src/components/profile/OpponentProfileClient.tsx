@@ -676,7 +676,7 @@ export function OpponentProfileClient({ platform, username }: Props) {
           </div>
 
           <div className="md:col-span-2">
-            <KpiCard label="Total Games" value={kpiTotalGames} />
+            <KpiCard label="Games analyzed" value={kpiTotalGames} />
           </div>
           <div className="md:col-span-2">
             <KpiCard label="Top Time Control" value={kpiTopTimeControl} />

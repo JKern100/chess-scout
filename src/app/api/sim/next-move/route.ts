@@ -32,6 +32,7 @@ export async function POST(request: Request) {
   const mode = (String(body?.mode ?? "proportional") as Mode) ?? "proportional";
   const maxDepth = Math.min(Math.max(Number(body?.max_depth ?? 16), 1), 40);
   const prefetch = Boolean(body?.prefetch);
+  const forceRpc = Boolean(body?.force_rpc);
 
   const speedsProvided = Array.isArray(body?.speeds) || typeof body?.speeds === "string";
   const speedsRaw = Array.isArray(body?.speeds)
@@ -69,7 +70,7 @@ export async function POST(request: Request) {
 
   const cache = { status: "db", max_games: 0, age_ms: 0, build_ms: 0 };
 
-  const canUseOpeningGraphPresets = !from && !to && platform === "lichess";
+  const canUseOpeningGraphPresets = !forceRpc && !from && !to && platform === "lichess";
 
   const openingGraphKeyExact = (() => {
     if (!canUseOpeningGraphPresets) return null;
