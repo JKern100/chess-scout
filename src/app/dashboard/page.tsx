@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { DashboardPage } from "@/components/dashboard/DashboardPage";
+import { fetchLichessUserTotalGames } from "@/server/services/lichess";
 
 export const dynamic = "force-dynamic";
 
@@ -57,6 +58,15 @@ export default async function Dashboard() {
         const usernameKey = username.toLowerCase();
         const platform = (o.platform === "chesscom" ? "chesscom" : "lichess") as "lichess" | "chesscom";
 
+        let totalGames: number | null = null;
+        if (platform === "lichess") {
+          try {
+            totalGames = await fetchLichessUserTotalGames({ username });
+          } catch {
+            totalGames = null;
+          }
+        }
+
         const { data: imp } = await supabase
           .from("imports")
           .select("imported_count")
@@ -79,32 +89,12 @@ export default async function Dashboard() {
           .eq("username", usernameKey);
         gamesCount = gamesCountError ? 0 : typeof gamesTableCount === "number" ? gamesTableCount : 0;
 
-        let eventGamesCount = 0;
-        const { count: eventCount0, error: eventCount0Error } = await supabase
-          .from("opponent_move_events")
-          .select("platform_game_id", { count: "exact", head: true })
-          .eq("profile_id", user.id)
-          .eq("platform", platform)
-          .eq("username", usernameKey)
-          .eq("ply", 0);
-        if (!eventCount0Error && typeof eventCount0 === "number") {
-          eventGamesCount = eventCount0;
-        } else {
-          const { count: eventCount1, error: eventCount1Error } = await supabase
-            .from("opponent_move_events")
-            .select("platform_game_id", { count: "exact", head: true })
-            .eq("profile_id", user.id)
-            .eq("platform", platform)
-            .eq("username", usernameKey)
-            .eq("ply", 1);
-          eventGamesCount = !eventCount1Error && typeof eventCount1 === "number" ? eventCount1 : 0;
-        }
-
         return {
           ...o,
           platform,
           username,
-          games_count: Math.max(gamesCount, importedCount, eventGamesCount),
+          games_count: Math.max(gamesCount, importedCount),
+          total_games: typeof totalGames === "number" ? totalGames : undefined,
         };
       })
     );

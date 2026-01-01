@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { fetchLichessUserTotalGames } from "@/server/services/lichess";
 
 type ChessPlatform = "lichess" | "chesscom";
 
@@ -10,6 +11,7 @@ type OpponentRow = {
   last_refreshed_at: string | null;
   archived_at?: string | null;
   games_count?: number;
+  total_games?: number;
   style_markers?: Array<{
     marker_key: string;
     label: string;
@@ -63,12 +65,37 @@ export async function GET() {
 
   const opponents = await Promise.all(
     baseOpponents.map(async (o) => {
-      const { count } = await supabase
+      const { count, error: gamesCountError } = await supabase
         .from("games")
         .select("id", { count: "exact", head: true })
         .eq("profile_id", user.id)
         .eq("platform", o.platform)
         .eq("username", o.username);
+
+      const { data: impCountRow } = await supabase
+        .from("imports")
+        .select("imported_count")
+        .eq("profile_id", user.id)
+        .eq("target_type", "opponent")
+        .eq("platform", o.platform)
+        .eq("username", o.username)
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      const importedCount = Number((impCountRow as any)?.imported_count ?? 0);
+
+      const gamesTableCount = gamesCountError ? 0 : typeof count === "number" ? count : 0;
+      const loadedGamesCount = Math.max(0, gamesTableCount, importedCount);
+
+      let totalGames: number | null = null;
+      if (o.platform === "lichess") {
+        try {
+          totalGames = await fetchLichessUserTotalGames({ username: o.username });
+        } catch {
+          totalGames = null;
+        }
+      }
 
       let lastRefreshedAt = o.last_refreshed_at;
       if (!lastRefreshedAt) {
@@ -97,7 +124,8 @@ export async function GET() {
 
       return {
         ...o,
-        games_count: typeof count === "number" ? count : 0,
+        games_count: loadedGamesCount,
+        total_games: typeof totalGames === "number" ? totalGames : undefined,
         last_refreshed_at: lastRefreshedAt,
       };
     })

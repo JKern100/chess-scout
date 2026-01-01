@@ -10,7 +10,9 @@ type ImportQueueContextValue = {
   progressByOpponent: Record<string, number>;
   queue: string[];
   addToQueue: (opponentId: string) => void;
+  removeFromQueue: (opponentId: string) => void;
   startImport: () => void;
+  stopSync: () => void;
 };
 
 const ImportQueueContext = createContext<ImportQueueContextValue | null>(null);
@@ -200,6 +202,16 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
     });
   }, []);
 
+  const removeFromQueue = useCallback((opponentId: string) => {
+    const norm = normalizeOpponentId(opponentId);
+    if (!norm) return;
+    setQueue((prev) => prev.filter((k) => k !== norm));
+  }, []);
+
+  const stopSync = useCallback(() => {
+    finishCurrent();
+  }, [finishCurrent]);
+
   const startImport = useCallback(() => {
     if (importingRef.current) return;
     if (queueRef.current.length === 0) return;
@@ -214,9 +226,11 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
       progressByOpponent,
       queue,
       addToQueue,
+      removeFromQueue,
       startImport,
+      stopSync,
     }),
-    [addToQueue, currentOpponent, isImporting, progress, progressByOpponent, queue, startImport]
+    [addToQueue, currentOpponent, isImporting, progress, progressByOpponent, queue, removeFromQueue, startImport, stopSync]
   );
 
   const pill = useMemo(() => {
@@ -228,12 +242,19 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
         <div className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-900 shadow-sm">
           <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
           <span className="truncate">Syncing games…</span>
-          <span className="tabular-nums text-zinc-600">({progress} imported)</span>
+          <span className="tabular-nums text-zinc-600">({progress} games processed)</span>
           <span className="max-w-[140px] truncate text-zinc-500">{opponentLabel}</span>
+          <button
+            type="button"
+            className="ml-1 inline-flex h-6 items-center justify-center rounded-full border border-zinc-200 bg-white px-2 text-[10px] font-semibold text-zinc-700 hover:bg-zinc-50"
+            onClick={() => stopSync()}
+          >
+            Stop
+          </button>
         </div>
       </div>
     );
-  }, [currentOpponent, isImporting, progress]);
+  }, [currentOpponent, isImporting, progress, stopSync]);
 
   return (
     <ImportQueueContext.Provider value={value}>

@@ -89,7 +89,7 @@ export function DashboardPage({ initialOpponents }: Props) {
   const [displayIndexedCount, setDisplayIndexedCount] = useState(0);
   const [indeterminateArmed, setIndeterminateArmed] = useState(false);
 
-  const { addToQueue, startImport, isImporting, progress, currentOpponent, progressByOpponent, queue } = useImportQueue();
+  const { addToQueue, removeFromQueue, startImport, stopSync, isImporting, progress, currentOpponent, progressByOpponent, queue } = useImportQueue();
 
   const { imports } = useImportsRealtime();
 
@@ -664,12 +664,14 @@ export function DashboardPage({ initialOpponents }: Props) {
               const importRow = importsByKey.get(key) ?? null;
               const tieredStatus = formatTieredStatus(importRow as any, isActive);
               const downloadedCount = typeof (importRow as any)?.imported_count === "number" ? (importRow as any).imported_count : 0;
-              const recordsCountBase = typeof latest.games_count === "number" ? latest.games_count : 0;
+              const recordsLoadedCount = typeof (latest as any)?.games_count === "number" ? (latest as any).games_count : 0;
               const currentKey = latest.platform === "lichess" ? `lichess:${latest.username.toLowerCase()}` : null;
               const isGlobalCurrent = Boolean(isImporting && currentKey && currentOpponent === currentKey);
               const globalCountLive = isMounted && isGlobalCurrent ? Math.max(0, Number(progress ?? 0)) : 0;
               const persistedFastCount = isMounted && currentKey ? Math.max(0, Number(progressByOpponent[currentKey] ?? 0)) : 0;
-              const syncedGamesCount = Math.max(recordsCountBase, downloadedCount);
+              const importedDbGamesCount = Math.max(0, recordsLoadedCount, downloadedCount);
+              const apiTotal = typeof (latest as any)?.total_games === "number" ? Math.max(0, Number((latest as any).total_games)) : 0;
+              const approxTotalGamesCount = Math.max(apiTotal, importedDbGamesCount);
               const estimatedGamesCount = Math.max(persistedFastCount, globalCountLive);
               const canUseScout = downloadedCount >= MIN_GAMES_FOR_ANALYSIS || isActive;
 
@@ -753,7 +755,9 @@ export function DashboardPage({ initialOpponents }: Props) {
                       </div>
 
                       <div className="mt-3 text-xs text-neutral-500">
-                        {latest.platform === "lichess" ? "Lichess" : "Chess.com"} · {syncedGamesCount} games synced
+                        {latest.platform === "lichess" ? "Lichess" : "Chess.com"}
+                        {apiTotal > 0 ? ` · ~${approxTotalGamesCount} total games` : ""} · {importedDbGamesCount} games indexed
+                        {persistedFastCount > 0 || globalCountLive > 0 ? ` · ${Math.max(persistedFastCount, globalCountLive)} games processed (fast sync)` : ""}
                         {latest.last_refreshed_at ? (
                           <span suppressHydrationWarning> · Updated {formatRelative(latest.last_refreshed_at)}</span>
                         ) : null}
@@ -761,7 +765,7 @@ export function DashboardPage({ initialOpponents }: Props) {
 
                       {isActive ? (
                         <div className="mt-2 text-xs font-medium text-zinc-700">
-                          Importing · imported: {activeImport?.importedCount ?? 0}
+                          Importing · games indexed: {activeImport?.importedCount ?? 0}
                         </div>
                       ) : null}
 
@@ -770,7 +774,7 @@ export function DashboardPage({ initialOpponents }: Props) {
                       ) : null}
 
                       {isFastRunning ? (
-                        <div className="mt-2 text-xs text-zinc-700">Syncing… imported: {Math.max(0, Number(progress ?? 0))}</div>
+                        <div className="mt-2 text-xs text-zinc-700">Syncing… games processed (fast sync): {Math.max(0, Number(progress ?? 0))}</div>
                       ) : null}
                     </div>
 
@@ -807,6 +811,39 @@ export function DashboardPage({ initialOpponents }: Props) {
                           >
                             Sync Games
                           </button>
+
+                          {isFastRunning ? (
+                            <>
+                              <div className="h-px bg-neutral-100" />
+                              <button
+                                type="button"
+                                className="flex w-full items-center px-3 py-2 text-left text-sm text-rose-700 hover:bg-rose-50 disabled:opacity-60"
+                                disabled={loading}
+                                onClick={() => {
+                                  stopSync();
+                                  setOpenMenuKey(null);
+                                }}
+                              >
+                                Stop Sync
+                              </button>
+                            </>
+                          ) : isFastQueued ? (
+                            <>
+                              <div className="h-px bg-neutral-100" />
+                              <button
+                                type="button"
+                                className="flex w-full items-center px-3 py-2 text-left text-sm text-zinc-800 hover:bg-zinc-50 disabled:opacity-60"
+                                disabled={loading}
+                                onClick={() => {
+                                  removeFromQueue(`lichess:${latest.username.toLowerCase()}`);
+                                  setOpenMenuKey(null);
+                                }}
+                              >
+                                Remove from Queue
+                              </button>
+                            </>
+                          ) : null}
+
                           <div className="h-px bg-neutral-100" />
                           <button
                             type="button"

@@ -11,10 +11,15 @@ type LichessUserPerfJson = {
   prov?: boolean;
 };
 
+type LichessUserCountJson = {
+  all?: number;
+};
+
 type LichessUserProfileJson = {
   id?: string;
   username?: string;
   perfs?: Record<string, LichessUserPerfJson | undefined>;
+  count?: LichessUserCountJson;
 };
 
 export type LichessFetchResult = {
@@ -137,4 +142,26 @@ export async function fetchLichessUserRatingsSnapshot(params: {
   }
 
   return out;
+}
+
+export async function fetchLichessUserTotalGames(params: { username: string }): Promise<number | null> {
+  const { username } = params;
+
+  const url = new URL(`https://lichess.org/api/user/${encodeURIComponent(username)}`);
+
+  const res = await fetch(url.toString(), {
+    headers: {
+      accept: "application/json",
+    },
+    cache: "no-store",
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Lichess API error (${res.status}): ${text || res.statusText}`);
+  }
+
+  const json = (await res.json().catch(() => null)) as LichessUserProfileJson | null;
+  const v = (json as any)?.count?.all;
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
 }

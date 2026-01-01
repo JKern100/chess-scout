@@ -83,7 +83,19 @@ export function ImportSupervisor() {
           const now = Date.now();
           if (now - lastLogAt.current > 5000) {
             lastLogAt.current = now;
-            console.warn("[ImportSupervisor] status fetch failed", res.status);
+            let detail = "";
+            try {
+              const text = await res.text();
+              try {
+                const json = JSON.parse(text) as any;
+                detail = String(json?.error ?? json?.message ?? text);
+              } catch {
+                detail = text;
+              }
+            } catch {
+              detail = "";
+            }
+            console.warn("[ImportSupervisor] status fetch failed", res.status, detail);
           }
           return [];
         }

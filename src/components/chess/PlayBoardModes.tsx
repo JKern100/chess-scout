@@ -804,6 +804,7 @@ export function PlayBoardModes({ initialFen }: Props) {
   const lastStyleSessionKeyRef = useRef<string | null>(null);
   const styleSessionInFlightRef = useRef(false);
   const styleSessionDebounceRef = useRef<number | null>(null);
+  const lastStyleSessionErrorAtRef = useRef(0);
 
   useEffect(() => {
     if (!generateStyleMarkers) return;
@@ -841,6 +842,23 @@ export function PlayBoardModes({ initialFen }: Props) {
           });
 
           if (!res.ok) {
+            const now = Date.now();
+            if (now - lastStyleSessionErrorAtRef.current > 5000) {
+              lastStyleSessionErrorAtRef.current = now;
+              let detail = "";
+              try {
+                const text = await res.text();
+                try {
+                  const json = JSON.parse(text) as any;
+                  detail = String(json?.error ?? json?.message ?? text);
+                } catch {
+                  detail = text;
+                }
+              } catch {
+                detail = "";
+              }
+              console.warn("[PlayBoardModes] /api/sim/session/start failed", res.status, detail);
+            }
             // Do not advance the dedupe key on failure; allow retry.
             return;
           }

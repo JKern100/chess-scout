@@ -130,6 +130,7 @@ export function AnalysisBoard(props: Props) {
   const [engineMoveEval, setEngineMoveEval] = useState<Record<string, string>>({});
   const prevImportedCountRef = useRef(0);
   const pollInFlightRef = useRef(false);
+  const lastOpponentPollErrorAtRef = useRef(0);
   const lastSnapKeyRef = useRef<string>("");
   const lastAnimatedImportedCountRef = useRef<number>(0);
   const [displayTotalInPos, setDisplayTotalInPos] = useState(0);
@@ -266,8 +267,14 @@ export function AnalysisBoard(props: Props) {
         if (cancelled) return;
         setOpponentStats(stats);
       })
-      .catch(() => {
+      .catch((e) => {
         if (cancelled) return;
+        const now = Date.now();
+        if (now - lastOpponentPollErrorAtRef.current > 5000) {
+          lastOpponentPollErrorAtRef.current = now;
+          const msg = e instanceof Error ? e.message : "Opponent stats failed";
+          console.warn("[AnalysisBoard] opponent stats fetch failed", msg);
+        }
         setOpponentStats(null);
       })
       .finally(() => {
@@ -294,8 +301,13 @@ export function AnalysisBoard(props: Props) {
         .then((stats) => {
           setOpponentStats(stats);
         })
-        .catch(() => {
-          // keep last good stats
+        .catch((e) => {
+          const now = Date.now();
+          if (now - lastOpponentPollErrorAtRef.current > 5000) {
+            lastOpponentPollErrorAtRef.current = now;
+            const msg = e instanceof Error ? e.message : "Opponent stats failed";
+            console.warn("[AnalysisBoard] opponent stats poll failed", msg);
+          }
         })
         .finally(() => {
           pollInFlightRef.current = false;
