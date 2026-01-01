@@ -19,11 +19,14 @@ export function AnimatedNumber({ value, duration = 500, className = "", formatFn
     const endValue = value;
     const diff = endValue - startValue;
 
-    if (diff === 0) {
+    // If value decreased or stayed same, snap immediately (no animation down)
+    if (diff <= 0) {
       setDisplayValue(endValue);
+      prevValueRef.current = endValue;
       return;
     }
 
+    // Only animate when counting UP
     const startTime = performance.now();
 
     function animate(currentTime: number) {

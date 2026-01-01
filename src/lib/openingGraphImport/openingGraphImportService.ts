@@ -26,15 +26,16 @@ type WorkerFlushEvent = {
 };
 
 type WorkerMessage =
-  | { type: "progress"; gamesProcessed: number; bytesRead: number; status: "running" | "done" | "stopped"; lastError?: string | null }
+  | { type: "progress"; gamesProcessed: number; bytesRead: number; status: "running" | "done" | "stopped"; lastError?: string | null; newestGameTimestamp?: number | null }
   | { type: "flush"; nodes: WorkerFlushNode[]; events: WorkerFlushEvent[]; gamesProcessed: number }
-  | { type: "done"; gamesProcessed: number };
+  | { type: "done"; gamesProcessed: number; newestGameTimestamp?: number | null };
 
 export type OpeningGraphImportStatus = {
   phase: "idle" | "running" | "done" | "error";
   gamesProcessed: number;
   bytesRead: number;
   lastError: string | null;
+  newestGameTimestamp?: number | null;
 };
 
 export type OpeningGraphImportParams = {
@@ -177,7 +178,7 @@ export function createOpeningGraphImporter(params: {
       if (!msg || typeof msg !== "object") return;
 
       if (msg.type === "progress") {
-        setStatus({ gamesProcessed: msg.gamesProcessed, bytesRead: msg.bytesRead, lastError: msg.lastError ?? null });
+        setStatus({ gamesProcessed: msg.gamesProcessed, bytesRead: msg.bytesRead, lastError: msg.lastError ?? null, newestGameTimestamp: msg.newestGameTimestamp ?? null });
         if (msg.status === "stopped" && msg.lastError) {
           setStatus({ phase: "error", lastError: msg.lastError });
         }
@@ -206,7 +207,7 @@ export function createOpeningGraphImporter(params: {
       if (msg.type === "done") {
         writeQueue = writeQueue
           .then(() => {
-            setStatus({ phase: "done", gamesProcessed: msg.gamesProcessed });
+            setStatus({ phase: "done", gamesProcessed: msg.gamesProcessed, newestGameTimestamp: msg.newestGameTimestamp ?? null });
           })
           .catch(() => {
             // ignore

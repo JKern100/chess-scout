@@ -63,6 +63,7 @@ type WorkerProgress = {
   bytesRead: number;
   status: "running" | "done" | "stopped";
   lastError?: string | null;
+  newestGameTimestamp?: number | null;
 };
 
 type WorkerFlush = {
@@ -75,11 +76,13 @@ type WorkerFlush = {
 type WorkerDone = {
   type: "done";
   gamesProcessed: number;
+  newestGameTimestamp?: number | null;
 };
 
 let stopRequested = false;
 let gamesProcessed = 0;
 let bytesRead = 0;
+let newestGameTimestamp: number | null = null;
 
 const fenMap = new Map<string, FenAgg>();
 const dirtyFens = new Set<string>();
@@ -254,6 +257,7 @@ async function runImport(params: ImportStartMessage) {
   stopRequested = false;
   gamesProcessed = 0;
   bytesRead = 0;
+  newestGameTimestamp = null;
   fenMap.clear();
   dirtyFens.clear();
   graphs.clear();
@@ -350,6 +354,11 @@ async function runImport(params: ImportStartMessage) {
 
       const ts = typeof parsed?.lastMoveAt === "number" ? parsed.lastMoveAt : typeof parsed?.createdAt === "number" ? parsed.createdAt : null;
       const playedAtIso = ts ? new Date(ts).toISOString() : null;
+
+      // Track the newest game timestamp for incremental sync
+      if (ts !== null && (newestGameTimestamp === null || ts > newestGameTimestamp)) {
+        newestGameTimestamp = ts;
+      }
 
       const chess = new Chess();
       try {
@@ -457,7 +466,7 @@ async function runImport(params: ImportStartMessage) {
       }
 
       if (gamesProcessed % 25 === 0) {
-        (self as any).postMessage({ type: "progress", gamesProcessed, bytesRead, status: "running" } satisfies WorkerProgress);
+        (self as any).postMessage({ type: "progress", gamesProcessed, bytesRead, status: "running", newestGameTimestamp } satisfies WorkerProgress);
       }
     }
   }
@@ -480,7 +489,7 @@ async function runImport(params: ImportStartMessage) {
   while (hasDirty() || eventBuffer.length > 0) {
     emitFlush({ maxNodes: 500, maxEvents: 5000 });
   }
-  (self as any).postMessage({ type: "done", gamesProcessed } satisfies WorkerDone);
+  (self as any).postMessage({ type: "done", gamesProcessed, newestGameTimestamp } satisfies WorkerDone);
 }
 
 (self as any).onmessage = (event: MessageEvent) => {

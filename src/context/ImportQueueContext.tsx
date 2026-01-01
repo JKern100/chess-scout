@@ -17,7 +17,8 @@ type ImportQueueContextValue = {
 
 const ImportQueueContext = createContext<ImportQueueContextValue | null>(null);
 
-const PROGRESS_STORAGE_KEY = "chessscout.fastImport.progressByOpponent.v1";
+const PROGRESS_STORAGE_KEY = "chessscout.fastImport.progressByOpponent.v2";
+const LAST_SYNC_STORAGE_KEY = "chessscout.fastImport.lastSyncTimestamp.v1";
 
 function normalizeOpponentId(opponentId: string) {
   const raw = String(opponentId ?? "").trim();
@@ -65,6 +66,28 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
     }
   });
 
+  // Track the newest game timestamp synced per opponent (for incremental sync)
+  const [lastSyncTimestamp, setLastSyncTimestamp] = useState<Record<string, number>>(() => {
+    try {
+      if (typeof window === "undefined") return {};
+      const raw = window.localStorage.getItem(LAST_SYNC_STORAGE_KEY);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw) as unknown;
+      if (!parsed || typeof parsed !== "object") return {};
+      const out: Record<string, number> = {};
+      for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+        const n = typeof v === "number" ? v : Number(v);
+        if (Number.isFinite(n) && n > 0) out[String(k)] = n;
+      }
+      return out;
+    } catch {
+      return {};
+    }
+  });
+
+  // Track the base count (games synced before this session) for cumulative display
+  const baseCountRef = useRef<number>(0);
+
   const importerRef = useRef<ReturnType<typeof createOpeningGraphImporter> | null>(null);
   const finishingRef = useRef(false);
   const queueRef = useRef<string[]>([]);
@@ -95,6 +118,7 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
       persistTimerRef.current = null;
       try {
         window.localStorage.setItem(PROGRESS_STORAGE_KEY, JSON.stringify(progressByOpponent));
+        window.localStorage.setItem(LAST_SYNC_STORAGE_KEY, JSON.stringify(lastSyncTimestamp));
       } catch {
         // ignore
       }
@@ -135,15 +159,26 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
 
     importerRef.current = createOpeningGraphImporter({
       onStatus: (s) => {
+        // gp is games processed in THIS session
         const gp = Math.max(0, Number(s.gamesProcessed ?? 0));
-        setProgress(gp);
+        // Total = base (from previous syncs) + current session progress
+        const total = baseCountRef.current + gp;
+        setProgress(total);
         const key = currentOpponentRef.current;
         if (key) {
           setProgressByOpponent((prev) => {
             const before = Math.max(0, Number(prev[key] ?? 0));
-            if (gp <= before) return prev;
-            return { ...prev, [key]: gp };
+            if (total <= before) return prev;
+            return { ...prev, [key]: total };
           });
+          // Track the newest game timestamp for incremental sync
+          if (typeof s.newestGameTimestamp === "number" && s.newestGameTimestamp > 0) {
+            setLastSyncTimestamp((prev) => {
+              const before = prev[key] ?? 0;
+              if (s.newestGameTimestamp! <= before) return prev;
+              return { ...prev, [key]: s.newestGameTimestamp! };
+            });
+          }
         }
         if (s.phase === "done" || s.phase === "error") {
           finishCurrent();
@@ -174,7 +209,23 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
     setIsImporting(true);
     const nextKey = normalizeOpponentId(next);
     setCurrentOpponent(nextKey);
-    setProgress(0);
+    
+    // Set base count to previous synced count (for cumulative display)
+    // Also get the last sync timestamp for incremental sync
+    let sinceMs: number | undefined;
+    setProgressByOpponent((prev) => {
+      baseCountRef.current = Math.max(0, Number(prev[nextKey] ?? 0));
+      return prev; // Don't modify, just read
+    });
+    setLastSyncTimestamp((prev) => {
+      const ts = prev[nextKey];
+      if (typeof ts === "number" && ts > 0) {
+        // Add 1ms to avoid re-fetching the same game
+        sinceMs = ts + 1;
+      }
+      return prev; // Don't modify, just read
+    });
+    setProgress(baseCountRef.current);
 
     const importer = ensureImporter();
     try {
@@ -183,6 +234,7 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
         username: parsed.username,
         color: "both",
         rated: "any",
+        sinceMs,
       });
     } catch {
       finishCurrent();
