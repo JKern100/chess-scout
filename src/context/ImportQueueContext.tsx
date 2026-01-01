@@ -112,6 +112,8 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
     if (finishingRef.current) return;
     finishingRef.current = true;
 
+    console.log("[ImportQueue] finishCurrent called, currentOpponent:", currentOpponentRef.current);
+
     importingRef.current = false;
 
     const imp = importerRef.current;

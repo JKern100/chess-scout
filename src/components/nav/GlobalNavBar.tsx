@@ -142,8 +142,8 @@ export function GlobalNavBar() {
             </div>
           </div>
 
-          {/* Center: Opponent Quick-Switcher (Desktop) */}
-          <div className="hidden md:block" ref={dropdownRef}>
+          {/* Center: Opponent Quick-Switcher (Desktop) - Hidden on Dashboard */}
+          <div className={`${pathname === "/dashboard" ? "hidden" : "hidden md:block"}`} ref={dropdownRef}>
             <button
               type="button"
               onClick={() => setDropdownOpen(!dropdownOpen)}

@@ -3,11 +3,13 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Chessboard } from "react-chessboard";
-import { MoreVertical } from "lucide-react";
+import { MoreVertical, Check, RefreshCw } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useImportsRealtime } from "@/lib/hooks/useImportsRealtime";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { useImportQueue } from "@/context/ImportQueueContext";
+import { AddOpponentBar } from "./AddOpponentBar";
+import { AnimatedNumber } from "./AnimatedNumber";
 
 type ChessPlatform = "lichess" | "chesscom";
 
@@ -157,23 +159,24 @@ export function DashboardPage({ initialOpponents }: Props) {
     setOpponents(Array.isArray(json?.opponents) ? (json.opponents as OpponentRow[]) : []);
   }
 
-  async function addOpponent() {
+  async function addOpponentWithValues(plat: ChessPlatform, user: string) {
     setLoading(true);
     setStatus(null);
     try {
-      const trimmed = username.trim();
+      const trimmed = user.trim();
       if (!trimmed) throw new Error("Username is required");
+      const usePlatform = plat;
 
       const res = await fetch("/api/opponents", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ platform, username: trimmed }),
+        body: JSON.stringify({ platform: usePlatform, username: trimmed }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error ?? "Failed to add opponent");
 
       const optimistic: OpponentRow = {
-        platform,
+        platform: usePlatform,
         username: trimmed,
         created_at: new Date().toISOString(),
         last_refreshed_at: null,
@@ -182,7 +185,7 @@ export function DashboardPage({ initialOpponents }: Props) {
       };
 
       setOpponents((prev) => {
-        const key = `${platform}:${trimmed.toLowerCase()}`;
+        const key = `${usePlatform}:${trimmed.toLowerCase()}`;
         const next = prev.filter((p) => `${p.platform}:${p.username.toLowerCase()}` !== key);
         return [optimistic, ...next];
       });
@@ -423,94 +426,19 @@ export function DashboardPage({ initialOpponents }: Props) {
     return () => window.clearTimeout(id);
   }, [activeImport, activeStage, activeStatus, importModalOpen]);
 
+  async function handleAddOpponent(plat: ChessPlatform, user: string) {
+    await addOpponentWithValues(plat, user);
+  }
+
   return (
-    <div className="min-h-screen bg-zinc-50">
-      <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-10">
-        <header className="flex items-center justify-between gap-4">
-          <div>
-            <div className="text-xs font-medium text-zinc-600">ChessScout</div>
-            <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">Dashboard</h1>
-          </div>
-          <div className="relative" onClick={(e) => e.stopPropagation()}>
-            <button
-              type="button"
-              className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-900 hover:bg-zinc-50"
-              onClick={() => setUserMenuOpen((v) => !v)}
-              title={userEmail ?? undefined}
-            >
-              <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-zinc-100 text-[10px] font-semibold text-zinc-700">
-                {(userEmail ?? "U").slice(0, 1).toUpperCase()}
-              </span>
-              <span className="hidden max-w-[200px] truncate sm:inline">{userEmail ? truncateEmail(userEmail) : "Account"}</span>
-            </button>
+    <div className="min-h-screen">
+      <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6">
+        {/* Add Opponent Bar */}
+        <AddOpponentBar onAdd={handleAddOpponent} loading={loading} />
 
-            {userMenuOpen ? (
-              <div className="absolute right-0 top-10 z-30 w-48 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-lg">
-                <button
-                  type="button"
-                  className="flex w-full items-center px-3 py-2 text-left text-sm text-zinc-800 hover:bg-zinc-50"
-                  onClick={() => {
-                    const supabase = createSupabaseBrowserClient();
-                    void supabase.auth
-                      .signOut()
-                      .then(() => window.location.reload())
-                      .catch(() => window.location.reload());
-                  }}
-                >
-                  Sign out
-                </button>
-                <div className="h-px bg-zinc-100" />
-                <Link
-                  href="/"
-                  className="flex w-full items-center px-3 py-2 text-left text-sm text-zinc-800 hover:bg-zinc-50"
-                >
-                  Home
-                </Link>
-              </div>
-            ) : null}
-          </div>
-        </header>
+        {status ? <div className="text-sm text-neutral-600">{status}</div> : null}
 
-        <section className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
-          <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-            <div>
-              <div className="text-lg font-medium text-zinc-900">Opponents</div>
-              <div className="mt-1 text-sm text-zinc-600">Add an opponent and we’ll sync their games automatically.</div>
-            </div>
-
-            <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
-              <select
-                id="dash-platform"
-                className="h-11 w-full rounded-xl border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none focus:border-zinc-400 sm:w-[160px]"
-                value={platform}
-                onChange={(e) => setPlatform(e.target.value as any)}
-                disabled={loading}
-              >
-                <option value="lichess">Lichess</option>
-                <option value="chesscom">Chess.com</option>
-              </select>
-
-              <input
-                id="dash-username"
-                className="h-11 w-full rounded-xl border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none focus:border-zinc-400 sm:w-[260px]"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder={platform === "lichess" ? "lichess_username" : "chesscom_username"}
-                disabled={loading}
-              />
-
-              <button
-                type="button"
-                className="inline-flex h-11 w-full items-center justify-center rounded-xl bg-zinc-900 px-4 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-60 sm:w-auto"
-                disabled={loading || !username.trim()}
-                onClick={addOpponent}
-              >
-                Add Opponent
-              </button>
-            </div>
-          </div>
-
-          {status ? <div className="mt-4 text-sm text-zinc-600">{status}</div> : null}
+        <section>
 
           {activeImport ? (
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3">
@@ -668,12 +596,14 @@ export function DashboardPage({ initialOpponents }: Props) {
               const currentKey = latest.platform === "lichess" ? `lichess:${latest.username.toLowerCase()}` : null;
               const isGlobalCurrent = Boolean(isImporting && currentKey && currentOpponent === currentKey);
               const globalCountLive = isMounted && isGlobalCurrent ? Math.max(0, Number(progress ?? 0)) : 0;
-              const persistedFastCount = isMounted && currentKey ? Math.max(0, Number(progressByOpponent[currentKey] ?? 0)) : 0;
+              // For non-active opponents, use persisted progress from localStorage
+              const persistedSyncedCount = isMounted && currentKey ? Math.max(0, Number(progressByOpponent[currentKey] ?? 0)) : 0;
+              // Synced games count: live progress for active, persisted for others
+              const syncedGamesCount = isGlobalCurrent ? globalCountLive : persistedSyncedCount;
               const importedDbGamesCount = Math.max(0, recordsLoadedCount, downloadedCount);
               const apiTotal = typeof (latest as any)?.total_games === "number" ? Math.max(0, Number((latest as any).total_games)) : 0;
               const approxTotalGamesCount = Math.max(apiTotal, importedDbGamesCount);
-              const estimatedGamesCount = Math.max(persistedFastCount, globalCountLive);
-              const canUseScout = downloadedCount >= MIN_GAMES_FOR_ANALYSIS || isActive;
+              const canUseScout = syncedGamesCount >= MIN_GAMES_FOR_ANALYSIS || downloadedCount >= MIN_GAMES_FOR_ANALYSIS || isActive;
 
               const isFastRunning = isGlobalCurrent;
               const isFastQueued = currentKey ? queue.includes(currentKey) && !isGlobalCurrent : false;
@@ -754,28 +684,41 @@ export function DashboardPage({ initialOpponents }: Props) {
                         </div>
                       </div>
 
-                      <div className="mt-3 text-xs text-neutral-500">
-                        {latest.platform === "lichess" ? "Lichess" : "Chess.com"}
-                        {apiTotal > 0 ? ` · ~${approxTotalGamesCount} total games` : ""} · {importedDbGamesCount} games indexed
-                        {persistedFastCount > 0 || globalCountLive > 0 ? ` · ${Math.max(persistedFastCount, globalCountLive)} games processed (fast sync)` : ""}
-                        {latest.last_refreshed_at ? (
-                          <span suppressHydrationWarning> · Updated {formatRelative(latest.last_refreshed_at)}</span>
-                        ) : null}
-                      </div>
-
-                      {isActive ? (
-                        <div className="mt-2 text-xs font-medium text-zinc-700">
-                          Importing · games indexed: {activeImport?.importedCount ?? 0}
+                      {/* Synced Games Count - games usable for analysis */}
+                      <div className="mt-3 flex items-center justify-between rounded-lg bg-neutral-50 px-3 py-2">
+                        <div className="flex items-center gap-2 text-xs">
+                          <span className="text-neutral-500">Synced:</span>
+                          <AnimatedNumber value={syncedGamesCount} className="font-semibold text-neutral-900" />
+                          {apiTotal > 0 ? (
+                            <>
+                              <span className="text-neutral-400">/</span>
+                              <span className="text-neutral-500">{apiTotal.toLocaleString()}</span>
+                            </>
+                          ) : null}
+                          <span className="text-neutral-500">games</span>
                         </div>
-                      ) : null}
-
-                      {tieredStatus ? (
-                        <div className="mt-2 text-xs text-zinc-700">{tieredStatus}</div>
-                      ) : null}
-
-                      {isFastRunning ? (
-                        <div className="mt-2 text-xs text-zinc-700">Syncing… games processed (fast sync): {Math.max(0, Number(progress ?? 0))}</div>
-                      ) : null}
+                        <div className="flex items-center gap-2">
+                          {isFastRunning ? (
+                            <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-100 px-2.5 py-1 text-[10px] font-medium text-blue-700">
+                              <RefreshCw className="h-3 w-3 animate-spin" />
+                              Syncing
+                            </span>
+                          ) : isFastQueued ? (
+                            <span className="inline-flex items-center rounded-full bg-neutral-200 px-2.5 py-1 text-[10px] font-medium text-neutral-600">
+                              Queued
+                            </span>
+                          ) : syncedGamesCount > 0 && syncedGamesCount >= apiTotal && apiTotal > 0 ? (
+                            <span className="inline-flex items-center gap-1.5 rounded-full bg-green-100 px-2.5 py-1 text-[10px] font-medium text-green-700">
+                              <Check className="h-3 w-3" />
+                              Complete
+                            </span>
+                          ) : syncedGamesCount > 0 ? (
+                            <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-1 text-[10px] font-medium text-amber-700">
+                              Partial
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
                     </div>
 
                     <div className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
