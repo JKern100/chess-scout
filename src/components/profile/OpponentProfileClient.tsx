@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { OpponentFiltersPanel } from "@/components/chess/OpponentFiltersPanel";
 import { useOpponentFilters } from "@/components/chess/useOpponentFilters";
-import { StyleSpectrumBar } from "@/components/profile/StyleSpectrumBar";
+import { StyleSpectrumBar, StyleSpectrumData } from "@/components/profile/StyleSpectrumBar";
 
 type ChessPlatform = "lichess" | "chesscom";
 
@@ -226,6 +226,62 @@ function spectrumPctFromDiffRatio(diffRatio: unknown) {
   return 50 + (clamped / 0.4) * 50;
 }
 
+/** Extract absolute spectrum data from stored style marker metrics_json */
+function extractSpectrumData(marker: StoredStyleMarker | null, config: {
+  valueKey: string;
+  benchmarkKey: string;
+  maxRaw: number;
+  countKey?: string;
+  totalKey?: string;
+  colorFilter?: "overall" | "white" | "black";
+}): StyleSpectrumData | undefined {
+  if (!marker?.metrics_json) return undefined;
+  const m = marker.metrics_json;
+  const colorFilter = config.colorFilter ?? "overall";
+  
+  // Try to get color-specific value from contextual data if available
+  let opponentRaw: number | undefined;
+  let sampleSize: number | undefined;
+  
+  const contextual = m.contextual;
+  if (contextual?.summary && colorFilter !== "overall") {
+    const colorData = contextual.summary[colorFilter];
+    if (colorData && typeof colorData.value === "number") {
+      opponentRaw = colorData.value;
+      sampleSize = typeof colorData.sample_size === "number" ? colorData.sample_size : undefined;
+    }
+  }
+  
+  // Fall back to overall value
+  if (opponentRaw === undefined) {
+    opponentRaw = typeof m[config.valueKey] === "number" ? m[config.valueKey] : undefined;
+  }
+  
+  const benchmarkRaw = typeof m[config.benchmarkKey] === "number" ? m[config.benchmarkKey] : undefined;
+  
+  if (opponentRaw === undefined || benchmarkRaw === undefined) return undefined;
+  
+  const category = typeof m.category === "string" ? m.category : undefined;
+  const numerator = config.countKey && typeof m[config.countKey] === "number" ? m[config.countKey] : undefined;
+  if (sampleSize === undefined) {
+    sampleSize = config.totalKey && typeof m[config.totalKey] === "number" ? m[config.totalKey] : undefined;
+  }
+  
+  // Get alerts for this axis if available
+  const alerts = contextual?.alerts ?? [];
+  
+  return {
+    opponentRaw,
+    benchmarkRaw,
+    maxRaw: config.maxRaw,
+    category,
+    numerator,
+    sampleSize,
+    alerts,
+    colorFilter,
+  };
+}
+
 function formatPlatformLabel(platform: ChessPlatform) {
   return platform === "lichess" ? "Lichess" : "Chess.com";
 }
@@ -443,6 +499,7 @@ export function OpponentProfileClient({ platform, username }: Props) {
   const [datasetOpen, setDatasetOpen] = useState(false);
   const [styleMarkersOpen, setStyleMarkersOpen] = useState(true);
   const [generateStyleMarkers, setGenerateStyleMarkers] = useState(true);
+  const [styleMarkerColorFilter, setStyleMarkerColorFilter] = useState<"overall" | "white" | "black">("overall");
 
   const runGenerate = useCallback(async () => {
     if (generateBusy) return;
@@ -575,11 +632,47 @@ export function OpponentProfileClient({ platform, username }: Props) {
   const axisLength = storedStyleMarkers.find((m) => m.marker_key === "axis_game_length") ?? null;
   const axisOppCastle = storedStyleMarkers.find((m) => m.marker_key === "axis_opposite_castling") ?? null;
 
+  // Legacy fallback percentages (diff_ratio based)
   const queenPct = spectrumPctFromDiffRatio(axisQueen?.metrics_json?.diff_ratio);
   const castlePct = spectrumPctFromDiffRatio(axisCastle?.metrics_json?.diff_ratio);
   const aggroPct = spectrumPctFromDiffRatio(axisAggro?.metrics_json?.diff_ratio);
   const lengthPct = spectrumPctFromDiffRatio(axisLength?.metrics_json?.diff_ratio);
   const oppCastlePct = spectrumPctFromDiffRatio(axisOppCastle?.metrics_json?.diff_ratio);
+
+  // Absolute spectrum data (new mode with benchmark tick + tooltip)
+  const queenData = extractSpectrumData(axisQueen, {
+    valueKey: "queen_trade_rate",
+    benchmarkKey: "benchmark",
+    maxRaw: 1.0,
+    colorFilter: styleMarkerColorFilter,
+  });
+  const aggroData = extractSpectrumData(axisAggro, {
+    valueKey: "aggression_m15_avg",
+    benchmarkKey: "benchmark",
+    maxRaw: 8.0,
+    colorFilter: styleMarkerColorFilter,
+  });
+  const lengthData = extractSpectrumData(axisLength, {
+    valueKey: "avg_game_length",
+    benchmarkKey: "benchmark",
+    maxRaw: 80.0, // Scale: 0-80 moves
+    colorFilter: styleMarkerColorFilter,
+  });
+  const oppCastleData = extractSpectrumData(axisOppCastle, {
+    valueKey: "opposite_castle_rate",
+    benchmarkKey: "benchmark",
+    maxRaw: 1.0,
+    colorFilter: styleMarkerColorFilter,
+  });
+  const castleData = extractSpectrumData(axisCastle, {
+    valueKey: "avg_castle_ply",
+    benchmarkKey: "benchmark_ply",
+    maxRaw: 40.0, // Scale: 0-40 plies (move 20)
+    colorFilter: styleMarkerColorFilter,
+  });
+
+  // Get alerts from any axis marker (they all have the same alerts)
+  const styleMarkerAlerts = axisAggro?.metrics_json?.contextual?.alerts ?? [];
 
   function OpeningBarList(props: { rows: V2OpeningRow[]; title: string; sampleWarning?: string | null; ctx?: V3Context | null }) {
     const { rows, title, sampleWarning, ctx } = props;
@@ -876,37 +969,85 @@ export function OpponentProfileClient({ platform, username }: Props) {
               }
             >
               {styleMarkersOpen ? (
-                <div className="grid gap-2">
-                  <StyleSpectrumBar
-                    title="Simplification"
-                    leftLabel="Keep Queens"
-                    rightLabel="Trade Queens"
-                    positionPct={queenPct}
-                  />
-                  <StyleSpectrumBar
-                    title="Game Length"
-                    leftLabel="Sprinter"
-                    rightLabel="Marathon Runner"
-                    positionPct={lengthPct}
-                  />
-                  <StyleSpectrumBar
-                    title="Pawn Storms"
-                    leftLabel="Symmetrical"
-                    rightLabel="Chaos Creator"
-                    positionPct={oppCastlePct}
-                  />
-                  <StyleSpectrumBar
-                    title="Castling"
-                    leftLabel="Castle Early"
-                    rightLabel="Castle Late"
-                    positionPct={castlePct}
-                  />
-                  <StyleSpectrumBar
-                    title="Aggression"
-                    leftLabel="Solid/Positional"
-                    rightLabel="Hyper-Aggressive"
-                    positionPct={aggroPct}
-                  />
+                <div className="grid gap-4">
+                  {/* Color Context Toggle Pills */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-medium text-neutral-500">View as:</span>
+                    <div className="flex gap-1">
+                      {(["overall", "white", "black"] as const).map((color) => (
+                        <button
+                          key={color}
+                          type="button"
+                          onClick={() => setStyleMarkerColorFilter(color)}
+                          className={`inline-flex h-6 items-center justify-center rounded-lg px-2 text-[10px] font-medium transition-colors ${
+                            styleMarkerColorFilter === color
+                              ? "bg-yellow-500 text-white shadow-sm"
+                              : "bg-neutral-100 text-neutral-600 hover:bg-neutral-200"
+                          }`}
+                        >
+                          {color === "overall" ? "Overall" : color === "white" ? "♔ White" : "♚ Black"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Scout's Alert Badge */}
+                  {styleMarkerAlerts.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      {styleMarkerAlerts.map((alert: { type: string; message: string }, idx: number) => (
+                        <div
+                          key={idx}
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-amber-50 border border-amber-200 px-2 py-1"
+                        >
+                          <span className="text-amber-600 text-xs">⚠️</span>
+                          <span className="text-[10px] font-medium text-amber-800">{alert.message}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="grid gap-3">
+                    <StyleSpectrumBar
+                      title="Queen Trades"
+                      leftLabel="Keeps Queens"
+                      rightLabel="Trades Early"
+                      data={queenData}
+                      positionPct={queenPct}
+                      unit="%"
+                    />
+                    <StyleSpectrumBar
+                      title="Aggression"
+                      leftLabel="Positional"
+                      rightLabel="Aggressive"
+                      data={aggroData}
+                      positionPct={aggroPct}
+                      unit=" attacks"
+                    />
+                    <StyleSpectrumBar
+                      title="Game Length"
+                      leftLabel="Short Games"
+                      rightLabel="Long Games"
+                      data={lengthData}
+                      positionPct={lengthPct}
+                      unit=" moves"
+                    />
+                    <StyleSpectrumBar
+                      title="Opposite Castling"
+                      leftLabel="Same Side"
+                      rightLabel="Opposite Side"
+                      data={oppCastleData}
+                      positionPct={oppCastlePct}
+                      unit="%"
+                    />
+                    <StyleSpectrumBar
+                      title="Castling Timing"
+                      leftLabel="Early"
+                      rightLabel="Late"
+                      data={castleData}
+                      positionPct={castlePct}
+                      unit=" ply"
+                    />
+                  </div>
                 </div>
               ) : null}
             </BentoCard>
@@ -1168,7 +1309,7 @@ export function OpponentProfileClient({ platform, username }: Props) {
 
         {filtersOpen ? (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
-            <div className="w-full max-w-2xl rounded-2xl border border-neutral-200 p-4 shadow-2xl">
+            <div className="w-full max-w-2xl rounded-2xl border border-neutral-200 bg-white p-4 shadow-2xl">
               <div className="flex items-center justify-between gap-4">
                 <div>
                   <div className="text-sm font-semibold text-neutral-900">{hasProfile ? "Regenerate Report" : "Generate Report"}</div>
@@ -1206,7 +1347,9 @@ export function OpponentProfileClient({ platform, username }: Props) {
                     type="button"
                     className="inline-flex h-10 items-center justify-center rounded-xl px-4 text-xs font-semibold text-neutral-950 shadow-sm disabled:opacity-60"
                     style={{ backgroundColor: accent }}
-                    onClick={onClickPrimary}
+                    onClick={() => {
+                      void runGenerate();
+                    }}
                     disabled={generateBusy || needsMigration}
                   >
                     {generateBusy ? "Generating…" : hasProfile ? "Regenerate" : "Generate"}

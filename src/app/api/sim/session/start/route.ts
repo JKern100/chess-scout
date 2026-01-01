@@ -50,6 +50,8 @@ export async function POST(request: Request) {
     const from = typeof body?.from === "string" ? String(body.from) : null;
     const to = typeof body?.to === "string" ? String(body.to) : null;
 
+    const sessionKey = typeof body?.session_key === "string" && body.session_key.trim() ? String(body.session_key).trim() : null;
+
     // Semantics:
     // - speeds not provided => treat as "any" (no speed filter)
     // - speeds provided but empty => treat as "none" (match nothing)
@@ -76,7 +78,19 @@ export async function POST(request: Request) {
           username,
           games: normalized,
           sourceType: "SESSION",
+          sessionKey,
         });
+      } else {
+        // Important: if filters match 0 games, clear previous SESSION axis markers so UI doesn't show stale values.
+        const usernameKey = username.trim().toLowerCase();
+        await supabase
+          .from("opponent_style_markers")
+          .delete()
+          .eq("profile_id", user.id)
+          .eq("platform", platform)
+          .eq("username", usernameKey)
+          .eq("source_type", "SESSION")
+          .like("marker_key", "axis_%");
       }
 
       return NextResponse.json({ ok: true, games_analyzed: Array.isArray(normalized) ? normalized.length : 0 });

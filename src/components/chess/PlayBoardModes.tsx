@@ -23,7 +23,7 @@ import { AnalysisBoard } from "./AnalysisBoard";
 import { LichessBookTab } from "./LichessBookTab";
 import { OpponentFiltersPanel } from "@/components/chess/OpponentFiltersPanel";
 import { useOpponentFilters } from "@/components/chess/useOpponentFilters";
-import { StyleSpectrumBar } from "@/components/profile/StyleSpectrumBar";
+import { StyleSpectrumBar, type StyleSpectrumData } from "@/components/profile/StyleSpectrumBar";
 import { useImportsRealtime } from "@/lib/hooks/useImportsRealtime";
 import { fetchLichessStats, type LichessExplorerMove, type ExplorerSource } from "@/lib/lichess/explorer";
 import { useImportQueue } from "@/context/ImportQueueContext";
@@ -47,6 +47,23 @@ function spectrumPctFromDiffRatio(diffRatio: unknown) {
   if (!Number.isFinite(d)) return 50;
   const clamped = Math.max(-0.4, Math.min(0.4, d));
   return 50 + (clamped / 0.4) * 50;
+}
+
+function extractSpectrumData(
+  marker: StoredStyleMarker | null,
+  config: {
+    valueKey: string;
+    benchmarkKey: string;
+    maxRaw: number;
+  }
+): StyleSpectrumData | undefined {
+  if (!marker?.metrics_json) return undefined;
+  const m = marker.metrics_json as any;
+  const opponentRaw = typeof m?.[config.valueKey] === "number" ? (m[config.valueKey] as number) : undefined;
+  const benchmarkRaw = typeof m?.[config.benchmarkKey] === "number" ? (m[config.benchmarkKey] as number) : undefined;
+  if (opponentRaw == null || benchmarkRaw == null) return undefined;
+  const category = typeof m?.category === "string" ? (m.category as string) : undefined;
+  return { opponentRaw, benchmarkRaw, maxRaw: config.maxRaw, category };
 }
 
 type Mode = "simulation" | "analysis";
@@ -748,21 +765,28 @@ export function PlayBoardModes({ initialFen }: Props) {
 
   const [sessionAxisMarkers, setSessionAxisMarkers] = useState<StoredStyleMarker[]>([]);
   const [sessionAxisMarkersBusy, setSessionAxisMarkersBusy] = useState(false);
+  const [sessionAxisMarkersError, setSessionAxisMarkersError] = useState<string | null>(null);
 
   const fetchSessionAxisMarkers = useCallback(
-    async (username: string, cacheBust?: string) => {
+    async (username: string, sessionKey: string | null, cacheBust?: string) => {
       const trimmed = username.trim();
       if (!trimmed) {
         setSessionAxisMarkers([]);
+        setSessionAxisMarkersError(null);
         return [] as StoredStyleMarker[];
       }
 
       try {
         setSessionAxisMarkersBusy(true);
+        setSessionAxisMarkersError(null);
         const t = cacheBust ? `&t=${encodeURIComponent(cacheBust)}` : "";
-        const res = await fetch(`/api/sim/session/markers?platform=lichess&username=${encodeURIComponent(trimmed)}${t}`, {
+        const sk = sessionKey ? `&session_key=${encodeURIComponent(sessionKey)}` : "";
+        const res = await fetch(
+          `/api/sim/session/markers?platform=lichess&username=${encodeURIComponent(trimmed)}${sk}${t}`,
+          {
           cache: "no-store",
-        });
+          }
+        );
         const json = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(String((json as any)?.error ?? "Failed to load session markers"));
         const rows = Array.isArray((json as any)?.markers) ? ((json as any).markers as StoredStyleMarker[]) : [];
@@ -771,6 +795,7 @@ export function PlayBoardModes({ initialFen }: Props) {
         return cleaned;
       } catch {
         setSessionAxisMarkers([]);
+        setSessionAxisMarkersError("Failed to load session markers");
         return [] as StoredStyleMarker[];
       } finally {
         setSessionAxisMarkersBusy(false);
@@ -779,9 +804,11 @@ export function PlayBoardModes({ initialFen }: Props) {
     []
   );
 
+  const styleSessionKey = `${opponentUsername.trim().toLowerCase()}|${filtersKey}`;
+
   useEffect(() => {
-    void fetchSessionAxisMarkers(opponentUsername, String(Date.now()));
-  }, [fetchSessionAxisMarkers, opponentUsername, filtersKey]);
+    void fetchSessionAxisMarkers(opponentUsername, styleSessionKey, String(Date.now()));
+  }, [fetchSessionAxisMarkers, opponentUsername, filtersKey, styleSessionKey]);
 
   const axisQueen = sessionAxisMarkers.find((m) => m.marker_key === "axis_queen_trades") ?? null;
   const axisCastle = sessionAxisMarkers.find((m) => m.marker_key === "axis_castling_timing") ?? null;
@@ -789,13 +816,26 @@ export function PlayBoardModes({ initialFen }: Props) {
   const axisLength = sessionAxisMarkers.find((m) => m.marker_key === "axis_game_length") ?? null;
   const axisOppCastle = sessionAxisMarkers.find((m) => m.marker_key === "axis_opposite_castling") ?? null;
 
+  const sessionMarkersUpdatedAt = useMemo(() => {
+    const newest = sessionAxisMarkers
+      .map((r) => Date.parse(String((r as any)?.created_at ?? "")))
+      .filter((n) => Number.isFinite(n))
+      .reduce((m, n) => Math.max(m, n), 0);
+    return newest ? new Date(newest).toLocaleTimeString() : null;
+  }, [sessionAxisMarkers]);
+
   const queenPct = spectrumPctFromDiffRatio(axisQueen?.metrics_json?.diff_ratio);
   const castlePct = spectrumPctFromDiffRatio(axisCastle?.metrics_json?.diff_ratio);
   const aggroPct = spectrumPctFromDiffRatio(axisAggro?.metrics_json?.diff_ratio);
   const lengthPct = spectrumPctFromDiffRatio(axisLength?.metrics_json?.diff_ratio);
   const oppCastlePct = spectrumPctFromDiffRatio(axisOppCastle?.metrics_json?.diff_ratio);
 
-  const styleSessionKey = `${opponentUsername.trim().toLowerCase()}|${filtersKey}`;
+  const queenData = extractSpectrumData(axisQueen, { valueKey: "queen_trade_rate", benchmarkKey: "benchmark", maxRaw: 1.0 });
+  const aggroData = extractSpectrumData(axisAggro, { valueKey: "aggression_m15_avg", benchmarkKey: "benchmark", maxRaw: 8.0 });
+  const lengthData = extractSpectrumData(axisLength, { valueKey: "avg_game_length", benchmarkKey: "benchmark", maxRaw: 80.0 });
+  const oppCastleData = extractSpectrumData(axisOppCastle, { valueKey: "opposite_castle_rate", benchmarkKey: "benchmark", maxRaw: 1.0 });
+  const castleData = extractSpectrumData(axisCastle, { valueKey: "avg_castle_ply", benchmarkKey: "benchmark_ply", maxRaw: 40.0 });
+
   const lastStyleSessionKeyRef = useRef<string | null>(null);
   const styleSessionInFlightRef = useRef(false);
   const styleSessionDebounceRef = useRef<number | null>(null);
@@ -818,6 +858,7 @@ export function PlayBoardModes({ initialFen }: Props) {
 
       styleSessionInFlightRef.current = true;
       setSessionAxisMarkersBusy(true);
+      setSessionAxisMarkersError(null);
 
       void (async () => {
         try {
@@ -833,14 +874,15 @@ export function PlayBoardModes({ initialFen }: Props) {
               from: filterFromDate || null,
               to: filterToDate || null,
               enableStyleMarkers: true,
+              session_key: styleSessionKey,
             }),
           });
 
           if (!res.ok) {
+            let detail = "";
             const now = Date.now();
             if (now - lastStyleSessionErrorAtRef.current > 5000) {
               lastStyleSessionErrorAtRef.current = now;
-              let detail = "";
               try {
                 const text = await res.text();
                 try {
@@ -854,14 +896,27 @@ export function PlayBoardModes({ initialFen }: Props) {
               }
               console.warn("[PlayBoardModes] /api/sim/session/start failed", res.status, detail);
             }
+            setSessionAxisMarkersError(detail || `Style marker regeneration failed (${res.status})`);
             // Do not advance the dedupe key on failure; allow retry.
             return;
+          }
+
+          // best-effort parse for diagnostics
+          try {
+            const json = (await res.json().catch(() => null)) as any;
+            const n = Number(json?.games_analyzed ?? NaN);
+            if (Number.isFinite(n)) {
+              // If 0 games, the API clears SESSION axis markers.
+              if (n === 0) setSessionAxisMarkersError("No games matched these filters.");
+            }
+          } catch {
+            // ignore
           }
 
           lastStyleSessionKeyRef.current = styleSessionKey;
 
           // Poll briefly to avoid stale reads (writes can land slightly after the POST returns).
-          let best = await fetchSessionAxisMarkers(trimmed, String(Date.now()));
+          let best = await fetchSessionAxisMarkers(trimmed, styleSessionKey, String(Date.now()));
           for (let i = 0; i < 4; i++) {
             const newest = best
               .map((r) => Date.parse(String((r as any)?.created_at ?? "")))
@@ -870,7 +925,7 @@ export function PlayBoardModes({ initialFen }: Props) {
 
             if (newest && newest >= startedAt - 500) break;
             await sleep(250);
-            best = await fetchSessionAxisMarkers(trimmed, String(Date.now()));
+            best = await fetchSessionAxisMarkers(trimmed, styleSessionKey, String(Date.now()));
           }
         } finally {
           styleSessionInFlightRef.current = false;
@@ -1262,48 +1317,66 @@ export function PlayBoardModes({ initialFen }: Props) {
         <div className="flex items-center justify-between gap-3">
           <div className="text-[10px] font-medium text-zinc-900">Style Markers</div>
           <span
-            title="Dot shows where this opponent falls relative to the global benchmark tick (center). Left/right labels are the two style extremes."
+            title="Dot is the opponent value on an absolute 0–100% spectrum. The vertical tick is the benchmark for the current filter set."
             className="inline-flex h-6 w-6 items-center justify-center rounded-lg border border-zinc-200 bg-white text-[10px] font-semibold text-zinc-600"
           >
             ?
           </span>
         </div>
 
-        <div className={`mt-2 grid gap-2 ${sessionAxisMarkersBusy ? "opacity-70" : ""}`}>
+        <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-[10px] text-zinc-500">
+          <div className="truncate" title={styleSessionKey}>
+            key: {filtersKey}
+          </div>
+          <div className="shrink-0">{sessionMarkersUpdatedAt ? `updated ${sessionMarkersUpdatedAt}` : ""}</div>
+        </div>
+
+        {sessionAxisMarkersError ? (
+          <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] text-amber-900">
+            {sessionAxisMarkersError}
+          </div>
+        ) : null}
+
+        <div className={`mt-2 grid gap-3 ${sessionAxisMarkersBusy ? "opacity-70" : ""}`}>
           <StyleSpectrumBar
-            title="Simplification"
-            leftLabel="Keep Queens"
-            rightLabel="Trade Queens"
+            title="Queen Trades"
+            leftLabel="Keeps Queens"
+            rightLabel="Trades Early"
+            data={queenData}
             positionPct={queenPct}
-            animate={sessionAxisMarkersBusy}
-          />
-          <StyleSpectrumBar
-            title="Game Length"
-            leftLabel="Sprinter"
-            rightLabel="Marathon Runner"
-            positionPct={lengthPct}
-            animate={sessionAxisMarkersBusy}
-          />
-          <StyleSpectrumBar
-            title="Pawn Storms"
-            leftLabel="Symmetrical"
-            rightLabel="Chaos Creator"
-            positionPct={oppCastlePct}
-            animate={sessionAxisMarkersBusy}
-          />
-          <StyleSpectrumBar
-            title="Castling"
-            leftLabel="Castle Early"
-            rightLabel="Castle Late"
-            positionPct={castlePct}
-            animate={sessionAxisMarkersBusy}
+            unit="%"
           />
           <StyleSpectrumBar
             title="Aggression"
-            leftLabel="Solid/Positional"
-            rightLabel="Hyper-Aggressive"
+            leftLabel="Positional"
+            rightLabel="Aggressive"
+            data={aggroData}
             positionPct={aggroPct}
-            animate={sessionAxisMarkersBusy}
+            unit=" attacks"
+          />
+          <StyleSpectrumBar
+            title="Game Length"
+            leftLabel="Short Games"
+            rightLabel="Long Games"
+            data={lengthData}
+            positionPct={lengthPct}
+            unit=" moves"
+          />
+          <StyleSpectrumBar
+            title="Opposite Castling"
+            leftLabel="Same Side"
+            rightLabel="Opposite Side"
+            data={oppCastleData}
+            positionPct={oppCastlePct}
+            unit="%"
+          />
+          <StyleSpectrumBar
+            title="Castling Timing"
+            leftLabel="Early"
+            rightLabel="Late"
+            data={castleData}
+            positionPct={castlePct}
+            unit=" ply"
           />
         </div>
 

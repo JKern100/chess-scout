@@ -21,6 +21,7 @@ export async function GET(request: Request) {
   const platformRaw = String(url.searchParams.get("platform") ?? "lichess");
   const platform: ChessPlatform = platformRaw === "chesscom" ? "chesscom" : "lichess";
   const username = String(url.searchParams.get("username") ?? "").trim();
+  const sessionKey = String(url.searchParams.get("session_key") ?? "").trim();
 
   if (!username) {
     return NextResponse.json({ error: "username is required" }, { status: 400 });
@@ -28,7 +29,7 @@ export async function GET(request: Request) {
 
   const usernameKey = username.toLowerCase();
 
-  const { data, error } = await supabase
+  let q = supabase
     .from("opponent_style_markers")
     .select("marker_key, label, strength, tooltip, metrics_json, created_at")
     .eq("profile_id", user.id)
@@ -37,6 +38,13 @@ export async function GET(request: Request) {
     .eq("source_type", "SESSION")
     .like("marker_key", "axis_%")
     .order("created_at", { ascending: false });
+
+  // If provided, scope to the current Analysis filter set.
+  if (sessionKey) {
+    q = q.contains("metrics_json", { session_key: sessionKey });
+  }
+
+  const { data, error } = await q;
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
