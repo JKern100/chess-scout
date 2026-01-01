@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { PlayBoardModes } from "@/components/chess/PlayBoardModes";
 import { PlayModeToggle } from "@/components/chess/PlayModeToggle";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -16,32 +15,10 @@ export default async function PlayPage() {
 
   return (
     <div className="min-h-screen">
-      <main className="mx-auto flex w-full max-w-none flex-col gap-6 p-2 text-[10px] sm:px-6 sm:py-10">
-        <header className="flex flex-col gap-2">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2 text-xs font-medium text-zinc-600">
-                <span>ChessScout</span>
-                <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-xs font-semibold text-zinc-700">
-                  v1.0
-                </span>
-              </div>
-              <div className="mt-3">
-                <PlayModeToggle />
-              </div>
-            </div>
-            <Link
-              href="/dashboard"
-              className="inline-flex h-9 items-center justify-center rounded-xl border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-900 hover:bg-zinc-50"
-            >
-              Back
-            </Link>
-          </div>
-          <p className="max-w-2xl text-xs leading-5 text-zinc-600">
-            Play through lines on a legal-move board. Next we’ll add an engine opponent (Stockfish) and
-            then bias early moves toward an opponent’s repertoire.
-          </p>
-        </header>
+      <main className="mx-auto flex w-full max-w-none flex-col gap-4 p-2 text-[10px] sm:px-6 sm:pt-6">
+        <div className="flex items-center">
+          <PlayModeToggle />
+        </div>
 
         <PlayBoardModes />
       </main>

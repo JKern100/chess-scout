@@ -632,17 +632,9 @@ export function OpponentProfileClient({ platform, username }: Props) {
   }
 
   return (
-    <div className="min-h-screen px-4 py-6 text-neutral-900 md:px-6">
+    <div className="text-neutral-900">
       <div className="mx-auto w-full max-w-6xl">
-        <div className="flex items-start justify-between gap-4">
-          <div className="grid gap-1">
-            <div className="text-[10px] font-medium text-neutral-500">Scout Report</div>
-            <div className="text-xl font-semibold tracking-tight text-neutral-900 md:text-2xl">
-              {username}
-            </div>
-            <div className="text-xs text-neutral-600">{formatPlatformLabel(platform)}</div>
-          </div>
-
+        <div className="flex items-center justify-end">
           <button
             type="button"
             onClick={onOpenFilters}
@@ -653,7 +645,7 @@ export function OpponentProfileClient({ platform, username }: Props) {
           </button>
         </div>
 
-        <div className="mt-6 grid gap-4 md:grid-cols-12">
+        <div className="mt-4 grid gap-4 md:grid-cols-12">
           <div className="md:col-span-6">
             <BentoCard
               className="h-full"

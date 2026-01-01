@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
 import type { LichessExplorerMove, ExplorerSource } from "@/lib/lichess/explorer";
+import { sanToFigurine } from "@/components/chess/FigurineIcon";
 
 type Props = {
   moves: LichessExplorerMove[] | null;
@@ -13,6 +13,7 @@ type Props = {
   onSourceChange: (source: ExplorerSource) => void;
   showArrows: boolean;
   onShowArrowsChange: (show: boolean) => void;
+  isWhiteToMove: boolean;
 };
 
 function formatGameCount(value: number) {
@@ -35,7 +36,7 @@ function SkeletonRow() {
 }
 
 export function LichessBookTab(props: Props) {
-  const { moves, busy, error, onRetry, onMoveClick, source, onSourceChange, showArrows, onShowArrowsChange } = props;
+  const { moves, busy, error, onRetry, onMoveClick, source, onSourceChange, showArrows, onShowArrowsChange, isWhiteToMove } = props;
 
   return (
     <div className="grid min-w-0 gap-2">
@@ -133,7 +134,7 @@ export function LichessBookTab(props: Props) {
                       }
                     }}
                   >
-                    <div className="min-w-0 truncate text-[10px] font-medium text-zinc-900">{m.san}</div>
+                    <div className="min-w-0 truncate text-xs font-medium text-zinc-900">{sanToFigurine(m.san, isWhiteToMove)}</div>
                     <div className="text-[10px] font-medium text-zinc-700">{formatGameCount(m.total)}</div>
                     <div className="h-3 overflow-hidden rounded-full border border-zinc-200 bg-zinc-100">
                       <div className="flex h-full w-full">

@@ -28,6 +28,7 @@ import { useImportsRealtime } from "@/lib/hooks/useImportsRealtime";
 import { fetchLichessStats, type LichessExplorerMove, type ExplorerSource } from "@/lib/lichess/explorer";
 import { useImportQueue } from "@/context/ImportQueueContext";
 import { useActiveOpponent } from "@/context/ActiveOpponentContext";
+import { sanToFigurine } from "@/components/chess/FigurineIcon";
 
 type Props = {
   initialFen?: string;
@@ -290,7 +291,7 @@ function MovesSoFarPanel(props: { state: ChessBoardCoreState; opponentUsername: 
                       disabled={!whiteMove}
                       onClick={() => (whiteMove ? goToPly(whitePly) : null)}
                     >
-                      {whiteMove ?? ""}
+                      {whiteMove ? sanToFigurine(whiteMove, true) : ""}
                     </button>
                     <button
                       type="button"
@@ -300,7 +301,7 @@ function MovesSoFarPanel(props: { state: ChessBoardCoreState; opponentUsername: 
                       disabled={!blackMove}
                       onClick={() => (blackMove ? goToPly(blackPly) : null)}
                     >
-                      {blackMove ?? ""}
+                      {blackMove ? sanToFigurine(blackMove, false) : ""}
                     </button>
                   </div>
                 );
@@ -1895,6 +1896,7 @@ function AnalysisRightSidebar(props: {
               filtersKey={filtersKey}
               requestOpponentMove={requestOpponentMove}
               showArrow={analysisShowArrow}
+              onShowArrowChange={setAnalysisShowArrow}
               showEval={analysisShowEval}
               onEvalChange={setAnalysisEval}
               showEngineBest={analysisShowEngineBest}
@@ -1918,6 +1920,7 @@ function AnalysisRightSidebar(props: {
               onSourceChange={setLichessSource}
               showArrows={lichessShowArrows}
               onShowArrowsChange={setLichessShowArrows}
+              isWhiteToMove={state.game.turn() === "w"}
               onMoveClick={(san, uci) => {
                 if (!san && !uci) return;
                 try {

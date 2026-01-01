@@ -408,8 +408,11 @@ export function ChessBoardCore({ initialFen, soundEnabled = true, arrows, square
     <div className="min-w-0">
       {isLg ? (
         <div className="flex h-[calc(100vh-80px)] min-w-0 flex-col gap-3 px-6 lg:flex-row lg:items-stretch lg:justify-center">
-          <div ref={desktopRowRef} className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-stretch lg:justify-center">
-            <div className="flex w-[260px] min-w-0 flex-none flex-col overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
+          <div ref={desktopRowRef} className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-start lg:justify-center">
+            <div
+              className="flex w-[260px] min-w-0 flex-none flex-col overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm"
+              style={{ maxHeight: boardHeightPx, height: "fit-content" }}
+            >
               <div className="min-w-0 overflow-y-auto overflow-x-hidden p-0">{resolvedLeftPanel}</div>
             </div>
 
@@ -518,8 +521,11 @@ export function ChessBoardCore({ initialFen, soundEnabled = true, arrows, square
               {underBoard}
             </div>
 
-            <div className="flex w-[360px] min-w-0 flex-none flex-col overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
-              <div className="flex h-full min-w-0 flex-col gap-4 overflow-y-auto overflow-x-hidden p-3">{children(state)}</div>
+            <div
+              className="flex w-[360px] min-w-0 flex-none flex-col overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm"
+              style={{ maxHeight: boardHeightPx, height: "fit-content" }}
+            >
+              <div className="min-w-0 flex-col gap-4 overflow-y-auto overflow-x-hidden p-3">{children(state)}</div>
             </div>
           </div>
         </div>
