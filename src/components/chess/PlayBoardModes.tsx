@@ -12,6 +12,8 @@ import {
   GitBranch,
   RotateCcw,
   SlidersHorizontal,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { getBestMoveForPlay, type EngineScore } from "@/lib/engine/engineService";
@@ -23,7 +25,7 @@ import { OpponentFiltersPanel } from "@/components/chess/OpponentFiltersPanel";
 import { useOpponentFilters } from "@/components/chess/useOpponentFilters";
 import { StyleSpectrumBar } from "@/components/profile/StyleSpectrumBar";
 import { useImportsRealtime } from "@/lib/hooks/useImportsRealtime";
-import { fetchLichessStats, type LichessExplorerMove } from "@/lib/lichess/explorer";
+import { fetchLichessStats, type LichessExplorerMove, type ExplorerSource } from "@/lib/lichess/explorer";
 import { useImportQueue } from "@/context/ImportQueueContext";
 
 type Props = {
@@ -724,6 +726,7 @@ export function PlayBoardModes({ initialFen }: Props) {
   const [analysisShowEngineBest, setAnalysisShowEngineBest] = useState(false);
   const [analysisShowEval, setAnalysisShowEval] = useState(false);
   const [analysisShowEngineColumn, setAnalysisShowEngineColumn] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(true);
   const [analysisEngineBestUci, setAnalysisEngineBestUci] = useState<string | null>(null);
   const [analysisEngineBestSan, setAnalysisEngineBestSan] = useState<string | null>(null);
   const [analysisStats, setAnalysisStats] = useState<Stats | null>(null);
@@ -735,6 +738,8 @@ export function PlayBoardModes({ initialFen }: Props) {
   const [lichessError, setLichessError] = useState<string | null>(null);
   const lichessReqIdRef = useRef(0);
   const lichessDebounceRef = useRef<number | null>(null);
+  const [lichessSource, setLichessSource] = useState<ExplorerSource>("lichess");
+  const [lichessShowArrows, setLichessShowArrows] = useState(true);
 
   const [analysisEval, setAnalysisEval] = useState<EngineScore | null>(null);
 
@@ -1235,7 +1240,7 @@ export function PlayBoardModes({ initialFen }: Props) {
         headerLeft="Opponent"
         headerRight={
           <select
-            className="h-8 w-full min-w-0 rounded-xl border border-zinc-200 bg-white px-3 text-[10px] text-zinc-900 outline-none focus:border-zinc-400 disabled:opacity-60"
+            className="h-8 w-full min-w-0 rounded-xl border border-zinc-200 bg-white px-3 text-[10px] font-medium text-zinc-900 outline-none focus:border-zinc-400 disabled:opacity-60"
             value={opponentUsername}
             onChange={(e) => setOpponentUsername(e.target.value)}
             disabled={availableOpponents.length === 0}
@@ -1353,6 +1358,7 @@ export function PlayBoardModes({ initialFen }: Props) {
   return (
     <ChessBoardCore
       initialFen={initialFen}
+      soundEnabled={soundEnabled}
       leftPanel={(state) => (mode === "analysis" ? <MovesSoFarPanel state={state} opponentUsername={opponentUsername} /> : null)}
       aboveBoard={(state) => {
         if (mode === "analysis") {
@@ -1540,6 +1546,24 @@ export function PlayBoardModes({ initialFen }: Props) {
             .filter(Boolean)
         );
 
+        // Add Lichess Book arrows if enabled and on the lichess tab
+        if (analysisRightTab === "lichess" && lichessShowArrows && lichessMoves && lichessMoves.length > 0) {
+          const top3 = lichessMoves.slice(0, 3);
+          const maxTotal = Math.max(...top3.map((m) => m.total));
+          
+          for (const m of top3) {
+            const uci = m.uci;
+            if (!uci || uci.length < 4) continue;
+            // Scale opacity based on frequency (most popular = 0.9, less = more transparent)
+            const opacity = maxTotal > 0 ? Math.max(0.3, (m.total / maxTotal) * 0.9) : 0.6;
+            arrowsOut.push({
+              startSquare: uci.slice(0, 2),
+              endSquare: uci.slice(2, 4),
+              color: `rgba(6, 182, 212, ${opacity.toFixed(2)})`, // Teal/Cyan color (#06b6d4)
+            });
+          }
+        }
+
         const seen = new Set<string>();
         const deduped: any[] = [];
         for (const a of arrowsOut) {
@@ -1577,6 +1601,8 @@ export function PlayBoardModes({ initialFen }: Props) {
               setAnalysisShowEngineBest={setAnalysisShowEngineBest}
               analysisShowEngineColumn={analysisShowEngineColumn}
               setAnalysisShowEngineColumn={setAnalysisShowEngineColumn}
+              soundEnabled={soundEnabled}
+              setSoundEnabled={setSoundEnabled}
               setAnalysisEval={setAnalysisEval}
               opponentUsername={opponentUsername}
               opponentImportedCount={opponentImportedCount}
@@ -1598,6 +1624,10 @@ export function PlayBoardModes({ initialFen }: Props) {
               setLichessError={setLichessError}
               lichessReqIdRef={lichessReqIdRef}
               lichessDebounceRef={lichessDebounceRef}
+              lichessSource={lichessSource}
+              setLichessSource={setLichessSource}
+              lichessShowArrows={lichessShowArrows}
+              setLichessShowArrows={setLichessShowArrows}
             />
           );
         }
@@ -1660,6 +1690,8 @@ function AnalysisRightSidebar(props: {
   setAnalysisShowEngineBest: (v: boolean) => void;
   analysisShowEngineColumn: boolean;
   setAnalysisShowEngineColumn: (v: boolean) => void;
+  soundEnabled: boolean;
+  setSoundEnabled: (v: boolean) => void;
   setAnalysisEval: (s: EngineScore | null) => void;
   opponentUsername: string;
   opponentImportedCount: number;
@@ -1681,6 +1713,10 @@ function AnalysisRightSidebar(props: {
   setLichessError: (v: string | null) => void;
   lichessReqIdRef: React.MutableRefObject<number>;
   lichessDebounceRef: React.MutableRefObject<number | null>;
+  lichessSource: ExplorerSource;
+  setLichessSource: (s: ExplorerSource) => void;
+  lichessShowArrows: boolean;
+  setLichessShowArrows: (v: boolean) => void;
 }) {
   const {
     state,
@@ -1698,6 +1734,8 @@ function AnalysisRightSidebar(props: {
     setAnalysisShowEngineBest,
     analysisShowEngineColumn,
     setAnalysisShowEngineColumn,
+    soundEnabled,
+    setSoundEnabled,
     setAnalysisEval,
     opponentUsername,
     opponentImportedCount,
@@ -1719,6 +1757,10 @@ function AnalysisRightSidebar(props: {
     setLichessError,
     lichessReqIdRef,
     lichessDebounceRef,
+    lichessSource,
+    setLichessSource,
+    lichessShowArrows,
+    setLichessShowArrows,
   } = props;
 
   const active = analysisRightTab;
@@ -1739,7 +1781,7 @@ function AnalysisRightSidebar(props: {
 
       void (async () => {
         try {
-          const moves = await fetchLichessStats(state.fen, "standard");
+          const moves = await fetchLichessStats(state.fen, "standard", lichessSource);
           if (lichessReqIdRef.current !== reqId) return;
           setLichessMoves(moves);
           setLichessBusy(false);
@@ -1758,7 +1800,7 @@ function AnalysisRightSidebar(props: {
         lichessDebounceRef.current = null;
       }
     };
-  }, [active, state.fen, lichessDebounceRef, lichessReqIdRef, setLichessBusy, setLichessError, setLichessMoves]);
+  }, [active, state.fen, lichessSource, lichessDebounceRef, lichessReqIdRef, setLichessBusy, setLichessError, setLichessMoves]);
 
   return (
     <>
@@ -1845,6 +1887,13 @@ function AnalysisRightSidebar(props: {
                 />
                 Show engine eval column
               </label>
+
+              <div className="pt-1 text-[10px] font-medium text-zinc-900">Audio</div>
+              <label className="inline-flex cursor-pointer items-center gap-2">
+                <input type="checkbox" checked={soundEnabled} onChange={(e) => setSoundEnabled(e.target.checked)} />
+                {soundEnabled ? <Volume2 className="h-3.5 w-3.5" /> : <VolumeX className="h-3.5 w-3.5" />}
+                Enable sounds
+              </label>
             </div>
           ) : null}
 
@@ -1876,13 +1925,30 @@ function AnalysisRightSidebar(props: {
               moves={lichessMoves}
               busy={lichessBusy}
               error={lichessError}
+              source={lichessSource}
+              onSourceChange={setLichessSource}
+              showArrows={lichessShowArrows}
+              onShowArrowsChange={setLichessShowArrows}
+              onMoveClick={(san, uci) => {
+                if (!san && !uci) return;
+                try {
+                  const next = new Chess(state.fen);
+                  const move = uci && uci.length >= 4
+                    ? next.move({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci.length > 4 ? uci[4] : undefined })
+                    : next.move(san);
+                  if (!move) return;
+                  state.commitGame(next, move.san ?? null);
+                } catch {
+                  // Move was not legal in this position
+                }
+              }}
               onRetry={() => {
                 const reqId = (lichessReqIdRef.current += 1);
                 setLichessBusy(true);
                 setLichessError(null);
                 void (async () => {
                   try {
-                    const moves = await fetchLichessStats(state.fen, "standard");
+                    const moves = await fetchLichessStats(state.fen, "standard", lichessSource);
                     if (lichessReqIdRef.current !== reqId) return;
                     setLichessMoves(moves);
                     setLichessBusy(false);

@@ -1,12 +1,18 @@
 "use client";
 
-import type { LichessExplorerMove } from "@/lib/lichess/explorer";
+import { useState } from "react";
+import type { LichessExplorerMove, ExplorerSource } from "@/lib/lichess/explorer";
 
 type Props = {
   moves: LichessExplorerMove[] | null;
   busy: boolean;
   error: string | null;
   onRetry?: () => void;
+  onMoveClick?: (san: string, uci: string) => void;
+  source: ExplorerSource;
+  onSourceChange: (source: ExplorerSource) => void;
+  showArrows: boolean;
+  onShowArrowsChange: (show: boolean) => void;
 };
 
 function formatGameCount(value: number) {
@@ -29,13 +35,50 @@ function SkeletonRow() {
 }
 
 export function LichessBookTab(props: Props) {
-  const { moves, busy, error, onRetry } = props;
+  const { moves, busy, error, onRetry, onMoveClick, source, onSourceChange, showArrows, onShowArrowsChange } = props;
 
   return (
     <div className="grid min-w-0 gap-2">
-      <div className="grid gap-0.5">
-        <div className="text-[10px] font-medium text-zinc-900">Lichess Opening Explorer</div>
-        <div className="text-[10px] text-zinc-500">Blitz/Rapid/Classical • Ratings 1600+</div>
+      {/* Compact header with controls */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            className={`rounded px-2 py-0.5 text-[10px] font-medium transition-colors ${
+              source === "masters"
+                ? "bg-zinc-900 text-white"
+                : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
+            }`}
+            onClick={() => onSourceChange("masters")}
+          >
+            Masters
+          </button>
+          <button
+            type="button"
+            className={`rounded px-2 py-0.5 text-[10px] font-medium transition-colors ${
+              source === "lichess"
+                ? "bg-zinc-900 text-white"
+                : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
+            }`}
+            onClick={() => onSourceChange("lichess")}
+          >
+            Lichess
+          </button>
+        </div>
+        <label className="inline-flex cursor-pointer items-center gap-1 text-[10px] text-zinc-600">
+          <input
+            type="checkbox"
+            checked={showArrows}
+            onChange={(e) => onShowArrowsChange(e.target.checked)}
+            className="h-3 w-3 rounded border-zinc-300"
+          />
+          Arrows
+        </label>
+      </div>
+
+      {/* Source description */}
+      <div className="text-[10px] text-zinc-500">
+        {source === "masters" ? "Master games (2200+ FIDE)" : "Blitz/Rapid/Classical • Ratings 1600+"}
       </div>
 
       {error ? (
@@ -79,7 +122,16 @@ export function LichessBookTab(props: Props) {
                 return (
                   <div
                     key={m.san}
-                    className="grid grid-cols-[72px_68px_1fr] items-center gap-2 rounded-lg px-1 py-0.5"
+                    className="grid cursor-pointer grid-cols-[72px_68px_1fr] items-center gap-2 rounded-lg px-1 py-0.5 transition-colors hover:bg-zinc-100"
+                    onClick={() => onMoveClick?.(m.san, m.uci)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        onMoveClick?.(m.san, m.uci);
+                      }
+                    }}
                   >
                     <div className="min-w-0 truncate text-[10px] font-medium text-zinc-900">{m.san}</div>
                     <div className="text-[10px] font-medium text-zinc-700">{formatGameCount(m.total)}</div>
@@ -93,7 +145,7 @@ export function LichessBookTab(props: Props) {
                   </div>
                 );
               })}
-              <div className="text-[10px] text-zinc-500">Showing top 12 moves.</div>
+              <div className="text-[10px] text-zinc-500">Click a move to play it. Showing top 12.</div>
             </>
           ) : (
             <div className="text-[10px] text-zinc-600">No explorer data for this position.</div>

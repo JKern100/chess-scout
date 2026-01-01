@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Chess } from "chess.js";
 import { Chessboard } from "react-chessboard";
+import { useChessSounds } from "@/hooks/useChessSounds";
 
 export type Side = "white" | "black";
 
@@ -31,6 +32,7 @@ export type ChessBoardCoreState = {
 
 type Props = {
   initialFen?: string;
+  soundEnabled?: boolean;
   arrows?: any[] | ((state: ChessBoardCoreState) => any[]);
   squareStyles?: Record<string, React.CSSProperties> | ((state: ChessBoardCoreState) => Record<string, React.CSSProperties>);
   specialArrow?:
@@ -48,7 +50,7 @@ const PLAYER_SIDE_STORAGE_KEY = "chessscout_player_side";
 
 const BOARD_HEIGHT_STORAGE_KEY = "chessscout_analysis_board_height_px";
 
-export function ChessBoardCore({ initialFen, arrows, squareStyles, specialArrow, leftPanel, aboveBoard, belowBoard, onPieceDrop, underBoard, children }: Props) {
+export function ChessBoardCore({ initialFen, soundEnabled = true, arrows, squareStyles, specialArrow, leftPanel, aboveBoard, belowBoard, onPieceDrop, underBoard, children }: Props) {
   const initialGame = useMemo(() => {
     const g = new Chess();
     if (initialFen) {
@@ -85,64 +87,7 @@ export function ChessBoardCore({ initialFen, arrows, squareStyles, specialArrow,
 
   const fen = game.fen();
 
-  const audioCtxRef = useRef<AudioContext | null>(null);
-  const audioUnlockedRef = useRef(false);
-
-  function ensureAudioUnlocked() {
-    if (audioUnlockedRef.current) return;
-    if (typeof window === "undefined") return;
-
-    const Ctx = (window as any).AudioContext ?? (window as any).webkitAudioContext;
-    if (!Ctx) return;
-
-    if (!audioCtxRef.current) {
-      audioCtxRef.current = new Ctx();
-    }
-
-    const ctx = audioCtxRef.current;
-    if (!ctx) return;
-
-    // Try to resume; if it works we consider audio unlocked.
-    void ctx.resume().then(() => {
-      audioUnlockedRef.current = true;
-    });
-  }
-
-  function playMoveClick() {
-    if (typeof window === "undefined") return;
-    if (!audioUnlockedRef.current) return;
-
-    const ctx = audioCtxRef.current;
-    if (!ctx) return;
-
-    const now = ctx.currentTime;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-
-    // Short percussive click.
-    osc.type = "square";
-    osc.frequency.setValueAtTime(880, now);
-    osc.frequency.exponentialRampToValueAtTime(220, now + 0.03);
-
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(0.18, now + 0.005);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.045);
-
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-
-    osc.start(now);
-    osc.stop(now + 0.05);
-
-    osc.onended = () => {
-      try {
-        osc.disconnect();
-        gain.disconnect();
-      } catch {
-        // ignore
-      }
-    };
-  }
+  const { playMoveSound } = useChessSounds(soundEnabled);
 
   useEffect(() => {
     setIsMounted(true);
@@ -206,7 +151,8 @@ export function ChessBoardCore({ initialFen, arrows, squareStyles, specialArrow,
       // those padding edges while staying square.
       const w = Math.max(1, Math.floor(el.clientWidth));
       const h = Math.max(1, Math.floor(el.clientHeight));
-      const raw = Math.max(1, Math.min(w, h));
+      const FRAME_PAD_PX = 12;
+      const raw = Math.max(1, Math.min(w, h) - FRAME_PAD_PX * 2);
       const square = Math.max(1, Math.floor(raw / 8));
       setBoardContainerSizePx(square * 8);
     };
@@ -216,18 +162,6 @@ export function ChessBoardCore({ initialFen, arrows, squareStyles, specialArrow,
     ro.observe(el);
     return () => ro.disconnect();
   }, [isLg]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    const unlock = () => ensureAudioUnlocked();
-    window.addEventListener("pointerdown", unlock, { passive: true });
-    window.addEventListener("keydown", unlock);
-    return () => {
-      window.removeEventListener("pointerdown", unlock);
-      window.removeEventListener("keydown", unlock);
-    };
-  }, []);
 
   function setPlayerSide(side: Side) {
     setPlayerSideState(side);
@@ -305,7 +239,10 @@ export function ChessBoardCore({ initialFen, arrows, squareStyles, specialArrow,
     setFenHistory((prev) => {
       const last = prev[prev.length - 1];
       if (last === nextFen) return prev;
-      playMoveClick();
+      const san = typeof lastSan === "string" ? lastSan : "";
+      const isCapture = san.includes("x");
+      playMoveSound(isCapture);
+
       return [...prev, nextFen];
     });
     setRedoFens([]);
@@ -476,13 +413,14 @@ export function ChessBoardCore({ initialFen, arrows, squareStyles, specialArrow,
               <div className="min-w-0 overflow-y-auto overflow-x-hidden p-0">{resolvedLeftPanel}</div>
             </div>
 
-            <div className="flex min-w-0 flex-1 flex-col items-stretch justify-center lg:max-w-[calc(100vh-100px)]">
-              {resolvedAboveBoard ? <div className="min-w-0">{resolvedAboveBoard}</div> : null}
+            <div className="flex min-w-0 flex-1 flex-col items-stretch justify-start lg:max-w-[calc(100vh-100px)]">
+              {resolvedAboveBoard ? <div className="w-full min-w-0">{resolvedAboveBoard}</div> : null}
 
-              <div className="flex min-w-0 items-center justify-center overflow-hidden rounded-lg bg-neutral-900 shadow-md" style={{ height: boardHeightPx }}>
-                <div ref={boardSlotRef} className="relative flex h-full w-full min-w-0 items-center justify-center p-3">
-                  <div className="flex min-w-0 items-center justify-center" style={{ width: boardWidth, height: boardWidth }}>
-                    <div data-chessscout-board={boardId} className="overflow-hidden" style={{ width: boardWidth, height: boardWidth }}>
+              <div className="relative flex min-w-0 items-start justify-center" style={{ height: boardHeightPx }}>
+                <div ref={boardSlotRef} className="flex h-full w-full min-w-0 items-center justify-center overflow-hidden">
+                  <div className="inline-flex max-h-full max-w-full items-center justify-center rounded-lg bg-neutral-900 p-3 shadow-2xl">
+                    <div className="flex min-w-0 items-center justify-center" style={{ width: boardWidth, height: boardWidth }}>
+                      <div data-chessscout-board={boardId} className="overflow-hidden" style={{ width: boardWidth, height: boardWidth }}>
                       {specialMarkerEnd ? (
                         <style>{`
                           [data-chessscout-board="${boardId}"] svg path[marker-end="${specialMarkerEnd}"] {
@@ -529,53 +467,54 @@ export function ChessBoardCore({ initialFen, arrows, squareStyles, specialArrow,
                           },
                         }}
                       />
+                      </div>
                     </div>
                   </div>
-
-                  <div
-                    className="absolute bottom-0 left-0 right-0 h-4 cursor-ns-resize"
-                    onPointerDown={(e) => {
-                      if (typeof window === "undefined") return;
-                      const pointerId = e.pointerId;
-                      resizeDragRef.current = { startY: e.clientY, startHeight: boardHeightPx, pointerId };
-                      try {
-                        (e.currentTarget as HTMLDivElement).setPointerCapture(pointerId);
-                      } catch {
-                        // ignore
-                      }
-                    }}
-                    onPointerMove={(e) => {
-                      const drag = resizeDragRef.current;
-                      if (!drag || drag.pointerId !== e.pointerId) return;
-                      const dy = e.clientY - drag.startY;
-                      const next = drag.startHeight + dy;
-                      setBoardHeightPx(Math.max(340, Math.min(next, maxBoardHeightPx)));
-                    }}
-                    onPointerUp={(e) => {
-                      const drag = resizeDragRef.current;
-                      if (!drag || drag.pointerId !== e.pointerId) return;
-                      resizeDragRef.current = null;
-                      try {
-                        (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId);
-                      } catch {
-                        // ignore
-                      }
-                    }}
-                    onPointerCancel={(e) => {
-                      const drag = resizeDragRef.current;
-                      if (!drag || drag.pointerId !== e.pointerId) return;
-                      resizeDragRef.current = null;
-                      try {
-                        (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId);
-                      } catch {
-                        // ignore
-                      }
-                    }}
-                  />
                 </div>
+
+                <div
+                  className="absolute bottom-0 left-0 right-0 h-4 cursor-ns-resize"
+                  onPointerDown={(e) => {
+                    if (typeof window === "undefined") return;
+                    const pointerId = e.pointerId;
+                    resizeDragRef.current = { startY: e.clientY, startHeight: boardHeightPx, pointerId };
+                    try {
+                      (e.currentTarget as HTMLDivElement).setPointerCapture(pointerId);
+                    } catch {
+                      // ignore
+                    }
+                  }}
+                  onPointerMove={(e) => {
+                    const drag = resizeDragRef.current;
+                    if (!drag || drag.pointerId !== e.pointerId) return;
+                    const dy = e.clientY - drag.startY;
+                    const next = drag.startHeight + dy;
+                    setBoardHeightPx(Math.max(340, Math.min(next, maxBoardHeightPx)));
+                  }}
+                  onPointerUp={(e) => {
+                    const drag = resizeDragRef.current;
+                    if (!drag || drag.pointerId !== e.pointerId) return;
+                    resizeDragRef.current = null;
+                    try {
+                      (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId);
+                    } catch {
+                      // ignore
+                    }
+                  }}
+                  onPointerCancel={(e) => {
+                    const drag = resizeDragRef.current;
+                    if (!drag || drag.pointerId !== e.pointerId) return;
+                    resizeDragRef.current = null;
+                    try {
+                      (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId);
+                    } catch {
+                      // ignore
+                    }
+                  }}
+                />
               </div>
 
-              {resolvedBelowBoard ? <div className="min-w-0">{resolvedBelowBoard}</div> : null}
+              {resolvedBelowBoard ? <div className="w-full min-w-0">{resolvedBelowBoard}</div> : null}
               {underBoard}
             </div>
 
@@ -588,9 +527,10 @@ export function ChessBoardCore({ initialFen, arrows, squareStyles, specialArrow,
         <div className="grid gap-4">
           <div className="flex flex-col gap-3">
             {resolvedAboveBoard ? <div>{resolvedAboveBoard}</div> : null}
-            <div className="flex items-center justify-center rounded-2xl bg-neutral-900 p-3">
-              <div ref={boardSlotRef} className="flex items-center justify-center" style={{ width: boardWidth, height: boardWidth }}>
-                <div data-chessscout-board={boardId} style={{ width: boardWidth, height: boardWidth }}>
+            <div className="flex items-center justify-center">
+              <div ref={boardSlotRef} className="inline-flex max-w-full items-center justify-center rounded-2xl bg-neutral-900 p-3 shadow-2xl">
+                <div className="flex items-center justify-center" style={{ width: boardWidth, height: boardWidth }}>
+                  <div data-chessscout-board={boardId} style={{ width: boardWidth, height: boardWidth }}>
                   {specialMarkerEnd ? (
                     <style>{`
                       [data-chessscout-board="${boardId}"] svg path[marker-end="${specialMarkerEnd}"] {
@@ -637,6 +577,7 @@ export function ChessBoardCore({ initialFen, arrows, squareStyles, specialArrow,
                       },
                     }}
                   />
+                  </div>
                 </div>
               </div>
             </div>
