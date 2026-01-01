@@ -33,7 +33,7 @@ export default async function Dashboard() {
 
     if (error) {
       return (
-        <div className="min-h-screen bg-zinc-50">
+        <div className="min-h-screen">
           <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-10">
             <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
               <div className="text-lg font-medium text-zinc-900">Dashboard</div>
@@ -176,7 +176,7 @@ export default async function Dashboard() {
 
     const msg = e instanceof Error ? e.message : String(e);
     return (
-      <div className="min-h-screen bg-zinc-50">
+      <div className="min-h-screen">
         <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-10">
           <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
             <div className="text-lg font-medium text-zinc-900">Dashboard</div>

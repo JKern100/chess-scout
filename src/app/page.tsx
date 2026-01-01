@@ -17,7 +17,7 @@ export default async function Home() {
   const { data: profile } = { data: null };
 
   return (
-    <div className="min-h-screen bg-zinc-50">
+    <div className="min-h-screen">
       <main className="mx-auto flex w-full max-w-5xl flex-col gap-10 px-6 py-12">
         <header className="flex flex-col gap-3">
           <div className="text-sm font-medium text-zinc-600">ChessScout</div>

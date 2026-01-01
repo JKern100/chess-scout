@@ -205,10 +205,25 @@ function inferResultFromPgn(pgn: string): "1-0" | "0-1" | "1/2-1/2" | "*" {
 }
 
 function parseDateRangeIso(params: { from: string | null; to: string | null }) {
-  const fromMs = params.from ? new Date(params.from).getTime() : NaN;
-  const toMs = params.to ? new Date(params.to).getTime() : NaN;
-  const fromIso = Number.isFinite(fromMs) ? new Date(fromMs).toISOString() : null;
-  const toIso = Number.isFinite(toMs) ? new Date(toMs).toISOString() : null;
+  const fromRaw = params.from?.trim() || null;
+  const toRaw = params.to?.trim() || null;
+
+  const isDateOnly = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s);
+
+  // For date-only strings, set `from` to start of day and `to` to end of day
+  // so that filtering includes all games on both boundary dates.
+  const fromIso = fromRaw
+    ? isDateOnly(fromRaw)
+      ? `${fromRaw}T00:00:00.000Z`
+      : new Date(fromRaw).toISOString()
+    : null;
+
+  const toIso = toRaw
+    ? isDateOnly(toRaw)
+      ? `${toRaw}T23:59:59.999Z`
+      : new Date(toRaw).toISOString()
+    : null;
+
   return { fromIso, toIso };
 }
 

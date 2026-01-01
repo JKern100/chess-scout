@@ -3,6 +3,9 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ImportSupervisor } from "@/components/imports/ImportSupervisor";
 import { ImportQueueProvider } from "@/context/ImportQueueContext";
+import { ActiveOpponentProvider } from "@/context/ActiveOpponentContext";
+import { GlobalNavBar } from "@/components/nav/GlobalNavBar";
+import { NavPaddingWrapper } from "@/components/nav/NavPaddingWrapper";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -30,7 +33,12 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <ImportSupervisor />
-        <ImportQueueProvider>{children}</ImportQueueProvider>
+        <ImportQueueProvider>
+          <ActiveOpponentProvider>
+            <GlobalNavBar />
+            <NavPaddingWrapper>{children}</NavPaddingWrapper>
+          </ActiveOpponentProvider>
+        </ImportQueueProvider>
       </body>
     </html>
   );

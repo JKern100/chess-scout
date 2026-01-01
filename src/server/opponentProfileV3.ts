@@ -169,8 +169,25 @@ export function buildOpponentProfileV3Addon(params: {
 }
 
 function parseDateRangeIso(params: { from: string | null; to: string | null }) {
-  const fromIso = params.from ? new Date(params.from).toISOString() : null;
-  const toIso = params.to ? new Date(params.to).toISOString() : null;
+  const fromRaw = params.from?.trim() || null;
+  const toRaw = params.to?.trim() || null;
+
+  const isDateOnly = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s);
+
+  // For date-only strings, set `from` to start of day and `to` to end of day
+  // so that filtering includes all games on both boundary dates.
+  const fromIso = fromRaw
+    ? isDateOnly(fromRaw)
+      ? `${fromRaw}T00:00:00.000Z`
+      : new Date(fromRaw).toISOString()
+    : null;
+
+  const toIso = toRaw
+    ? isDateOnly(toRaw)
+      ? `${toRaw}T23:59:59.999Z`
+      : new Date(toRaw).toISOString()
+    : null;
+
   return { fromIso, toIso };
 }
 

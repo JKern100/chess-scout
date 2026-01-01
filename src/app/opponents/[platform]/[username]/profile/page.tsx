@@ -32,12 +32,12 @@ export default async function OpponentProfilePage({ params }: { params: Promise<
   }
 
   return (
-    <div className="min-h-screen bg-zinc-50">
+    <div className="min-h-screen">
       <main className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-6 py-10">
         <header className="flex items-center justify-between gap-4">
           <div>
             <div className="text-xs font-medium text-zinc-600">ChessScout</div>
-            <div className="mt-1 text-sm font-medium text-zinc-900">Opponent Profile</div>
+            <div className="mt-1 text-sm font-medium text-zinc-900">Scout Report</div>
           </div>
           <Link
             href="/dashboard"

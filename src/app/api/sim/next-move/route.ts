@@ -55,8 +55,14 @@ export async function POST(request: Request) {
   const ratedRaw = String(body?.rated ?? "any");
   const rated = ratedRaw === "rated" ? "rated" : ratedRaw === "casual" ? "casual" : "any";
 
-  const from = typeof body?.from === "string" ? String(body.from) : null;
-  const to = typeof body?.to === "string" ? String(body.to) : null;
+  const fromRaw = typeof body?.from === "string" ? String(body.from).trim() : null;
+  const toRaw = typeof body?.to === "string" ? String(body.to).trim() : null;
+
+  // Convert date-only strings to proper ISO timestamps.
+  // `from` should be start of day, `to` should be end of day to include all games on boundary dates.
+  const isDateOnly = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s);
+  const from = fromRaw && fromRaw.trim() ? (isDateOnly(fromRaw) ? `${fromRaw}T00:00:00.000Z` : new Date(fromRaw).toISOString()) : null;
+  const to = toRaw && toRaw.trim() ? (isDateOnly(toRaw) ? `${toRaw}T23:59:59.999Z` : new Date(toRaw).toISOString()) : null;
 
   if (!username) {
     return NextResponse.json({ error: "username is required" }, { status: 400 });
@@ -159,8 +165,8 @@ export async function POST(request: Request) {
       in_is_opponent_move: params.isOpponentMove,
       in_speeds: speedsFilter === null ? null : speedsFilter,
       in_rated: rated,
-      in_from: from ? new Date(from).toISOString() : null,
-      in_to: to ? new Date(to).toISOString() : null,
+      in_from: from,
+      in_to: to,
     });
 
     if (error) {

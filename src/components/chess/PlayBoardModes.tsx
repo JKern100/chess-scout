@@ -27,6 +27,7 @@ import { StyleSpectrumBar } from "@/components/profile/StyleSpectrumBar";
 import { useImportsRealtime } from "@/lib/hooks/useImportsRealtime";
 import { fetchLichessStats, type LichessExplorerMove, type ExplorerSource } from "@/lib/lichess/explorer";
 import { useImportQueue } from "@/context/ImportQueueContext";
+import { useActiveOpponent } from "@/context/ActiveOpponentContext";
 
 type Props = {
   initialFen?: string;
@@ -451,9 +452,26 @@ export function PlayBoardModes({ initialFen }: Props) {
   const savedLineId = searchParams.get("saved_line_id");
   const modeParam = searchParams.get("mode");
 
-  const [opponentUsername, setOpponentUsername] = useState<string>("");
+  const { activeOpponent, setActiveOpponent, availableOpponents: globalAvailableOpponents } = useActiveOpponent();
+  const [opponentUsername, setOpponentUsernameLocal] = useState<string>("");
   const [availableOpponents, setAvailableOpponents] = useState<Array<{ platform: string; username: string }>>([]);
   const { imports } = useImportsRealtime();
+
+  // Sync local opponent username with global active opponent
+  useEffect(() => {
+    if (activeOpponent?.username) {
+      setOpponentUsernameLocal(activeOpponent.username);
+    }
+  }, [activeOpponent]);
+
+  // When local opponent changes, update global context
+  const setOpponentUsername = useCallback((username: string) => {
+    setOpponentUsernameLocal(username);
+    const opp = availableOpponents.find(o => o.username.toLowerCase() === username.toLowerCase());
+    if (opp) {
+      setActiveOpponent({ platform: opp.platform as "lichess" | "chesscom", username: opp.username });
+    }
+  }, [availableOpponents, setActiveOpponent]);
   const {
     isImporting: globalIsImporting,
     progress: globalProgress,
@@ -524,43 +542,14 @@ export function PlayBoardModes({ initialFen }: Props) {
     }
   }, [modeParam]);
 
+  // Sync available opponents from global context
   useEffect(() => {
-    try {
-      const stored = window.localStorage.getItem("chessscout.opponent.lichess") ?? "";
-      if (stored.trim()) setOpponentUsername(stored.trim());
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    void fetch("/api/opponents")
-      .then((r) => r.json())
-      .then((json) => {
-        if (cancelled) return;
-        const rows = Array.isArray(json?.opponents) ? (json.opponents as any[]) : [];
-        const out = rows
-          .map((o) => ({ platform: String(o?.platform ?? "lichess"), username: String(o?.username ?? "").trim() }))
-          .filter((o) => o.username);
-        setAvailableOpponents(out);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setAvailableOpponents([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem("chessscout.opponent.lichess", opponentUsername.trim());
-    } catch {
-      // ignore
-    }
-  }, [opponentUsername]);
+    const out = globalAvailableOpponents.map((o) => ({
+      platform: o.platform,
+      username: o.username,
+    }));
+    setAvailableOpponents(out);
+  }, [globalAvailableOpponents]);
 
   useEffect(() => {
     if (availableOpponents.length === 0) return;

@@ -394,7 +394,7 @@ export function OpponentProfileClient({ platform, username }: Props) {
         cache: "no-store",
       });
       const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(String((json as any)?.error ?? "Failed to load profile"));
+      if (!res.ok) throw new Error(String((json as any)?.error ?? "Failed to load report"));
       setNeedsMigration(Boolean((json as any)?.needs_migration));
       setProfileRow(((json as any)?.opponent_profile as OpponentProfileRow | null) ?? null);
       setStoredStyleMarkers((((json as any)?.style_markers as StoredStyleMarker[]) ?? []).filter(Boolean));
@@ -402,7 +402,7 @@ export function OpponentProfileClient({ platform, username }: Props) {
       setProfileRow(null);
       setStoredStyleMarkers([]);
       setNeedsMigration(false);
-      setLoadError(e instanceof Error ? e.message : "Failed to load profile");
+      setLoadError(e instanceof Error ? e.message : "Failed to load report");
     } finally {
       setLoadBusy(false);
     }
@@ -467,7 +467,7 @@ export function OpponentProfileClient({ platform, username }: Props) {
       if (!res.ok) {
         const needs = Boolean((json as any)?.needs_migration);
         setNeedsMigration(needs);
-        throw new Error(String((json as any)?.error ?? "Failed to generate profile"));
+        throw new Error(String((json as any)?.error ?? "Failed to generate report"));
       }
       setNeedsMigration(Boolean((json as any)?.needs_migration));
       setProfileRow(((json as any)?.opponent_profile as OpponentProfileRow | null) ?? null);
@@ -501,7 +501,7 @@ export function OpponentProfileClient({ platform, username }: Props) {
         setActionMessage(null);
       }
     } catch (e) {
-      setActionMessage(e instanceof Error ? e.message : "Failed to generate profile");
+      setActionMessage(e instanceof Error ? e.message : "Failed to generate report");
     } finally {
       setGenerateBusy(false);
     }
@@ -511,11 +511,11 @@ export function OpponentProfileClient({ platform, username }: Props) {
     if (generateBusy) return;
     setActionMessage(null);
     if (needsMigration) {
-      setActionMessage("Opponent profile schema is missing v2 columns. Run scripts/supabase_opponent_profiles.sql in Supabase SQL editor.");
+      setActionMessage("Scout report schema is missing v2 columns. Run scripts/supabase_opponent_profiles.sql in Supabase SQL editor.");
       return;
     }
     if (!hasProfile) {
-      void runGenerate();
+      setFiltersOpen(true);
       return;
     }
     setConfirmOpen(true);
@@ -632,11 +632,11 @@ export function OpponentProfileClient({ platform, username }: Props) {
   }
 
   return (
-    <div className="min-h-screen bg-neutral-50 px-4 py-6 text-neutral-900 md:px-6">
+    <div className="min-h-screen px-4 py-6 text-neutral-900 md:px-6">
       <div className="mx-auto w-full max-w-6xl">
         <div className="flex items-start justify-between gap-4">
           <div className="grid gap-1">
-            <div className="text-[10px] font-medium text-neutral-500">Opponent Profile</div>
+            <div className="text-[10px] font-medium text-neutral-500">Scout Report</div>
             <div className="text-xl font-semibold tracking-tight text-neutral-900 md:text-2xl">
               {username}
             </div>
@@ -649,7 +649,7 @@ export function OpponentProfileClient({ platform, username }: Props) {
             disabled={generateBusy}
             className="inline-flex h-10 items-center justify-center rounded-xl border border-neutral-200 bg-white px-4 text-xs font-semibold text-neutral-900 shadow-sm hover:bg-neutral-50 disabled:opacity-60"
           >
-            {hasProfile ? "Regenerate Profile" : "Generate Profile"}
+            {hasProfile ? "Regenerate Report" : "Generate Report"}
           </button>
         </div>
 
@@ -686,20 +686,20 @@ export function OpponentProfileClient({ platform, username }: Props) {
           </div>
 
           <div className="md:col-span-12">
-            <BentoCard title="Current Profile">
+            <BentoCard title="Current Report">
         {loadBusy ? (
           <div className="text-sm text-neutral-700">Loading…</div>
         ) : loadError ? (
           <div className="text-sm text-neutral-700">{loadError}</div>
         ) : needsMigration ? (
           <div className="rounded-xl border border-neutral-200 bg-white p-4 text-sm text-neutral-700 shadow-sm">
-            Opponent profile schema is missing v1 columns. Run <span className="font-medium text-neutral-900">scripts/supabase_opponent_profiles.sql</span> in Supabase SQL editor.
+            Scout report schema is missing v1 columns. Run <span className="font-medium text-neutral-900">scripts/supabase_opponent_profiles.sql</span> in Supabase SQL editor.
           </div>
         ) : hasV2 && v2Profile && segment ? (
           <div className="grid gap-4">
             <div className="grid gap-1 text-xs text-neutral-700">
               <div>
-                <span className="font-medium text-neutral-900">Profile version:</span> v2
+                <span className="font-medium text-neutral-900">Report version:</span> v2
               </div>
               <div>
                 <span className="font-medium text-neutral-900">Last generated:</span> {formatDateTime(v2Profile.generated_at)}
@@ -1167,7 +1167,7 @@ export function OpponentProfileClient({ platform, username }: Props) {
           </div>
         ) : (
           <div className="rounded-xl border border-neutral-200 bg-white p-4 text-sm text-neutral-700 shadow-sm">
-            No opponent profile generated yet.
+            No scout report generated yet.
           </div>
         )}
             </BentoCard>
@@ -1176,16 +1176,16 @@ export function OpponentProfileClient({ platform, username }: Props) {
 
         {filtersOpen ? (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
-            <div className="w-full max-w-2xl rounded-2xl border border-neutral-200 bg-white p-4 shadow-2xl">
+            <div className="w-full max-w-2xl rounded-2xl border border-neutral-200 p-4 shadow-2xl">
               <div className="flex items-center justify-between gap-4">
                 <div>
-                  <div className="text-sm font-semibold text-neutral-900">{hasProfile ? "Regenerate Profile" : "Generate Profile"}</div>
+                  <div className="text-sm font-semibold text-neutral-900">{hasProfile ? "Regenerate Report" : "Generate Report"}</div>
                   <div className="mt-1 text-[10px] text-neutral-500">Select filters, then run generation.</div>
                 </div>
                 <button
                   type="button"
                   onClick={onCloseFilters}
-                  className="inline-flex h-9 items-center justify-center rounded-xl border border-neutral-200 bg-white px-3 text-xs font-semibold text-neutral-900 shadow-sm hover:bg-neutral-50"
+                  className="inline-flex h-9 items-center justify-center rounded-xl border border-neutral-200 px-3 text-xs font-semibold text-neutral-900 shadow-sm"
                 >
                   Close
                 </button>
@@ -1229,14 +1229,14 @@ export function OpponentProfileClient({ platform, username }: Props) {
 
         {confirmOpen ? (
           <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30 px-4">
-            <div className="w-full max-w-sm rounded-2xl border border-neutral-200 bg-white p-4 shadow-2xl">
-              <div className="text-sm font-semibold text-neutral-900">Regenerate profile?</div>
-              <div className="mt-2 text-xs leading-5 text-neutral-700">This will replace the existing profile for this opponent.</div>
+            <div className="w-full max-w-sm rounded-2xl border border-neutral-200 p-4 shadow-2xl">
+              <div className="text-sm font-semibold text-neutral-900">Regenerate report?</div>
+              <div className="mt-2 text-xs leading-5 text-neutral-700">This will replace the existing report for this opponent.</div>
               <div className="mt-4 flex items-center justify-end gap-2">
                 <button
                   type="button"
                   onClick={() => setConfirmOpen(false)}
-                  className="inline-flex h-9 items-center justify-center rounded-xl border border-neutral-200 bg-white px-4 text-xs font-semibold text-neutral-900 shadow-sm hover:bg-neutral-50"
+                  className="inline-flex h-9 items-center justify-center rounded-xl border border-neutral-200 px-3 text-xs font-semibold text-neutral-900 shadow-sm"
                 >
                   Cancel
                 </button>
