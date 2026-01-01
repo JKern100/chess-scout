@@ -78,6 +78,16 @@ begin
   end if;
 
   if not exists (
+    select 1 from pg_policies where schemaname = 'public' and tablename = 'opponent_move_events' and policyname = 'opponent_move_events_update_own'
+  ) then
+    create policy opponent_move_events_update_own
+      on public.opponent_move_events
+      for update
+      using (auth.uid() = profile_id)
+      with check (auth.uid() = profile_id);
+  end if;
+
+  if not exists (
     select 1 from pg_policies where schemaname = 'public' and tablename = 'opponent_move_events' and policyname = 'opponent_move_events_delete_own'
   ) then
     create policy opponent_move_events_delete_own

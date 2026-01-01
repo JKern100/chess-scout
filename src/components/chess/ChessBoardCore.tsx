@@ -69,6 +69,8 @@ export function ChessBoardCore({ initialFen, arrows, squareStyles, specialArrow,
   const [playerSide, setPlayerSideState] = useState<Side>("white");
   const [status, setStatus] = useState<string | null>(null);
 
+  const [isMounted, setIsMounted] = useState(false);
+
   const [isLg, setIsLg] = useState(false);
 
   const desktopRowRef = useRef<HTMLDivElement | null>(null);
@@ -76,12 +78,11 @@ export function ChessBoardCore({ initialFen, arrows, squareStyles, specialArrow,
 
   const boardSlotRef = useRef<HTMLDivElement | null>(null);
 
-  const [boardHeightPx, setBoardHeightPx] = useState<number>(() => {
-    // Default: ~60vh, clamped to a reasonable desktop size.
-    // (Cannot use window.innerHeight on the server.)
-    return 550;
-  });
+  const [boardContainerSizePx, setBoardContainerSizePx] = useState<number>(600);
+
+  const [boardHeightPx, setBoardHeightPx] = useState<number>(() => 550);
   const resizeDragRef = useRef<{ startY: number; startHeight: number; pointerId: number } | null>(null);
+
   const fen = game.fen();
 
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -144,6 +145,32 @@ export function ChessBoardCore({ initialFen, arrows, squareStyles, specialArrow,
   }
 
   useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem(BOARD_HEIGHT_STORAGE_KEY);
+      const n = Number(raw);
+      if (Number.isFinite(n) && n > 0) {
+        setBoardHeightPx(Math.round(n));
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(BOARD_HEIGHT_STORAGE_KEY, String(Math.round(boardHeightPx)));
+    } catch {
+      // ignore
+    }
+  }, [boardHeightPx]);
+
+  useEffect(() => {
     try {
       const saved = window.localStorage.getItem(PLAYER_SIDE_STORAGE_KEY);
       if (saved === "white" || saved === "black") {
@@ -171,30 +198,24 @@ export function ChessBoardCore({ initialFen, arrows, squareStyles, specialArrow,
   }, []);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const raw = window.localStorage.getItem(BOARD_HEIGHT_STORAGE_KEY);
-      const n = Number(raw);
-      if (Number.isFinite(n) && n > 0) {
-        setBoardHeightPx(Math.round(n));
-        return;
-      }
-    } catch {
-      // ignore
-    }
+    const el = boardSlotRef.current;
+    if (!el) return;
 
-    // Only if there was no saved value, compute from viewport.
-    setBoardHeightPx(Math.round(window.innerHeight * 0.6));
-  }, []);
+    const update = () => {
+      // boardSlotRef is the *padded* center container. We want the board to expand until it hits
+      // those padding edges while staying square.
+      const w = Math.max(1, Math.floor(el.clientWidth));
+      const h = Math.max(1, Math.floor(el.clientHeight));
+      const raw = Math.max(1, Math.min(w, h));
+      const square = Math.max(1, Math.floor(raw / 8));
+      setBoardContainerSizePx(square * 8);
+    };
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(BOARD_HEIGHT_STORAGE_KEY, String(Math.round(boardHeightPx)));
-    } catch {
-      // ignore
-    }
-  }, [boardHeightPx]);
+    update();
+    const ro = new ResizeObserver(() => update());
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [isLg]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -232,42 +253,34 @@ export function ChessBoardCore({ initialFen, arrows, squareStyles, specialArrow,
   }, []);
 
   const maxBoardHeightPx = useMemo(() => {
-    const MIN_PX = 300;
-    const MIN_SIDE_PX = 250;
-    const GAP_PX = 48;
-    const CENTER_PAD_PX = 32;
-    if (typeof window === "undefined") return Math.max(MIN_PX, 600);
+    const MIN_PX = 340;
+    const LEFT_PX = 260;
+    const RIGHT_PX = 360;
+    const GAP_PX = 24;
+    const CENTER_PAD_PX = 24;
+    if (!isMounted || typeof window === "undefined") return 650;
 
     const top = boardSlotRef.current?.getBoundingClientRect().top ?? 0;
-    const paddingAndHandle = 56;
+    const paddingAndHandle = 64;
     const maxByViewport = Math.max(MIN_PX, Math.floor(window.innerHeight - top - paddingAndHandle));
 
-    // Squish prevention:
-    // board width == board height (square).
-    // left+right columns must keep at least MIN_SIDE_PX each.
-    // subtract flex gaps between columns.
-    // also subtract center column horizontal padding so the board fits inside the black box.
-    const maxByWidth = Math.max(
-      MIN_PX,
-      Math.floor(desktopRowWidth - MIN_SIDE_PX * 2 - GAP_PX - CENTER_PAD_PX)
-    );
+    const maxByWidth = Math.max(MIN_PX, Math.floor(desktopRowWidth - LEFT_PX - RIGHT_PX - GAP_PX - CENTER_PAD_PX));
 
     return Math.max(MIN_PX, Math.min(maxByViewport, maxByWidth));
-  }, [desktopRowWidth]);
+  }, [desktopRowWidth, isMounted]);
 
   useEffect(() => {
-    // Clamp current height when constraints change (viewport resize or center column width changes).
     setBoardHeightPx((prev) => {
-      const MIN_PX = 300;
+      const MIN_PX = 340;
       return Math.max(MIN_PX, Math.min(prev, maxBoardHeightPx));
     });
   }, [maxBoardHeightPx]);
 
   const effectiveBoardSizePx = useMemo(() => {
-    const raw = Math.max(300, Math.min(Math.floor(boardHeightPx), Math.floor(maxBoardHeightPx)));
+    const raw = Math.max(300, Math.floor(boardContainerSizePx));
     const square = Math.max(1, Math.floor(raw / 8));
     return square * 8;
-  }, [boardHeightPx, maxBoardHeightPx]);
+  }, [boardContainerSizePx]);
 
   const boardWidth = effectiveBoardSizePx;
   const squareSize = Math.max(1, Math.floor(boardWidth / 8));
@@ -457,142 +470,118 @@ export function ChessBoardCore({ initialFen, arrows, squareStyles, specialArrow,
   return (
     <div className="min-w-0">
       {isLg ? (
-        <div
-          ref={desktopRowRef}
-          className="grid h-[85vh] min-w-0 w-full gap-6 overflow-hidden"
-          style={{ gridTemplateColumns: "minmax(250px, 0.5fr) max-content minmax(250px, 1.5fr)" }}
-        >
-          <div className="flex min-w-[250px] flex-col gap-4 overflow-hidden">
-            <div className="min-w-0">{resolvedLeftPanel}</div>
-          </div>
-
-          <div className="flex flex-col gap-3" style={{ width: boardWidth + 32 }}>
-            {resolvedAboveBoard ? <div className="min-w-0">{resolvedAboveBoard}</div> : null}
-
-            <div className="flex min-w-0 items-center justify-center overflow-hidden rounded-2xl bg-neutral-900 p-4">
-              <div className="flex w-full min-w-0 flex-col items-center justify-center">
-                <div
-                  ref={boardSlotRef}
-                  className="flex w-full min-w-0 items-center justify-center overflow-hidden"
-                  style={{ height: boardWidth }}
-                >
-                  <div
-                    data-chessscout-board={boardId}
-                    className="max-h-full max-w-full aspect-square overflow-hidden"
-                    style={{ width: boardWidth, height: boardWidth }}
-                  >
-                    {specialMarkerEnd ? (
-                      <style>{`
-                        [data-chessscout-board="${boardId}"] svg path[marker-end="${specialMarkerEnd}"] {
-                          filter:
-                            drop-shadow(0 0 2px rgba(34, 197, 94, ${glowStrong}))
-                            drop-shadow(0 0 10px rgba(34, 197, 94, ${glowMid}))
-                            drop-shadow(0 0 22px rgba(34, 197, 94, ${glowSoft}));
-                          stroke-linecap: round;
-                        }
-
-                        [data-chessscout-board="${boardId}"] svg marker[id^="${boardId}-arrowhead-0-"] polygon {
-                          filter:
-                            drop-shadow(0 0 2px rgba(34, 197, 94, ${glowStrong}))
-                            drop-shadow(0 0 10px rgba(34, 197, 94, ${glowMid}))
-                            drop-shadow(0 0 22px rgba(34, 197, 94, ${glowSoft}));
-                        }
-                      `}</style>
-                    ) : null}
-
-                    <Chessboard
-                      options={{
-                        id: boardId,
-                        position: fen,
-                        onPieceDrop: (args: any) => onPieceDrop(args, state),
-                        boardOrientation: playerSide,
-                        animationDurationInMs: 150,
-                        showNotation: false,
-                        allowDrawingArrows: false,
-                        arrows: resolvedArrows,
-                        squareStyles: resolvedSquareStyles,
-                        boardStyle: {
-                          width: "100%",
-                          height: "100%",
-                          display: "grid",
-                          gridTemplateColumns: `repeat(8, ${squareSize}px)`,
-                          gridTemplateRows: `repeat(8, ${squareSize}px)`,
-                          gap: 0,
-                          lineHeight: 0,
-                        },
-                        squareStyle: {
-                          width: squareSize,
-                          height: squareSize,
-                          lineHeight: 0,
-                        },
-                      }}
-                    />
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  className="mt-2 inline-flex w-full cursor-ns-resize select-none touch-none items-center justify-center rounded-xl border border-zinc-700/50 bg-neutral-900 py-1 text-[10px] font-medium tabular-nums text-zinc-200 hover:bg-neutral-800"
-                  title={`Board height: ${Math.round(boardHeightPx)}px`}
-                  aria-label="Resize board vertically"
-                  onPointerDown={(e) => {
-                    if (typeof window === "undefined") return;
-                    e.preventDefault();
-                    e.stopPropagation();
-
-                    const target = e.currentTarget as HTMLButtonElement;
-                    resizeDragRef.current = { startY: e.clientY, startHeight: boardHeightPx, pointerId: e.pointerId };
-
-                    document.body.style.userSelect = "none";
-                    try {
-                      target.setPointerCapture(e.pointerId);
-                    } catch {
-                      // ignore
-                    }
-
-                    const onMove = (ev: PointerEvent) => {
-                      const drag = resizeDragRef.current;
-                      if (!drag) return;
-                      if (ev.pointerId !== drag.pointerId) return;
-                      ev.preventDefault();
-
-                      const dy = ev.clientY - drag.startY;
-                      const next = drag.startHeight + dy;
-                      const MIN_PX = 300;
-                      const clamped = Math.max(MIN_PX, Math.min(Math.floor(next), maxBoardHeightPx));
-                      setBoardHeightPx(clamped);
-                    };
-
-                    const cleanup = (ev?: PointerEvent) => {
-                      const drag = resizeDragRef.current;
-                      if (!drag) return;
-                      if (ev && ev.pointerId !== drag.pointerId) return;
-
-                      resizeDragRef.current = null;
-                      document.body.style.userSelect = "";
-                      target.removeEventListener("pointermove", onMove);
-                      target.removeEventListener("pointerup", cleanup);
-                      target.removeEventListener("pointercancel", cleanup);
-                      target.removeEventListener("lostpointercapture", cleanup);
-                    };
-
-                    target.addEventListener("pointermove", onMove, { passive: false });
-                    target.addEventListener("pointerup", cleanup);
-                    target.addEventListener("pointercancel", cleanup);
-                    target.addEventListener("lostpointercapture", cleanup);
-                  }}
-                >
-                  Drag to resize: {Math.round(Math.max(300, Math.min(boardHeightPx, maxBoardHeightPx)))}px
-                </button>
-              </div>
+        <div className="flex h-[calc(100vh-80px)] min-w-0 flex-col gap-3 px-6 lg:flex-row lg:items-stretch lg:justify-center">
+          <div ref={desktopRowRef} className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-stretch lg:justify-center">
+            <div className="flex w-[260px] min-w-0 flex-none flex-col overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
+              <div className="min-w-0 overflow-y-auto overflow-x-hidden p-0">{resolvedLeftPanel}</div>
             </div>
 
-            {resolvedBelowBoard ? <div>{resolvedBelowBoard}</div> : null}
-            {underBoard}
-          </div>
+            <div className="flex min-w-0 flex-1 flex-col items-stretch justify-center lg:max-w-[calc(100vh-100px)]">
+              {resolvedAboveBoard ? <div className="min-w-0">{resolvedAboveBoard}</div> : null}
 
-          <div className="flex min-w-[250px] flex-col gap-4 overflow-hidden">
-            <div className="flex h-full min-w-0 flex-col gap-4 overflow-y-auto overflow-x-hidden">{children(state)}</div>
+              <div className="flex min-w-0 items-center justify-center overflow-hidden rounded-lg bg-neutral-900 shadow-md" style={{ height: boardHeightPx }}>
+                <div ref={boardSlotRef} className="relative flex h-full w-full min-w-0 items-center justify-center p-3">
+                  <div className="flex min-w-0 items-center justify-center" style={{ width: boardWidth, height: boardWidth }}>
+                    <div data-chessscout-board={boardId} className="overflow-hidden" style={{ width: boardWidth, height: boardWidth }}>
+                      {specialMarkerEnd ? (
+                        <style>{`
+                          [data-chessscout-board="${boardId}"] svg path[marker-end="${specialMarkerEnd}"] {
+                            filter:
+                              drop-shadow(0 0 2px rgba(34, 197, 94, ${glowStrong}))
+                              drop-shadow(0 0 10px rgba(34, 197, 94, ${glowMid}))
+                              drop-shadow(0 0 22px rgba(34, 197, 94, ${glowSoft}));
+                            stroke-linecap: round;
+                          }
+
+                          [data-chessscout-board="${boardId}"] svg marker[id^="${boardId}-arrowhead-0-"] polygon {
+                            filter:
+                              drop-shadow(0 0 2px rgba(34, 197, 94, ${glowStrong}))
+                              drop-shadow(0 0 10px rgba(34, 197, 94, ${glowMid}))
+                              drop-shadow(0 0 22px rgba(34, 197, 94, ${glowSoft}));
+                          }
+                        `}</style>
+                      ) : null}
+
+                      <Chessboard
+                        options={{
+                          id: boardId,
+                          position: fen,
+                          onPieceDrop: (args: any) => onPieceDrop(args, state),
+                          boardOrientation: playerSide,
+                          animationDurationInMs: 150,
+                          showNotation: false,
+                          allowDrawingArrows: false,
+                          arrows: resolvedArrows,
+                          squareStyles: resolvedSquareStyles,
+                          boardStyle: {
+                            width: boardWidth,
+                            height: boardWidth,
+                            display: "grid",
+                            gridTemplateColumns: `repeat(8, ${squareSize}px)`,
+                            gridTemplateRows: `repeat(8, ${squareSize}px)`,
+                            gap: 0,
+                            lineHeight: 0,
+                          },
+                          squareStyle: {
+                            width: squareSize,
+                            height: squareSize,
+                            lineHeight: 0,
+                          },
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  <div
+                    className="absolute bottom-0 left-0 right-0 h-4 cursor-ns-resize"
+                    onPointerDown={(e) => {
+                      if (typeof window === "undefined") return;
+                      const pointerId = e.pointerId;
+                      resizeDragRef.current = { startY: e.clientY, startHeight: boardHeightPx, pointerId };
+                      try {
+                        (e.currentTarget as HTMLDivElement).setPointerCapture(pointerId);
+                      } catch {
+                        // ignore
+                      }
+                    }}
+                    onPointerMove={(e) => {
+                      const drag = resizeDragRef.current;
+                      if (!drag || drag.pointerId !== e.pointerId) return;
+                      const dy = e.clientY - drag.startY;
+                      const next = drag.startHeight + dy;
+                      setBoardHeightPx(Math.max(340, Math.min(next, maxBoardHeightPx)));
+                    }}
+                    onPointerUp={(e) => {
+                      const drag = resizeDragRef.current;
+                      if (!drag || drag.pointerId !== e.pointerId) return;
+                      resizeDragRef.current = null;
+                      try {
+                        (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId);
+                      } catch {
+                        // ignore
+                      }
+                    }}
+                    onPointerCancel={(e) => {
+                      const drag = resizeDragRef.current;
+                      if (!drag || drag.pointerId !== e.pointerId) return;
+                      resizeDragRef.current = null;
+                      try {
+                        (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId);
+                      } catch {
+                        // ignore
+                      }
+                    }}
+                  />
+                </div>
+              </div>
+
+              {resolvedBelowBoard ? <div className="min-w-0">{resolvedBelowBoard}</div> : null}
+              {underBoard}
+            </div>
+
+            <div className="flex w-[360px] min-w-0 flex-none flex-col overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
+              <div className="flex h-full min-w-0 flex-col gap-4 overflow-y-auto overflow-x-hidden p-3">{children(state)}</div>
+            </div>
           </div>
         </div>
       ) : (
@@ -600,8 +589,8 @@ export function ChessBoardCore({ initialFen, arrows, squareStyles, specialArrow,
           <div className="flex flex-col gap-3">
             {resolvedAboveBoard ? <div>{resolvedAboveBoard}</div> : null}
             <div className="flex items-center justify-center rounded-2xl bg-neutral-900 p-3">
-              <div ref={boardSlotRef} className="flex max-h-full max-w-full items-center justify-center">
-                <div data-chessscout-board={boardId} className="aspect-square max-h-full max-w-full">
+              <div ref={boardSlotRef} className="flex items-center justify-center" style={{ width: boardWidth, height: boardWidth }}>
+                <div data-chessscout-board={boardId} style={{ width: boardWidth, height: boardWidth }}>
                   {specialMarkerEnd ? (
                     <style>{`
                       [data-chessscout-board="${boardId}"] svg path[marker-end="${specialMarkerEnd}"] {
