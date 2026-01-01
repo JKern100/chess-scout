@@ -723,9 +723,28 @@ export function OpponentProfileClient({ platform, username }: Props) {
     categoryFilter: styleMarkerCategoryFilter ?? undefined,
   });
 
-  // Get alerts and available categories from any axis marker
+  // Get alerts, available categories, and narratives from any axis marker
   const styleMarkerAlerts = axisAggro?.metrics_json?.contextual?.alerts ?? [];
   const styleMarkerAvailableCategories: string[] = axisAggro?.metrics_json?.contextual?.available_categories ?? [];
+  const styleMarkerNarratives: Array<{
+    axis: string;
+    category: string;
+    color: string;
+    deviation_type: string;
+    ratio: number;
+    narrative: string;
+  }> =
+    axisAggro?.metrics_json?.contextual?.narratives ??
+    axisAggro?.metrics_json?.contextual?.pro_scout_matrix?.narratives ??
+    axisAggro?.metrics_json?.contextual?.context_matrix?.narratives ??
+    [];
+
+  // Filter narratives by current context selection
+  const filteredNarratives = styleMarkerNarratives.filter((n) => {
+    if (styleMarkerCategoryFilter && n.category !== styleMarkerCategoryFilter && n.category !== "overall") return false;
+    if (styleMarkerColorFilter !== "overall" && n.color !== styleMarkerColorFilter && n.color !== "overall") return false;
+    return true;
+  });
 
   function OpeningBarList(props: { rows: V2OpeningRow[]; title: string; sampleWarning?: string | null; ctx?: V3Context | null }) {
     const { rows, title, sampleWarning, ctx } = props;
@@ -1005,7 +1024,7 @@ export function OpponentProfileClient({ platform, username }: Props) {
                 <div className="flex items-center gap-2">
                   <span
                     title={
-                      "Dot shows where this opponent falls relative to the global benchmark tick (center). Left/right labels are the two style extremes."
+                      "Style Markers — Scoring Methodology\n\nWhat you’re seeing\n- Each bar is an axis-based style metric computed from your opponent’s games (not from engine evaluation).\n- The yellow dot = opponent’s value on an absolute scale.\n- The gray tick = benchmark (category baseline).\n- Left/right labels are the two chess-style extremes for that axis.\n\nHow the 0–100 scale is computed\n- We compute a raw metric (e.g., queen-trade rate, opposite-castling rate, aggression events/game).\n- We map raw values to an absolute 0–100 position using a fixed maximum for that axis (example: rates use max=1.0, aggression uses a larger cap).\n  position = clamp(100 * raw / max).\n\nBenchmarks (the gray tick)\n- Benchmarks are opening-category baselines (Open, Semi-Open, Closed, Indian, Flank).\n- For each selected category, we compare opponent raw vs benchmark raw.\n- The tooltip also shows the multiplicative ratio (opponent ÷ benchmark) to quantify how many times above/below baseline they are.\n\nChess definitions of each axis\n- Queen Trades: fraction of games where BOTH queens are off the board by move 20 (ply 40).\n- Aggression: opponent captures + checks by move 15 (from their perspective).\n- Game Length: average full-move length, excluding very short games (<10 full moves).\n- Opposite Castling: rate of opposite-side castling (O-O vs O-O-O), excluding very short games (<10 full moves).\n- Castling Timing: average ply when the opponent castles (O-O or O-O-O).\n\nContext Matrix (Opening × Color)\n- The Opening pills choose the cluster (category). The Color pills choose the side (opponent as White or as Black).\n- If a category+color has fewer than 5 games, it’s hidden to avoid noisy conclusions.\n\nInterpretation tips\n- Large dot–tick gaps indicate a meaningful deviation from baseline for that opening family.\n- Use category+color contexts to spot repertoire-dependent “personality shifts” (e.g., sharp in Open as Black, quiet in Closed as White)."
                     }
                     className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-neutral-200 bg-white text-[10px] font-semibold text-neutral-700 shadow-sm"
                   >
@@ -1032,6 +1051,7 @@ export function OpponentProfileClient({ platform, username }: Props) {
                         <button
                           type="button"
                           onClick={() => setStyleMarkerCategoryFilter(null)}
+                          title="All openings: aggregate across every opening family in the dataset."
                           className={`inline-flex h-6 items-center justify-center rounded-lg px-2 text-[10px] font-medium transition-colors ${
                             styleMarkerCategoryFilter === null
                               ? "bg-blue-500 text-white shadow-sm"
@@ -1045,6 +1065,19 @@ export function OpponentProfileClient({ platform, username }: Props) {
                             key={cat}
                             type="button"
                             onClick={() => setStyleMarkerCategoryFilter(cat)}
+                            title={
+                              cat === "Open"
+                                ? "Open Games: 1.e4 e5 (symmetrical king-pawn). Often tactical and open lines."
+                                : cat === "Semi-Open"
+                                ? "Semi-Open Games: 1.e4 with Black replying NOT 1...e5 (e.g., Sicilian, French, Caro-Kann)."
+                                : cat === "Closed"
+                                ? "Closed Games: 1.d4 d5 (Queen's Pawn with ...d5). Often slower, structured play."
+                                : cat === "Indian"
+                                ? "Indian Defenses: 1.d4 with Black replying NOT 1...d5 (e.g., King's Indian, Nimzo, Grünfeld)."
+                                : cat === "Flank"
+                                ? "Flank Openings: 1.c4 or 1.Nf3 (English/Reti structures). Often flexible transpositions."
+                                : "Opening category"
+                            }
                             className={`inline-flex h-6 items-center justify-center rounded-lg px-2 text-[10px] font-medium transition-colors ${
                               styleMarkerCategoryFilter === cat
                                 ? "bg-blue-500 text-white shadow-sm"
@@ -1105,6 +1138,28 @@ export function OpponentProfileClient({ platform, username }: Props) {
                       ))}
                     </div>
                   )}
+
+                  {/* Pro-Scout Narratives */}
+                  <div className="rounded-lg bg-blue-50 border border-blue-200 p-3">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-blue-600 text-sm">🔍</span>
+                      <span className="text-[11px] font-semibold text-blue-800">Scout&apos;s Analysis</span>
+                    </div>
+                    {filteredNarratives.length > 0 ? (
+                      <div className="grid gap-2">
+                        {filteredNarratives.slice(0, 3).map((n, idx) => (
+                          <div key={idx} className="text-[10px] text-blue-900 leading-relaxed">
+                            {n.narrative}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-[10px] text-blue-900/70">
+                        No signature deviations detected in this context.
+                        {" "}Narratives trigger when a metric is &gt;1.5x above or &lt;0.67x below the category benchmark (min 10 games).
+                      </div>
+                    )}
+                  </div>
 
                   <div className="grid gap-3">
                     <StyleSpectrumBar

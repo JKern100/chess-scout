@@ -60,6 +60,48 @@ type ContextScore = {
   sample_size: number;
 };
 
+/** Color-split value with sample size */
+type ColorValue = {
+  value: number;
+  n: number;
+};
+
+/** Cluster data for a single axis (Pro-Scout format) */
+type ClusterAxisData = {
+  white: ColorValue;
+  black: ColorValue;
+  benchmark: number;
+};
+
+/** Full cluster data for all axes */
+type ClusterData = {
+  queen_trade: ClusterAxisData;
+  aggression: ClusterAxisData;
+  endgame_skill: ClusterAxisData;
+  long_game_rate: ClusterAxisData;
+};
+
+/** Pro-Scout 6-Score Matrix format */
+type ProScoutMatrix = {
+  /** Summary values (overall, white, black) for each axis */
+  summary: {
+    queen_trade: { white: number; black: number; overall: number };
+    aggression: { white: number; black: number; overall: number };
+    endgame_skill: { white: number; black: number; overall: number };
+    long_game_rate: { white: number; black: number; overall: number };
+  };
+  /** Per-cluster breakdown with white/black splits */
+  clusters: Record<string, ClusterData>;
+  /** Available categories (>15% of games) */
+  available_categories: OpeningCategory[];
+  /** Sample sizes */
+  sample_sizes: {
+    white: number;
+    black: number;
+    total: number;
+  };
+};
+
 /** Full metrics for a category+color context */
 type CategoryColorContext = {
   category: OpeningCategory;
@@ -70,6 +112,8 @@ type CategoryColorContext = {
   game_length: ContextScore;
   castling_timing: ContextScore;
   opposite_castling: ContextScore;
+  endgame_skill: ContextScore;
+  long_game_rate: ContextScore;
 };
 
 /** The Context Matrix: all categories × both colors */
@@ -86,6 +130,16 @@ type ContextMatrix = {
   };
 };
 
+/** Signature deviation narrative */
+export type SignatureNarrative = {
+  axis: string;
+  category: OpeningCategory | "overall";
+  color: "white" | "black" | "overall";
+  deviation_type: "high" | "low";
+  ratio: number;
+  narrative: string;
+};
+
 type ContextualMarkerData = {
   summary: {
     overall: ContextMetrics;
@@ -94,6 +148,10 @@ type ContextualMarkerData = {
   };
   /** Full Context Matrix for UI category+color selection */
   context_matrix: ContextMatrix;
+  /** Pro-Scout 6-Score Matrix */
+  pro_scout_matrix: ProScoutMatrix;
+  /** Signature deviation narratives */
+  narratives: SignatureNarrative[];
   alerts: Array<{
     type: string;
     message: string;
@@ -410,6 +468,115 @@ function computeMetrics(games: StyleMarkerGame[]) {
   };
 }
 
+/** Generate signature deviation narratives based on context matrix */
+function generateNarratives(
+  contextMatrix: CategoryColorContext[],
+  proScoutMatrix: ProScoutMatrix,
+  benchmarks: Map<string, BenchRow>
+): SignatureNarrative[] {
+  const narratives: SignatureNarrative[] = [];
+  const DEVIATION_THRESHOLD = 1.5; // Trigger narrative if ratio > 1.5x or < 0.5x
+
+  // Axis display names and templates
+  const axisConfig: Record<string, { name: string; highTemplate: string; lowTemplate: string }> = {
+    queen_trade: {
+      name: "Queen Trades",
+      highTemplate: "trades queens {ratio}x more than the {benchmark} average. They seek endgames early; avoid tension releases.",
+      lowTemplate: "avoids queen trades ({ratio}x below {benchmark} average). They prefer complex middlegames with queens on the board.",
+    },
+    aggression: {
+      name: "Aggression",
+      highTemplate: "plays {ratio}x more aggressively than the {benchmark} baseline. Expect early attacks, sacrifices, and tactical complications.",
+      lowTemplate: "plays {ratio}x more passively than typical. They prefer quiet, positional buildups over early aggression.",
+    },
+    endgame_skill: {
+      name: "Endgame Skill",
+      highTemplate: "wins {ratio}x more often in long games. They are dangerous in endgames; avoid simplification unless you have a clear advantage.",
+      lowTemplate: "struggles in long games ({ratio}x below average win rate). Consider steering toward endgames if you have technique.",
+    },
+    long_game_rate: {
+      name: "Long Games",
+      highTemplate: "reaches move 40+ in {ratio}x more games than average. They are patient grinders; prepare for marathon battles.",
+      lowTemplate: "finishes games quickly ({ratio}x fewer long games). They either win fast or resign early; don't let them dictate the pace.",
+    },
+  };
+
+  // Check each category+color context for significant deviations
+  for (const entry of contextMatrix) {
+    if (entry.sample_size < 10) continue; // Need sufficient sample
+
+    for (const axisKey of ["queen_trade", "aggression", "endgame_skill", "long_game_rate"] as const) {
+      const axisData = entry[axisKey];
+      if (!axisData || axisData.benchmark === 0) continue;
+
+      const ratio = axisData.value / axisData.benchmark;
+      const config = axisConfig[axisKey];
+      if (!config) continue;
+
+      if (ratio >= DEVIATION_THRESHOLD) {
+        narratives.push({
+          axis: axisKey,
+          category: entry.category,
+          color: entry.color,
+          deviation_type: "high",
+          ratio: Math.round(ratio * 100) / 100,
+          narrative: `In ${entry.category} games as ${entry.color === "white" ? "White" : "Black"}, this player ${config.highTemplate
+            .replace("{ratio}", ratio.toFixed(1))
+            .replace("{benchmark}", entry.category)}`,
+        });
+      } else if (ratio <= 1 / DEVIATION_THRESHOLD) {
+        const inverseRatio = 1 / ratio;
+        narratives.push({
+          axis: axisKey,
+          category: entry.category,
+          color: entry.color,
+          deviation_type: "low",
+          ratio: Math.round(inverseRatio * 100) / 100,
+          narrative: `In ${entry.category} games as ${entry.color === "white" ? "White" : "Black"}, this player ${config.lowTemplate
+            .replace("{ratio}", inverseRatio.toFixed(1))
+            .replace("{benchmark}", entry.category)}`,
+        });
+      }
+    }
+  }
+
+  // Also check overall color asymmetries
+  const { summary } = proScoutMatrix;
+  for (const axisKey of ["queen_trade", "aggression", "endgame_skill", "long_game_rate"] as const) {
+    const axisSum = summary[axisKey];
+    if (axisSum.white === 0 || axisSum.black === 0) continue;
+
+    const colorRatio = axisSum.white / axisSum.black;
+    const config = axisConfig[axisKey];
+    if (!config) continue;
+
+    if (colorRatio >= 2) {
+      narratives.push({
+        axis: axisKey,
+        category: "overall",
+        color: "white",
+        deviation_type: "high",
+        ratio: Math.round(colorRatio * 100) / 100,
+        narrative: `This player's ${config.name.toLowerCase()} is ${colorRatio.toFixed(1)}x higher as White than as Black. Their style shifts dramatically based on color.`,
+      });
+    } else if (colorRatio <= 0.5) {
+      const inverseRatio = 1 / colorRatio;
+      narratives.push({
+        axis: axisKey,
+        category: "overall",
+        color: "black",
+        deviation_type: "high",
+        ratio: Math.round(inverseRatio * 100) / 100,
+        narrative: `This player's ${config.name.toLowerCase()} is ${inverseRatio.toFixed(1)}x higher as Black than as White. Their style shifts dramatically based on color.`,
+      });
+    }
+  }
+
+  // Sort by ratio (most significant first) and limit to top 5
+  narratives.sort((a, b) => b.ratio - a.ratio);
+  return narratives.slice(0, 5);
+}
+
 export async function calculateAndStoreMarkers(params: {
   supabase: any;
   profileId: string;
@@ -480,6 +647,12 @@ export async function calculateAndStoreMarkers(params: {
       const castleBench = catBench.avg_castle_move != null ? Number(catBench.avg_castle_move) * 2 : 0; // Convert to ply
       const oppCastleBench = catBench.opposite_castle_rate != null ? Number(catBench.opposite_castle_rate) : 0;
 
+      // Compute endgame skill: long game win rate vs overall win rate
+      const longGameBench = catBench.long_game_rate != null ? Number(catBench.long_game_rate) : 0.3;
+      const endgameSkill = catMetrics.long_game_win_rate ?? 0;
+      // Endgame skill benchmark: assume baseline is ~0.5 (50% win rate in long games)
+      const endgameSkillBench = 0.5;
+
       contextMatrix.push({
         category: cat,
         color,
@@ -512,6 +685,18 @@ export async function calculateAndStoreMarkers(params: {
           value: catMetrics.opposite_castle_rate,
           benchmark: oppCastleBench,
           diff_ratio: calcDiffRatio(catMetrics.opposite_castle_rate, oppCastleBench),
+          sample_size: filtered.length,
+        },
+        endgame_skill: {
+          value: endgameSkill,
+          benchmark: endgameSkillBench,
+          diff_ratio: calcDiffRatio(endgameSkill, endgameSkillBench),
+          sample_size: filtered.length,
+        },
+        long_game_rate: {
+          value: catMetrics.long_game_rate,
+          benchmark: longGameBench,
+          diff_ratio: calcDiffRatio(catMetrics.long_game_rate, longGameBench),
           sample_size: filtered.length,
         },
       });
@@ -561,6 +746,78 @@ export async function calculateAndStoreMarkers(params: {
     }
   }
 
+  // Build Pro-Scout 6-Score Matrix (clusters format)
+  const proScoutClusters: Record<string, ClusterData> = {};
+  for (const cat of availableCategories) {
+    const whiteEntry = contextMatrix.find((e) => e.category === cat && e.color === "white");
+    const blackEntry = contextMatrix.find((e) => e.category === cat && e.color === "black");
+    const catBench = benchmarks.get(cat);
+    if (!catBench) continue;
+
+    const queenBench = catBench.queen_trade_m20_rate != null ? Number(catBench.queen_trade_m20_rate) : 0;
+    const aggroBench = catBench.aggression_m15_avg != null ? Number(catBench.aggression_m15_avg) : 0;
+    const longGameBench = catBench.long_game_rate != null ? Number(catBench.long_game_rate) : 0.3;
+    const endgameSkillBench = 0.5;
+
+    proScoutClusters[cat] = {
+      queen_trade: {
+        white: { value: whiteEntry?.queen_trade.value ?? 0, n: whiteEntry?.sample_size ?? 0 },
+        black: { value: blackEntry?.queen_trade.value ?? 0, n: blackEntry?.sample_size ?? 0 },
+        benchmark: queenBench,
+      },
+      aggression: {
+        white: { value: whiteEntry?.aggression.value ?? 0, n: whiteEntry?.sample_size ?? 0 },
+        black: { value: blackEntry?.aggression.value ?? 0, n: blackEntry?.sample_size ?? 0 },
+        benchmark: aggroBench,
+      },
+      endgame_skill: {
+        white: { value: whiteEntry?.endgame_skill.value ?? 0, n: whiteEntry?.sample_size ?? 0 },
+        black: { value: blackEntry?.endgame_skill.value ?? 0, n: blackEntry?.sample_size ?? 0 },
+        benchmark: endgameSkillBench,
+      },
+      long_game_rate: {
+        white: { value: whiteEntry?.long_game_rate.value ?? 0, n: whiteEntry?.sample_size ?? 0 },
+        black: { value: blackEntry?.long_game_rate.value ?? 0, n: blackEntry?.sample_size ?? 0 },
+        benchmark: longGameBench,
+      },
+    };
+  }
+
+  const proScoutMatrix: ProScoutMatrix = {
+    summary: {
+      queen_trade: {
+        white: whiteMetrics.queen_trade_rate,
+        black: blackMetrics.queen_trade_rate,
+        overall: overallMetrics.queen_trade_rate,
+      },
+      aggression: {
+        white: whiteMetrics.aggression_avg,
+        black: blackMetrics.aggression_avg,
+        overall: overallMetrics.aggression_avg,
+      },
+      endgame_skill: {
+        white: whiteMetrics.long_game_win_rate ?? 0,
+        black: blackMetrics.long_game_win_rate ?? 0,
+        overall: overallMetrics.long_game_win_rate ?? 0,
+      },
+      long_game_rate: {
+        white: whiteMetrics.long_game_rate,
+        black: blackMetrics.long_game_rate,
+        overall: overallMetrics.long_game_rate,
+      },
+    },
+    clusters: proScoutClusters,
+    available_categories: availableCategories,
+    sample_sizes: {
+      white: whiteGames.length,
+      black: blackGames.length,
+      total: games.length,
+    },
+  };
+
+  // Generate signature deviation narratives
+  const narratives: SignatureNarrative[] = generateNarratives(contextMatrix, proScoutMatrix, benchmarks);
+
   // Build contextual marker data with full Context Matrix
   const contextualData: ContextualMarkerData = {
     summary: {
@@ -569,6 +826,8 @@ export async function calculateAndStoreMarkers(params: {
       black: blackMetrics,
     },
     context_matrix: fullContextMatrix,
+    pro_scout_matrix: proScoutMatrix,
+    narratives,
     alerts,
   };
 
@@ -610,6 +869,8 @@ export async function calculateAndStoreMarkers(params: {
         alerts: alerts.filter((a) => a.type.includes(axisKey.replace("_", ""))),
         available_categories: availableCategories,
         context_matrix: fullContextMatrix,
+        pro_scout_matrix: proScoutMatrix,
+        narratives,
       },
       ...extra,
     };
