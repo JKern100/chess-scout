@@ -226,6 +226,18 @@ function spectrumPctFromDiffRatio(diffRatio: unknown) {
   return 50 + (clamped / 0.4) * 50;
 }
 
+/** Map axis key to context_matrix field name */
+function getAxisFieldName(axisKey: string): "queen_trade" | "aggression" | "game_length" | "castling_timing" | "opposite_castling" {
+  switch (axisKey) {
+    case "queen_trade_rate": return "queen_trade";
+    case "aggression_m15_avg": return "aggression";
+    case "avg_game_length": return "game_length";
+    case "avg_castle_ply": return "castling_timing";
+    case "opposite_castle_rate": return "opposite_castling";
+    default: return "aggression";
+  }
+}
+
 /** Extract absolute spectrum data from stored style marker metrics_json */
 function extractSpectrumData(marker: StoredStyleMarker | null, config: {
   valueKey: string;
@@ -234,17 +246,49 @@ function extractSpectrumData(marker: StoredStyleMarker | null, config: {
   countKey?: string;
   totalKey?: string;
   colorFilter?: "overall" | "white" | "black";
+  categoryFilter?: string;
 }): StyleSpectrumData | undefined {
   if (!marker?.metrics_json) return undefined;
   const m = marker.metrics_json;
   const colorFilter = config.colorFilter ?? "overall";
+  const categoryFilter = config.categoryFilter ?? null;
   
-  // Try to get color-specific value from contextual data if available
   let opponentRaw: number | undefined;
+  let benchmarkRaw: number | undefined;
   let sampleSize: number | undefined;
+  let category: string | undefined = typeof m.category === "string" ? m.category : undefined;
   
   const contextual = m.contextual;
-  if (contextual?.summary && colorFilter !== "overall") {
+  const contextMatrix = contextual?.context_matrix?.matrix as Array<{
+    category: string;
+    color: "white" | "black";
+    sample_size: number;
+    queen_trade: { value: number; benchmark: number; sample_size: number };
+    aggression: { value: number; benchmark: number; sample_size: number };
+    game_length: { value: number; benchmark: number; sample_size: number };
+    castling_timing: { value: number; benchmark: number; sample_size: number };
+    opposite_castling: { value: number; benchmark: number; sample_size: number };
+  }> | undefined;
+
+  // Try to get value from Context Matrix if category+color specified
+  if (contextMatrix && categoryFilter && colorFilter !== "overall") {
+    const axisField = getAxisFieldName(config.valueKey);
+    const entry = contextMatrix.find(
+      (e) => e.category === categoryFilter && e.color === colorFilter
+    );
+    if (entry) {
+      const axisData = entry[axisField];
+      if (axisData) {
+        opponentRaw = axisData.value;
+        benchmarkRaw = axisData.benchmark;
+        sampleSize = axisData.sample_size;
+        category = categoryFilter;
+      }
+    }
+  }
+  
+  // Try color-only filter from summary (no category filter)
+  if (opponentRaw === undefined && contextual?.summary && colorFilter !== "overall" && !categoryFilter) {
     const colorData = contextual.summary[colorFilter];
     if (colorData && typeof colorData.value === "number") {
       opponentRaw = colorData.value;
@@ -256,19 +300,20 @@ function extractSpectrumData(marker: StoredStyleMarker | null, config: {
   if (opponentRaw === undefined) {
     opponentRaw = typeof m[config.valueKey] === "number" ? m[config.valueKey] : undefined;
   }
-  
-  const benchmarkRaw = typeof m[config.benchmarkKey] === "number" ? m[config.benchmarkKey] : undefined;
+  if (benchmarkRaw === undefined) {
+    benchmarkRaw = typeof m[config.benchmarkKey] === "number" ? m[config.benchmarkKey] : undefined;
+  }
   
   if (opponentRaw === undefined || benchmarkRaw === undefined) return undefined;
   
-  const category = typeof m.category === "string" ? m.category : undefined;
   const numerator = config.countKey && typeof m[config.countKey] === "number" ? m[config.countKey] : undefined;
   if (sampleSize === undefined) {
     sampleSize = config.totalKey && typeof m[config.totalKey] === "number" ? m[config.totalKey] : undefined;
   }
   
-  // Get alerts for this axis if available
+  // Get alerts and available categories
   const alerts = contextual?.alerts ?? [];
+  const availableCategories = contextual?.available_categories ?? [];
   
   return {
     opponentRaw,
@@ -279,6 +324,7 @@ function extractSpectrumData(marker: StoredStyleMarker | null, config: {
     sampleSize,
     alerts,
     colorFilter,
+    availableCategories,
   };
 }
 
@@ -500,6 +546,7 @@ export function OpponentProfileClient({ platform, username }: Props) {
   const [styleMarkersOpen, setStyleMarkersOpen] = useState(true);
   const [generateStyleMarkers, setGenerateStyleMarkers] = useState(true);
   const [styleMarkerColorFilter, setStyleMarkerColorFilter] = useState<"overall" | "white" | "black">("overall");
+  const [styleMarkerCategoryFilter, setStyleMarkerCategoryFilter] = useState<string | null>(null);
 
   const runGenerate = useCallback(async () => {
     if (generateBusy) return;
@@ -645,34 +692,40 @@ export function OpponentProfileClient({ platform, username }: Props) {
     benchmarkKey: "benchmark",
     maxRaw: 1.0,
     colorFilter: styleMarkerColorFilter,
+    categoryFilter: styleMarkerCategoryFilter ?? undefined,
   });
   const aggroData = extractSpectrumData(axisAggro, {
     valueKey: "aggression_m15_avg",
     benchmarkKey: "benchmark",
     maxRaw: 8.0,
     colorFilter: styleMarkerColorFilter,
+    categoryFilter: styleMarkerCategoryFilter ?? undefined,
   });
   const lengthData = extractSpectrumData(axisLength, {
     valueKey: "avg_game_length",
     benchmarkKey: "benchmark",
     maxRaw: 80.0, // Scale: 0-80 moves
     colorFilter: styleMarkerColorFilter,
+    categoryFilter: styleMarkerCategoryFilter ?? undefined,
   });
   const oppCastleData = extractSpectrumData(axisOppCastle, {
     valueKey: "opposite_castle_rate",
     benchmarkKey: "benchmark",
     maxRaw: 1.0,
     colorFilter: styleMarkerColorFilter,
+    categoryFilter: styleMarkerCategoryFilter ?? undefined,
   });
   const castleData = extractSpectrumData(axisCastle, {
     valueKey: "avg_castle_ply",
     benchmarkKey: "benchmark_ply",
     maxRaw: 40.0, // Scale: 0-40 plies (move 20)
     colorFilter: styleMarkerColorFilter,
+    categoryFilter: styleMarkerCategoryFilter ?? undefined,
   });
 
-  // Get alerts from any axis marker (they all have the same alerts)
+  // Get alerts and available categories from any axis marker
   const styleMarkerAlerts = axisAggro?.metrics_json?.contextual?.alerts ?? [];
+  const styleMarkerAvailableCategories: string[] = axisAggro?.metrics_json?.contextual?.available_categories ?? [];
 
   function OpeningBarList(props: { rows: V2OpeningRow[]; title: string; sampleWarning?: string | null; ctx?: V3Context | null }) {
     const { rows, title, sampleWarning, ctx } = props;
@@ -970,26 +1023,73 @@ export function OpponentProfileClient({ platform, username }: Props) {
             >
               {styleMarkersOpen ? (
                 <div className="grid gap-4">
-                  {/* Color Context Toggle Pills */}
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-medium text-neutral-500">View as:</span>
-                    <div className="flex gap-1">
-                      {(["overall", "white", "black"] as const).map((color) => (
+                  {/* Context Toggles: Category + Color */}
+                  <div className="flex flex-wrap items-center gap-3">
+                    {/* Category Pills */}
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-medium text-neutral-500">Opening:</span>
+                      <div className="flex flex-wrap gap-1">
                         <button
-                          key={color}
                           type="button"
-                          onClick={() => setStyleMarkerColorFilter(color)}
+                          onClick={() => setStyleMarkerCategoryFilter(null)}
                           className={`inline-flex h-6 items-center justify-center rounded-lg px-2 text-[10px] font-medium transition-colors ${
-                            styleMarkerColorFilter === color
-                              ? "bg-yellow-500 text-white shadow-sm"
+                            styleMarkerCategoryFilter === null
+                              ? "bg-blue-500 text-white shadow-sm"
                               : "bg-neutral-100 text-neutral-600 hover:bg-neutral-200"
                           }`}
                         >
-                          {color === "overall" ? "Overall" : color === "white" ? "♔ White" : "♚ Black"}
+                          All
                         </button>
-                      ))}
+                        {styleMarkerAvailableCategories.map((cat) => (
+                          <button
+                            key={cat}
+                            type="button"
+                            onClick={() => setStyleMarkerCategoryFilter(cat)}
+                            className={`inline-flex h-6 items-center justify-center rounded-lg px-2 text-[10px] font-medium transition-colors ${
+                              styleMarkerCategoryFilter === cat
+                                ? "bg-blue-500 text-white shadow-sm"
+                                : "bg-neutral-100 text-neutral-600 hover:bg-neutral-200"
+                            }`}
+                          >
+                            {cat}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Color Pills */}
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-medium text-neutral-500">Color:</span>
+                      <div className="flex gap-1">
+                        {(["overall", "white", "black"] as const).map((color) => (
+                          <button
+                            key={color}
+                            type="button"
+                            onClick={() => setStyleMarkerColorFilter(color)}
+                            className={`inline-flex h-6 items-center justify-center rounded-lg px-2 text-[10px] font-medium transition-colors ${
+                              styleMarkerColorFilter === color
+                                ? "bg-yellow-500 text-white shadow-sm"
+                                : "bg-neutral-100 text-neutral-600 hover:bg-neutral-200"
+                            }`}
+                          >
+                            {color === "overall" ? "Overall" : color === "white" ? "♔ White" : "♚ Black"}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </div>
+
+                  {/* Current Context Label */}
+                  {(styleMarkerCategoryFilter || styleMarkerColorFilter !== "overall") && (
+                    <div className="text-[10px] text-neutral-500">
+                      Showing: <span className="font-medium text-neutral-700">
+                        {styleMarkerCategoryFilter ?? "All openings"} × {styleMarkerColorFilter === "overall" ? "Both colors" : styleMarkerColorFilter === "white" ? "White" : "Black"}
+                      </span>
+                      {queenData?.sampleSize != null && (
+                        <span className="ml-1">({queenData.sampleSize} games)</span>
+                      )}
+                    </div>
+                  )}
 
                   {/* Scout's Alert Badge */}
                   {styleMarkerAlerts.length > 0 && (

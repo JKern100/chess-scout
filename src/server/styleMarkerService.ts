@@ -52,20 +52,48 @@ type ContextMetrics = {
   long_game_win_rate: number | null;
 };
 
+/** Per-axis scores for a single category+color context */
+type ContextScore = {
+  value: number;
+  benchmark: number;
+  diff_ratio: number;
+  sample_size: number;
+};
+
+/** Full metrics for a category+color context */
+type CategoryColorContext = {
+  category: OpeningCategory;
+  color: "white" | "black";
+  sample_size: number;
+  queen_trade: ContextScore;
+  aggression: ContextScore;
+  game_length: ContextScore;
+  castling_timing: ContextScore;
+  opposite_castling: ContextScore;
+};
+
+/** The Context Matrix: all categories × both colors */
+type ContextMatrix = {
+  /** List of categories with ≥5 games */
+  available_categories: OpeningCategory[];
+  /** Full breakdown by category and color */
+  matrix: CategoryColorContext[];
+  /** Overall summary (all games) */
+  overall: {
+    white: { sample_size: number };
+    black: { sample_size: number };
+    total: { sample_size: number };
+  };
+};
+
 type ContextualMarkerData = {
   summary: {
     overall: ContextMetrics;
     white: ContextMetrics;
     black: ContextMetrics;
   };
-  contexts: Array<{
-    category: OpeningCategory;
-    color: ColorFilter;
-    opponent_value: number;
-    benchmark_value: number;
-    diff_ratio: number;
-    sample_size: number;
-  }>;
+  /** Full Context Matrix for UI category+color selection */
+  context_matrix: ContextMatrix;
   alerts: Array<{
     type: string;
     message: string;
@@ -411,39 +439,95 @@ export async function calculateAndStoreMarkers(params: {
 
   const bench = benchmarks.get(category) ?? null;
 
-  // Compute contextual metrics (overall, white, black, and significant categories)
+  // Compute contextual metrics (overall, white, black)
   const whiteGames = filterByColor(games, "white");
   const blackGames = filterByColor(games, "black");
-  const significantCategories = getSignificantCategories(games);
 
   const overallMetrics = computeExtendedMetrics(games, category);
   const whiteMetrics = { ...computeExtendedMetrics(whiteGames, category), color: "white" as ColorFilter };
   const blackMetrics = { ...computeExtendedMetrics(blackGames, category), color: "black" as ColorFilter };
 
-  // Build contexts for significant category+color combinations
-  const contexts: ContextualMarkerData["contexts"] = [];
-  for (const cat of significantCategories) {
+  // Build full Context Matrix: ALL categories × both colors (not just dominant category)
+  const allCategories: OpeningCategory[] = ["Open", "Semi-Open", "Closed", "Indian", "Flank"];
+  const availableCategories: OpeningCategory[] = [];
+  const contextMatrix: CategoryColorContext[] = [];
+
+  // Helper to compute diff_ratio
+  const calcDiffRatio = (value: number | null, benchmark: number | null): number => {
+    if (value == null || benchmark == null || benchmark === 0) return 0;
+    return (value - benchmark) / benchmark;
+  };
+
+  for (const cat of allCategories) {
     const catBench = benchmarks.get(cat);
     if (!catBench) continue;
 
-    for (const color of ["all", "white", "black"] as ColorFilter[]) {
+    for (const color of ["white", "black"] as const) {
       const filtered = filterByColor(filterByCategory(games, cat), color);
       if (filtered.length < 5) continue; // Skip if too few games
 
-      const catMetrics = computeExtendedMetrics(filtered, cat);
-      const benchAggression = catBench.aggression_m15_avg ?? 0;
-      const diffRatio = benchAggression > 0 ? (catMetrics.aggression_avg - benchAggression) / benchAggression : 0;
+      // Track this category as available
+      if (!availableCategories.includes(cat)) {
+        availableCategories.push(cat);
+      }
 
-      contexts.push({
+      const catMetrics = computeExtendedMetrics(filtered, cat);
+
+      // Build ContextScore for each axis
+      const queenBench = catBench.queen_trade_m20_rate != null ? Number(catBench.queen_trade_m20_rate) : 0;
+      const aggroBench = catBench.aggression_m15_avg != null ? Number(catBench.aggression_m15_avg) : 0;
+      const lengthBench = catBench.avg_game_length != null ? Number(catBench.avg_game_length) : 0;
+      const castleBench = catBench.avg_castle_move != null ? Number(catBench.avg_castle_move) * 2 : 0; // Convert to ply
+      const oppCastleBench = catBench.opposite_castle_rate != null ? Number(catBench.opposite_castle_rate) : 0;
+
+      contextMatrix.push({
         category: cat,
         color,
-        opponent_value: catMetrics.aggression_avg,
-        benchmark_value: benchAggression,
-        diff_ratio: diffRatio,
         sample_size: filtered.length,
+        queen_trade: {
+          value: catMetrics.queen_trade_rate,
+          benchmark: queenBench,
+          diff_ratio: calcDiffRatio(catMetrics.queen_trade_rate, queenBench),
+          sample_size: filtered.length,
+        },
+        aggression: {
+          value: catMetrics.aggression_avg,
+          benchmark: aggroBench,
+          diff_ratio: calcDiffRatio(catMetrics.aggression_avg, aggroBench),
+          sample_size: filtered.length,
+        },
+        game_length: {
+          value: catMetrics.avg_game_length ?? 0,
+          benchmark: lengthBench,
+          diff_ratio: calcDiffRatio(catMetrics.avg_game_length, lengthBench),
+          sample_size: filtered.length,
+        },
+        castling_timing: {
+          value: catMetrics.avg_castle_ply ?? 0,
+          benchmark: castleBench,
+          diff_ratio: calcDiffRatio(catMetrics.avg_castle_ply, castleBench),
+          sample_size: filtered.length,
+        },
+        opposite_castling: {
+          value: catMetrics.opposite_castle_rate,
+          benchmark: oppCastleBench,
+          diff_ratio: calcDiffRatio(catMetrics.opposite_castle_rate, oppCastleBench),
+          sample_size: filtered.length,
+        },
       });
     }
   }
+
+  // Build the full Context Matrix
+  const fullContextMatrix: ContextMatrix = {
+    available_categories: availableCategories,
+    matrix: contextMatrix,
+    overall: {
+      white: { sample_size: whiteGames.length },
+      black: { sample_size: blackGames.length },
+      total: { sample_size: games.length },
+    },
+  };
 
   // Detect signature deviations (3x difference between colors)
   const alerts: ContextualMarkerData["alerts"] = [];
@@ -477,14 +561,14 @@ export async function calculateAndStoreMarkers(params: {
     }
   }
 
-  // Build contextual marker data
+  // Build contextual marker data with full Context Matrix
   const contextualData: ContextualMarkerData = {
     summary: {
       overall: overallMetrics,
       white: whiteMetrics,
       black: blackMetrics,
     },
-    contexts,
+    context_matrix: fullContextMatrix,
     alerts,
   };
 
@@ -524,7 +608,8 @@ export async function calculateAndStoreMarkers(params: {
           black: { value: getAxisValue(blackMetrics), sample_size: blackMetrics.sample_size },
         },
         alerts: alerts.filter((a) => a.type.includes(axisKey.replace("_", ""))),
-        available_categories: significantCategories,
+        available_categories: availableCategories,
+        context_matrix: fullContextMatrix,
       },
       ...extra,
     };

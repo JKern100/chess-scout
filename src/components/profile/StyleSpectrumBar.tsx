@@ -19,6 +19,8 @@ export type StyleSpectrumData = {
   alerts?: Array<{ type: string; message: string; white_value: number; black_value: number }>;
   /** Current color filter being displayed */
   colorFilter?: "overall" | "white" | "black";
+  /** Available opening categories from Context Matrix */
+  availableCategories?: string[];
 };
 
 export function StyleSpectrumBar(props: {
