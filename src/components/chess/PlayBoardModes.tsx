@@ -18,7 +18,7 @@ import {
 import { useSearchParams } from "next/navigation";
 import { getBestMoveForPlay, type EngineScore } from "@/lib/engine/engineService";
 import { ChessBoardCore, type ChessBoardCoreState } from "./ChessBoardCore";
-import { SimulationBoard } from "./SimulationBoard";
+import { SimulationRightSidebar } from "./SimulationRightSidebar";
 import { AnalysisBoard } from "./AnalysisBoard";
 import { LichessBookTab } from "./LichessBookTab";
 import { OpponentFiltersPanel } from "@/components/chess/OpponentFiltersPanel";
@@ -71,6 +71,8 @@ type Mode = "simulation" | "analysis";
 type Strategy = "proportional" | "random";
 
 type AnalysisRightTab = "stats" | "filters" | "preferences" | "lichess";
+
+type SimulationRightTab = "filters" | "settings";
 
 type SavedLine = {
   id: string;
@@ -542,6 +544,10 @@ export function PlayBoardModes({ initialFen }: Props) {
   const [engineTakeoverFlash, setEngineTakeoverFlash] = useState(false);
   const prevEngineTakeoverRef = useRef(false);
 
+  // Simulation right sidebar state
+  const [simRightTab, setSimRightTab] = useState<SimulationRightTab>("filters");
+  const [opponentPlaysColor, setOpponentPlaysColor] = useState<"white" | "black">("black");
+
   useEffect(() => {
     const prev = prevEngineTakeoverRef.current;
     prevEngineTakeoverRef.current = engineTakeover;
@@ -632,6 +638,8 @@ export function PlayBoardModes({ initialFen }: Props) {
   const [clockExpired, setClockExpired] = useState(false);
   const [whiteMs, setWhiteMs] = useState<number>(3 * 60_000);
   const [blackMs, setBlackMs] = useState<number>(3 * 60_000);
+  const [gameStarted, setGameStarted] = useState(false);
+  const [firstMoveMade, setFirstMoveMade] = useState(false); // Track if white has made first move (for clock start)
 
   const tickRef = useRef<{ lastTs: number | null }>({ lastTs: null });
   const simMetaRef = useRef<{ turn: "w" | "b"; isGameOver: boolean }>({ turn: "w", isGameOver: false });
@@ -649,6 +657,8 @@ export function PlayBoardModes({ initialFen }: Props) {
     setClockRunning(false);
     setClockPaused(false);
     setClockExpired(false);
+    setGameStarted(false);
+    setFirstMoveMade(false);
     tickRef.current.lastTs = null;
   }, [selectedTc]);
 
@@ -673,6 +683,12 @@ export function PlayBoardModes({ initialFen }: Props) {
     if (!clockRunning) return;
     if (clockPaused) return;
     if (clockExpired) return;
+    // Standard chess: clock doesn't start until white makes first move
+    // After first move, clock ticks for whoever's turn it is
+    if (!firstMoveMade) {
+      tickRef.current.lastTs = null;
+      return;
+    }
 
     const id = window.setInterval(() => {
       if (simMetaRef.current.isGameOver) return;
@@ -683,6 +699,7 @@ export function PlayBoardModes({ initialFen }: Props) {
       const dt = Math.max(0, Math.min(2000, now - last));
       const turn = simMetaRef.current.turn;
 
+      // Clock ticks for the player whose turn it is
       if (turn === "w") {
         setWhiteMs((prev) => {
           const next = prev - dt;
@@ -707,7 +724,7 @@ export function PlayBoardModes({ initialFen }: Props) {
     }, 100);
 
     return () => window.clearInterval(id);
-  }, [mode, clocksEnabled, clockRunning, clockPaused, clockExpired]);
+  }, [mode, clocksEnabled, clockRunning, clockPaused, clockExpired, firstMoveMade]);
 
   const pauseClocks = useCallback(() => {
     if (!clocksEnabled) return;
@@ -728,6 +745,34 @@ export function PlayBoardModes({ initialFen }: Props) {
     if (!clocksEnabled) return;
     resetClocksToSelected();
   }, [clocksEnabled, resetClocksToSelected]);
+
+  // Start game - used when opponent plays white (user clicks Play to begin)
+  // Also used to resume after pause
+  const startGame = useCallback(() => {
+    if (gameStarted && !clockPaused) return; // Already running
+    if (clockExpired) return;
+    
+    if (!gameStarted) {
+      // Starting a new game
+      setGameStarted(true);
+      if (clocksEnabled) {
+        setClockRunning(true);
+        setClockPaused(false);
+        tickRef.current.lastTs = Date.now();
+      }
+    } else if (clockPaused) {
+      // Resuming from pause
+      setClockPaused(false);
+      tickRef.current.lastTs = Date.now();
+    }
+  }, [gameStarted, clockPaused, clockExpired, clocksEnabled]);
+
+  // Auto-pause clocks when switching to Analysis mode
+  useEffect(() => {
+    if (mode === "analysis" && clocksEnabled && clockRunning && !clockPaused && gameStarted) {
+      setClockPaused(true);
+    }
+  }, [mode, clocksEnabled, clockRunning, clockPaused, gameStarted]);
 
   const [analysisShowArrow, setAnalysisShowArrow] = useState(true);
   const [analysisShowEngineBest, setAnalysisShowEngineBest] = useState(false);
@@ -1109,6 +1154,9 @@ export function PlayBoardModes({ initialFen }: Props) {
     if (state.isGameOver) return;
 
     const fen = fenOverride ?? state.fen;
+    
+    // Check if this is the first move of the game (opponent plays white)
+    const isFirstMoveOfGame = state.game.history().length === 0;
 
     setSimBusy(true);
     setSimError(null);
@@ -1152,6 +1200,14 @@ export function PlayBoardModes({ initialFen }: Props) {
           }
         }
 
+        // If this was the first move, mark it and start clock for black
+        if (isFirstMoveOfGame) {
+          setFirstMoveMade(true);
+          if (clocksEnabled) {
+            tickRef.current.lastTs = Date.now();
+          }
+        }
+
         setLastOpponentMove({ uci: bestUci, san: played.san ?? null });
         setOpponentCommentary("Out of opponent history — engine is now playing for the opponent.");
         state.setStatus(null);
@@ -1180,6 +1236,14 @@ export function PlayBoardModes({ initialFen }: Props) {
         if (inc > 0) {
           if (state.game.turn() === "w") setWhiteMs((t) => t + inc);
           else setBlackMs((t) => t + inc);
+        }
+      }
+
+      // If this was the first move, mark it and start clock for black
+      if (isFirstMoveOfGame) {
+        setFirstMoveMade(true);
+        if (clocksEnabled) {
+          tickRef.current.lastTs = Date.now();
         }
       }
 
@@ -1232,17 +1296,32 @@ export function PlayBoardModes({ initialFen }: Props) {
       return false;
     }
 
+    // If opponent plays white and game not started, user must click Play first
+    // If opponent plays black (user plays white), game starts on user's first move
+    const opponentIsWhite = state.playerSide === "black";
+    if (!gameStarted && opponentIsWhite) {
+      state.setStatus("Press Play to start the game.");
+      return false;
+    }
+
     try {
       const next = new Chess(state.fen);
       const move = next.move({ from: sourceSquare, to: targetSquare, promotion: "q" });
       if (!move) return false;
 
-      if (clocksEnabled && !clockPaused && !clockRunning && !clockExpired) {
-        setClockRunning(true);
-        tickRef.current.lastTs = Date.now();
+      // If this is the first move of the game (white's first move), start the game and clocks
+      const isFirstMove = state.game.history().length === 0;
+      if (isFirstMove) {
+        setGameStarted(true);
+        setFirstMoveMade(true);
+        if (clocksEnabled) {
+          setClockRunning(true);
+          tickRef.current.lastTs = Date.now();
+        }
       }
 
-      if (clocksEnabled && clockRunning && !clockPaused && !clockExpired && incrementMs > 0) {
+      // Add increment for the player who just moved (only after first move)
+      if (clocksEnabled && firstMoveMade && !clockExpired && incrementMs > 0) {
         if (state.game.turn() === "w") setWhiteMs((t) => t + incrementMs);
         else setBlackMs((t) => t + incrementMs);
       }
@@ -1391,9 +1470,8 @@ export function PlayBoardModes({ initialFen }: Props) {
     </div>
   );
 
-  const underBoard = mode === "analysis" ? null : (
-    <div className="grid gap-3">{analysisFiltersPanel}</div>
-  );
+  // Filters are now in the right sidebar for both modes, so no underBoard content needed
+  const underBoard = null;
 
   const underBoardWithToast = (
     <div className="grid gap-3">
@@ -1422,7 +1500,7 @@ export function PlayBoardModes({ initialFen }: Props) {
     <ChessBoardCore
       initialFen={initialFen}
       soundEnabled={soundEnabled}
-      leftPanel={(state) => (mode === "analysis" ? <MovesSoFarPanel state={state} opponentUsername={opponentUsername} /> : null)}
+      leftPanel={(state) => <MovesSoFarPanel state={state} opponentUsername={opponentUsername} />}
       aboveBoard={(state) => {
         if (mode === "analysis") {
           if (!analysisShowEval) return null;
@@ -1696,41 +1774,64 @@ export function PlayBoardModes({ initialFen }: Props) {
         }
 
         return (
-          <SimulationBoard
+          <SimulationAutoTrigger
             state={state}
-            mode={opponentMode}
-            setMode={setOpponentMode}
             opponentUsername={opponentUsername}
+            opponentMode={opponentMode}
             filtersKey={filtersKey}
             simBusy={simBusy}
-            opponentCommentary={opponentCommentary}
-            lastOpponentMove={lastOpponentMove}
-            depthRemaining={depthRemaining}
-            onOpponentMoveNow={() => void playOpponentNow(state)}
-            engineTakeover={engineTakeover}
-            simWarmStatus={simWarmStatus}
-            simWarmMeta={simWarmMeta}
             clocksEnabled={clocksEnabled}
-            setClocksEnabled={setClocksEnabled}
-            timeControls={timeControls}
-            timeControlKey={timeControlKey}
-            setTimeControlKey={setTimeControlKey}
-            playerMs={state.playerSide === "white" ? whiteMs : blackMs}
-            opponentMs={state.playerSide === "white" ? blackMs : whiteMs}
-            playerLabel={state.playerSide === "white" ? "White" : "Black"}
-            opponentLabel={state.playerSide === "white" ? "Black" : "White"}
-            clockRunning={clockRunning}
             clockPaused={clockPaused}
             clockExpired={clockExpired}
-            formatClock={formatClock}
-            onClockPause={pauseClocks}
-            onClockResume={resumeClocks}
-            onClockStop={stopClocks}
-            onReset={() => onSimReset(state)}
-            onUndo={() => onSimUndoPlies(state, 1)}
-            onUndoFullMove={() => onSimUndoPlies(state, 2)}
-            onRedo={() => onSimRedoPlies(state, 1)}
-          />
+            gameStarted={gameStarted}
+            onOpponentMoveNow={() => void playOpponentNow(state)}
+          >
+            <SimulationRightSidebar
+              state={state}
+              activeTab={simRightTab}
+              setActiveTab={setSimRightTab}
+              filtersPanel={analysisFiltersPanel}
+              opponentPlaysColor={opponentPlaysColor}
+              setOpponentPlaysColor={(c) => {
+                setOpponentPlaysColor(c);
+                // Sync player side: if opponent plays white, player plays black
+                state.setPlayerSide(c === "white" ? "black" : "white");
+              }}
+              mode={opponentMode}
+              setMode={setOpponentMode}
+              clocksEnabled={clocksEnabled}
+              setClocksEnabled={setClocksEnabled}
+              timeControls={timeControls}
+              timeControlKey={timeControlKey}
+              setTimeControlKey={setTimeControlKey}
+              clockRunning={clockRunning}
+              clockPaused={clockPaused}
+              clockExpired={clockExpired}
+              gameStarted={gameStarted}
+              onStartGame={() => {
+                startGame();
+
+                // If opponent is White and it's White to move at the start position,
+                // clicking Play should immediately make White play.
+                const opponentIsWhite = state.playerSide === "black";
+                const isStartPosition = state.game.history().length === 0;
+                const isWhitesTurn = state.game.turn() === "w";
+                if (opponentIsWhite && isStartPosition && isWhitesTurn) {
+                  void playOpponentNow(state);
+                }
+              }}
+              onClockPause={pauseClocks}
+              onClockResume={resumeClocks}
+              onClockStop={stopClocks}
+              engineTakeover={engineTakeover}
+              simWarmStatus={simWarmStatus}
+              simWarmMeta={simWarmMeta}
+              depthRemaining={depthRemaining}
+              lastOpponentMove={lastOpponentMove}
+              opponentCommentary={opponentCommentary}
+              simBusy={simBusy}
+            />
+          </SimulationAutoTrigger>
         );
       }}
     </ChessBoardCore>
@@ -2031,4 +2132,81 @@ function AnalysisRightSidebar(props: {
       </div>
     </>
   );
+}
+
+function SimulationAutoTrigger(props: {
+  state: ChessBoardCoreState;
+  opponentUsername: string;
+  opponentMode: Strategy;
+  filtersKey: string;
+  simBusy: boolean;
+  clocksEnabled: boolean;
+  clockPaused: boolean;
+  clockExpired: boolean;
+  gameStarted: boolean;
+  onOpponentMoveNow: () => void;
+  children: React.ReactNode;
+}) {
+  const {
+    state,
+    opponentUsername,
+    opponentMode,
+    filtersKey,
+    simBusy,
+    clocksEnabled,
+    clockPaused,
+    clockExpired,
+    gameStarted,
+    onOpponentMoveNow,
+    children,
+  } = props;
+
+  const lastAutoKeyRef = useRef<string | null>(null);
+
+  const turn = state.game.turn();
+  const isPlayersTurn =
+    (state.playerSide === "white" && turn === "w") || (state.playerSide === "black" && turn === "b");
+  const isOpponentsTurn = !isPlayersTurn;
+
+  // Determine if opponent is white (user plays black)
+  const opponentIsWhite = state.playerSide === "black";
+
+  useEffect(() => {
+    if (state.isGameOver) return;
+    if (simBusy) return;
+    if (!opponentUsername.trim()) return;
+    if (!isOpponentsTurn) return;
+
+    // If opponent is white, game must be started via Play button (regardless of clocks)
+    if (opponentIsWhite && !gameStarted) return;
+
+    // If clocks are enabled and running, check pause/expired
+    if (clocksEnabled && gameStarted) {
+      if (clockExpired) return;
+      if (clockPaused) return;
+    }
+
+    const key = `${state.fen}|${turn}|${opponentUsername}|${opponentMode}|${filtersKey}|${gameStarted}`;
+    if (lastAutoKeyRef.current === key) return;
+    lastAutoKeyRef.current = key;
+
+    onOpponentMoveNow();
+  }, [
+    state.fen,
+    state.isGameOver,
+    simBusy,
+    opponentUsername,
+    filtersKey,
+    clocksEnabled,
+    clockPaused,
+    clockExpired,
+    gameStarted,
+    isOpponentsTurn,
+    opponentIsWhite,
+    turn,
+    opponentMode,
+    onOpponentMoveNow,
+  ]);
+
+  return <>{children}</>;
 }
