@@ -187,7 +187,7 @@ export function SimulationRightSidebar(props: Props) {
         </div>
 
         <div className="min-w-0 overflow-auto p-3">
-        {activeTab === "filters" ? (
+          {activeTab === "filters" ? (
           <div className="grid gap-4">
             {/* Opponent Plays Toggle */}
             <div className="grid gap-2">
