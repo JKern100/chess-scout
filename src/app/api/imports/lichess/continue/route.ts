@@ -250,6 +250,16 @@ export async function POST(request: Request) {
       platform_game_id: g.platformGameId,
       played_at: g.playedAt,
       pgn: g.pgn,
+      // Engine analysis data (if available from Lichess)
+      white_acpl: g.whiteAnalysis?.acpl ?? null,
+      black_acpl: g.blackAnalysis?.acpl ?? null,
+      white_inaccuracies: g.whiteAnalysis?.inaccuracies ?? null,
+      black_inaccuracies: g.blackAnalysis?.inaccuracies ?? null,
+      white_mistakes: g.whiteAnalysis?.mistakes ?? null,
+      black_mistakes: g.blackAnalysis?.mistakes ?? null,
+      white_blunders: g.whiteAnalysis?.blunders ?? null,
+      black_blunders: g.blackAnalysis?.blunders ?? null,
+      evals_json: g.evals ? g.evals.map((e) => ({ e: e.eval, m: e.mate })) : null,
     }));
 
     const batchById = new Map(batch.games.map((g) => [String(g.platformGameId), g] as const));

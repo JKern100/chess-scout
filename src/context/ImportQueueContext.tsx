@@ -2,6 +2,7 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { createOpeningGraphImporter } from "@/lib/openingGraphImport/openingGraphImportService";
+import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
 type ImportQueueContextValue = {
   isImporting: boolean;
@@ -48,6 +49,7 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
   const [isImporting, setIsImporting] = useState(false);
   const [currentOpponent, setCurrentOpponent] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
+  const [syncedCount, setSyncedCount] = useState(0);
   const [progressByOpponent, setProgressByOpponent] = useState<Record<string, number>>(() => {
     try {
       if (typeof window === "undefined") return {};
@@ -94,6 +96,49 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
   const importingRef = useRef(false);
   const currentOpponentRef = useRef<string | null>(null);
   const persistTimerRef = useRef<number | null>(null);
+
+  const lastSyncedPollAtRef = useRef(0);
+
+  const pollSyncedCount = useCallback(async (opponentId: string) => {
+    const parsed = parseOpponentId(opponentId);
+    if (!parsed) return;
+    const now = Date.now();
+    if (now - lastSyncedPollAtRef.current < 2000) return;
+    lastSyncedPollAtRef.current = now;
+
+    const client = createSupabaseBrowserClient();
+    const {
+      data: { user },
+    } = await client.auth.getUser();
+    if (!user?.id) return;
+
+    try {
+      const usernameKey = parsed.username.toLowerCase();
+
+      const [{ count: gamesCount, error: gamesErr }, { count: evCount, error: evErr }] = await Promise.all([
+        client
+          .from("games")
+          .select("id", { count: "exact", head: true })
+          .eq("profile_id", user.id)
+          .eq("platform", parsed.platform)
+          .ilike("username", usernameKey),
+        client
+          .from("opponent_move_events")
+          .select("platform_game_id", { count: "exact", head: true })
+          .eq("profile_id", user.id)
+          .eq("platform", parsed.platform)
+          .ilike("username", usernameKey)
+          .eq("ply", 1),
+      ]);
+
+      const g = gamesErr ? 0 : typeof gamesCount === "number" ? gamesCount : 0;
+      const e = evErr ? 0 : typeof evCount === "number" ? evCount : 0;
+      const total = Math.max(0, g, e);
+      setSyncedCount(total);
+    } catch {
+      // best-effort
+    }
+  }, []);
 
   useEffect(() => {
     queueRef.current = queue;
@@ -164,7 +209,11 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
         // Total = base (from previous syncs) + current session progress
         const total = baseCountRef.current + gp;
         setProgress(total);
+
         const key = currentOpponentRef.current;
+        if (key) {
+          void pollSyncedCount(key);
+        }
         if (key) {
           setProgressByOpponent((prev) => {
             const before = Math.max(0, Number(prev[key] ?? 0));
@@ -226,6 +275,8 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
       return prev; // Don't modify, just read
     });
     setProgress(baseCountRef.current);
+    setSyncedCount(baseCountRef.current);
+    void pollSyncedCount(nextKey);
 
     const importer = ensureImporter();
     try {
@@ -239,7 +290,15 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
     } catch {
       finishCurrent();
     }
-  }, [ensureImporter]);
+  }, [ensureImporter, pollSyncedCount]);
+
+  useEffect(() => {
+    if (!isImporting || !currentOpponent) return;
+    const id = window.setInterval(() => {
+      void pollSyncedCount(currentOpponent);
+    }, 2500);
+    return () => window.clearInterval(id);
+  }, [currentOpponent, isImporting, pollSyncedCount]);
 
   useEffect(() => {
     if (isImporting) return;
@@ -296,7 +355,7 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
         <div className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-900 shadow-sm">
           <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
           <span className="truncate">Syncing games…</span>
-          <span className="tabular-nums text-zinc-600">({progress} games processed)</span>
+          <span className="tabular-nums text-zinc-600">({syncedCount} synced)</span>
           <span className="max-w-[140px] truncate text-zinc-500">{opponentLabel}</span>
           <button
             type="button"
@@ -308,7 +367,7 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
         </div>
       </div>
     );
-  }, [currentOpponent, isImporting, progress, stopSync]);
+  }, [currentOpponent, isImporting, stopSync, syncedCount]);
 
   return (
     <ImportQueueContext.Provider value={value}>

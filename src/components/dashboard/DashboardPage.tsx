@@ -159,6 +159,28 @@ export function DashboardPage({ initialOpponents }: Props) {
     setOpponents(Array.isArray(json?.opponents) ? (json.opponents as OpponentRow[]) : []);
   }
 
+  // Keep DB-backed counts fresh while importing, and ensure we refresh once the import stops/finishes.
+  const prevIsImportingRef = useRef(false);
+  const lastReloadAtRef = useRef(0);
+  useEffect(() => {
+    const wasImporting = prevIsImportingRef.current;
+    prevIsImportingRef.current = isImporting;
+
+    if (wasImporting && !isImporting) {
+      void reloadOpponents().catch(() => null);
+    }
+  }, [isImporting]);
+
+  useEffect(() => {
+    if (!isMounted) return;
+    if (!isImporting) return;
+    // Throttle reloads while importing.
+    const now = Date.now();
+    if (now - lastReloadAtRef.current < 2500) return;
+    lastReloadAtRef.current = now;
+    void reloadOpponents().catch(() => null);
+  }, [currentOpponent, isImporting, isMounted, progress]);
+
   async function addOpponentWithValues(plat: ChessPlatform, user: string) {
     setLoading(true);
     setStatus(null);
@@ -592,18 +614,14 @@ export function DashboardPage({ initialOpponents }: Props) {
               const importRow = importsByKey.get(key) ?? null;
               const tieredStatus = formatTieredStatus(importRow as any, isActive);
               const downloadedCount = typeof (importRow as any)?.imported_count === "number" ? (importRow as any).imported_count : 0;
-              const recordsLoadedCount = typeof (latest as any)?.games_count === "number" ? (latest as any).games_count : 0;
+              // games_count from server = actual games in DB (source of truth)
+              const dbGamesCount = typeof (latest as any)?.games_count === "number" ? (latest as any).games_count : 0;
               const currentKey = latest.platform === "lichess" ? `lichess:${latest.username.toLowerCase()}` : null;
               const isGlobalCurrent = Boolean(isImporting && currentKey && currentOpponent === currentKey);
-              const globalCountLive = isMounted && isGlobalCurrent ? Math.max(0, Number(progress ?? 0)) : 0;
-              // For non-active opponents, use persisted progress from localStorage
-              const persistedSyncedCount = isMounted && currentKey ? Math.max(0, Number(progressByOpponent[currentKey] ?? 0)) : 0;
-              // Synced games count: live progress for active, persisted for others
-              const syncedGamesCount = isGlobalCurrent ? globalCountLive : persistedSyncedCount;
-              const importedDbGamesCount = Math.max(0, recordsLoadedCount, downloadedCount);
+              // "Synced" must reflect what is actually persisted in DB (never the fast-import worker counter).
+              const syncedGamesCount = dbGamesCount;
               const apiTotal = typeof (latest as any)?.total_games === "number" ? Math.max(0, Number((latest as any).total_games)) : 0;
-              const approxTotalGamesCount = Math.max(apiTotal, importedDbGamesCount);
-              const canUseScout = syncedGamesCount >= MIN_GAMES_FOR_ANALYSIS || downloadedCount >= MIN_GAMES_FOR_ANALYSIS || isActive;
+              const canUseScout = dbGamesCount >= MIN_GAMES_FOR_ANALYSIS || isActive;
 
               const isFastRunning = isGlobalCurrent;
               const isFastQueued = currentKey ? queue.includes(currentKey) && !isGlobalCurrent : false;

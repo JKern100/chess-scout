@@ -21,6 +21,12 @@ export type StyleMarkerGame = {
   pgn?: string;
   result?: "win" | "loss" | "draw" | "unknown";
   opening_category?: OpeningCategory;
+  // Engine analysis data (from Lichess computer analysis)
+  white_acpl?: number | null;
+  black_acpl?: number | null;
+  white_blunders?: number | null;
+  black_blunders?: number | null;
+  evals?: Array<{ e: number | null; m: number | null }> | null;
 };
 
 type OpeningCategory = "Open" | "Semi-Open" | "Closed" | "Indian" | "Flank";
@@ -138,6 +144,36 @@ export type SignatureNarrative = {
   deviation_type: "high" | "low";
   ratio: number;
   narrative: string;
+};
+
+/** Engine-based metrics for a player */
+type EngineMetrics = {
+  /** Average Centipawn Loss (lower = more accurate) */
+  acpl: number | null;
+  /** Number of games with analysis data */
+  analyzed_games: number;
+  /** Total games in sample */
+  total_games: number;
+  /** Blunder rate (blunders per game) */
+  blunder_rate: number | null;
+  /** Crumble Point: avg eval when blunders occur (in centipawns, from opponent's perspective) */
+  crumble_point: number | null;
+  /** Defensive Tenacity: avg moves survived after eval drops below -300cp */
+  defensive_tenacity: number | null;
+  /** Complexity Sensitivity: correlation between eval volatility and ACPL */
+  complexity_sensitivity: number | null;
+  /** Engine Grade based on ACPL relative to rating benchmark */
+  engine_grade: "S" | "A" | "B" | "C" | null;
+};
+
+/** Engine metrics for the Pro-Scout matrix */
+type EngineMatrixEntry = {
+  acpl: { white: number | null; black: number | null; overall: number | null };
+  blunder_rate: { white: number | null; black: number | null; overall: number | null };
+  crumble_point: { white: number | null; black: number | null; overall: number | null };
+  defensive_tenacity: { white: number | null; black: number | null; overall: number | null };
+  analyzed_games: { white: number; black: number; total: number };
+  engine_grade: "S" | "A" | "B" | "C" | null;
 };
 
 type ContextualMarkerData = {
@@ -268,6 +304,116 @@ function getSignificantCategories(games: StyleMarkerGame[]): OpeningCategory[] {
   }
 
   return significant;
+}
+
+/** Compute engine-based metrics from games with analysis data */
+function computeEngineMetrics(games: StyleMarkerGame[], colorFilter: "all" | "white" | "black" = "all"): EngineMetrics {
+  const filtered = colorFilter === "all" ? games : filterByColor(games, colorFilter);
+  
+  let acplSum = 0;
+  let acplCount = 0;
+  let blunderSum = 0;
+  let blunderCount = 0;
+  const crumblePoints: number[] = [];
+  const tenacityMoves: number[] = [];
+  
+  for (const g of filtered) {
+    // Get ACPL for the opponent's color in this game
+    const oppColor = g.opponent_color;
+    const acpl = oppColor === "w" ? g.white_acpl : g.black_acpl;
+    const blunders = oppColor === "w" ? g.white_blunders : g.black_blunders;
+    
+    if (acpl != null && acpl > 0) {
+      acplSum += acpl;
+      acplCount += 1;
+    }
+    
+    if (blunders != null) {
+      blunderSum += blunders;
+      blunderCount += 1;
+    }
+    
+    // Analyze per-move evals for crumble point and defensive tenacity
+    if (g.evals && g.evals.length > 0) {
+      const evals = g.evals;
+      const isWhite = oppColor === "w";
+      
+      // Track eval from opponent's perspective (positive = good for opponent)
+      let prevEval: number | null = null;
+      let inLostPosition = false;
+      let movesSurvived = 0;
+      
+      for (let i = 0; i < evals.length; i++) {
+        const evalEntry = evals[i];
+        let cpEval = evalEntry.e;
+        
+        // Handle mate scores
+        if (evalEntry.m != null) {
+          cpEval = evalEntry.m > 0 ? 10000 : -10000;
+        }
+        
+        if (cpEval == null) continue;
+        
+        // Flip eval for Black's perspective
+        const oppEval = isWhite ? cpEval : -cpEval;
+        
+        // Crumble Point: detect blunders (loss of >200cp)
+        if (prevEval != null && i % 2 === (isWhite ? 0 : 1)) {
+          // This is opponent's move
+          const evalDrop = prevEval - oppEval;
+          if (evalDrop > 200) {
+            // Blunder detected - record the eval before the blunder
+            crumblePoints.push(prevEval);
+          }
+        }
+        
+        // Defensive Tenacity: count moves after eval drops below -300
+        if (oppEval < -300) {
+          if (!inLostPosition) {
+            inLostPosition = true;
+            movesSurvived = 0;
+          }
+          movesSurvived += 1;
+        }
+        
+        prevEval = oppEval;
+      }
+      
+      if (inLostPosition && movesSurvived > 0) {
+        tenacityMoves.push(movesSurvived);
+      }
+    }
+  }
+  
+  const avgAcpl = acplCount > 0 ? Math.round(acplSum / acplCount) : null;
+  const blunderRate = blunderCount > 0 ? blunderSum / blunderCount : null;
+  const crumblePoint = crumblePoints.length > 0 
+    ? Math.round(crumblePoints.reduce((a, b) => a + b, 0) / crumblePoints.length)
+    : null;
+  const defensiveTenacity = tenacityMoves.length > 0
+    ? Math.round(tenacityMoves.reduce((a, b) => a + b, 0) / tenacityMoves.length)
+    : null;
+  
+  // Engine Grade based on ACPL (rough benchmarks)
+  // S: <30, A: 30-50, B: 50-80, C: >80
+  let engineGrade: "S" | "A" | "B" | "C" | null = null;
+  if (avgAcpl != null) {
+    if (avgAcpl < 30) engineGrade = "S";
+    else if (avgAcpl < 50) engineGrade = "A";
+    else if (avgAcpl < 80) engineGrade = "B";
+    else engineGrade = "C";
+  }
+  
+  return {
+    acpl: avgAcpl,
+    analyzed_games: acplCount,
+    total_games: filtered.length,
+    blunder_rate: blunderRate,
+    crumble_point: crumblePoint,
+    defensive_tenacity: defensiveTenacity,
+    complexity_sensitivity: null, // TODO: compute correlation
+    engine_grade: engineGrade,
+  };
 }
 
 /** Compute extended metrics including long game stats */
@@ -577,6 +723,101 @@ function generateNarratives(
   return narratives.slice(0, 5);
 }
 
+/** Generate engine-powered narratives based on ACPL, crumble point, etc. */
+function generateEngineNarratives(engineMatrix: EngineMatrixEntry): SignatureNarrative[] {
+  const narratives: SignatureNarrative[] = [];
+  
+  // Only generate if we have sufficient analyzed games
+  if (engineMatrix.analyzed_games.total < 10) return narratives;
+  
+  const { acpl, blunder_rate, crumble_point, defensive_tenacity, engine_grade } = engineMatrix;
+  
+  // "Technical Perfectionist" Alert: Very low ACPL
+  if (acpl.overall != null && acpl.overall < 25) {
+    narratives.push({
+      axis: "acpl",
+      category: "overall",
+      color: "overall",
+      deviation_type: "low",
+      ratio: Math.round((50 / acpl.overall) * 100) / 100,
+      narrative: `Technical Master: This player averages only ${acpl.overall} centipawn loss per game. They play with near-engine accuracy. Strategy: You must create complications early; do not let them grind you down in a clean position.`,
+    });
+  }
+  
+  // "Front-Runner" Alert: High accuracy when ahead, poor when behind
+  // We detect this via crumble point - if they blunder when already slightly behind
+  if (crumble_point.overall != null && crumble_point.overall > -100 && crumble_point.overall < 50) {
+    narratives.push({
+      axis: "crumble_point",
+      category: "overall",
+      color: "overall",
+      deviation_type: "high",
+      ratio: 2.0,
+      narrative: `Low Tenacity: This player tends to blunder when the position is roughly equal (avg eval ${crumble_point.overall > 0 ? "+" : ""}${crumble_point.overall}cp before blunders). They are a "Front-Runner" - clinical when winning but lose composure under pressure.`,
+    });
+  } else if (crumble_point.overall != null && crumble_point.overall < -200) {
+    narratives.push({
+      axis: "crumble_point",
+      category: "overall",
+      color: "overall",
+      deviation_type: "low",
+      ratio: 1.5,
+      narrative: `Rock Solid: This player only blunders when already in a bad position (avg eval ${crumble_point.overall}cp before blunders). They are mentally tough and rarely crack under pressure.`,
+    });
+  }
+  
+  // "Never Resign" Alert: High defensive tenacity
+  if (defensive_tenacity.overall != null && defensive_tenacity.overall > 15) {
+    narratives.push({
+      axis: "defensive_tenacity",
+      category: "overall",
+      color: "overall",
+      deviation_type: "high",
+      ratio: defensive_tenacity.overall / 10,
+      narrative: `Never-Resign Player: They survive an average of ${defensive_tenacity.overall} moves after falling into a lost position (-3.0 or worse). They will fight to the bitter end and find defensive resources. Don't relax until checkmate.`,
+    });
+  }
+  
+  // High blunder rate alert
+  if (blunder_rate.overall != null && blunder_rate.overall > 2.5) {
+    narratives.push({
+      axis: "blunder_rate",
+      category: "overall",
+      color: "overall",
+      deviation_type: "high",
+      ratio: blunder_rate.overall / 1.5,
+      narrative: `Tactical Vulnerability: This player averages ${blunder_rate.overall.toFixed(1)} blunders per game. Keep the position sharp and tactical; they are prone to oversight under pressure.`,
+    });
+  }
+  
+  // Color asymmetry in ACPL
+  if (acpl.white != null && acpl.black != null && acpl.white > 0 && acpl.black > 0) {
+    const acplRatio = acpl.white / acpl.black;
+    if (acplRatio >= 1.5) {
+      narratives.push({
+        axis: "acpl_asymmetry",
+        category: "overall",
+        color: "black",
+        deviation_type: "high",
+        ratio: acplRatio,
+        narrative: `Color Weakness: Their accuracy as White (${acpl.white} ACPL) is ${acplRatio.toFixed(1)}x worse than as Black (${acpl.black} ACPL). They may be uncomfortable with White's initiative.`,
+      });
+    } else if (acplRatio <= 0.67) {
+      const inverseRatio = 1 / acplRatio;
+      narratives.push({
+        axis: "acpl_asymmetry",
+        category: "overall",
+        color: "white",
+        deviation_type: "high",
+        ratio: inverseRatio,
+        narrative: `Color Weakness: Their accuracy as Black (${acpl.black} ACPL) is ${inverseRatio.toFixed(1)}x worse than as White (${acpl.white} ACPL). They may struggle with defensive positions.`,
+      });
+    }
+  }
+  
+  return narratives;
+}
+
 export async function calculateAndStoreMarkers(params: {
   supabase: any;
   profileId: string;
@@ -714,6 +955,40 @@ export async function calculateAndStoreMarkers(params: {
     },
   };
 
+  // Compute engine-based metrics (ACPL, Crumble Point, Defensive Tenacity)
+  const engineMetricsOverall = computeEngineMetrics(games, "all");
+  const engineMetricsWhite = computeEngineMetrics(games, "white");
+  const engineMetricsBlack = computeEngineMetrics(games, "black");
+
+  const engineMatrix: EngineMatrixEntry = {
+    acpl: {
+      white: engineMetricsWhite.acpl,
+      black: engineMetricsBlack.acpl,
+      overall: engineMetricsOverall.acpl,
+    },
+    blunder_rate: {
+      white: engineMetricsWhite.blunder_rate,
+      black: engineMetricsBlack.blunder_rate,
+      overall: engineMetricsOverall.blunder_rate,
+    },
+    crumble_point: {
+      white: engineMetricsWhite.crumble_point,
+      black: engineMetricsBlack.crumble_point,
+      overall: engineMetricsOverall.crumble_point,
+    },
+    defensive_tenacity: {
+      white: engineMetricsWhite.defensive_tenacity,
+      black: engineMetricsBlack.defensive_tenacity,
+      overall: engineMetricsOverall.defensive_tenacity,
+    },
+    analyzed_games: {
+      white: engineMetricsWhite.analyzed_games,
+      black: engineMetricsBlack.analyzed_games,
+      total: engineMetricsOverall.analyzed_games,
+    },
+    engine_grade: engineMetricsOverall.engine_grade,
+  };
+
   // Detect signature deviations (3x difference between colors)
   const alerts: ContextualMarkerData["alerts"] = [];
   if (whiteMetrics.sample_size >= 5 && blackMetrics.sample_size >= 5) {
@@ -815,8 +1090,14 @@ export async function calculateAndStoreMarkers(params: {
     },
   };
 
-  // Generate signature deviation narratives
-  const narratives: SignatureNarrative[] = generateNarratives(contextMatrix, proScoutMatrix, benchmarks);
+  // Generate signature deviation narratives (style-based + engine-based)
+  const styleNarratives = generateNarratives(contextMatrix, proScoutMatrix, benchmarks);
+  const engineNarratives = generateEngineNarratives(engineMatrix);
+  
+  // Merge and sort all narratives by ratio, limit to top 8
+  const allNarratives = [...styleNarratives, ...engineNarratives];
+  allNarratives.sort((a, b) => b.ratio - a.ratio);
+  const narratives: SignatureNarrative[] = allNarratives.slice(0, 8);
 
   // Build contextual marker data with full Context Matrix
   const contextualData: ContextualMarkerData = {
@@ -871,6 +1152,7 @@ export async function calculateAndStoreMarkers(params: {
         context_matrix: fullContextMatrix,
         pro_scout_matrix: proScoutMatrix,
         narratives,
+        engine_metrics: engineMatrix,
       },
       ...extra,
     };

@@ -26,6 +26,12 @@ type GameNorm = {
   opponent_color: "w" | "b";
   result: "win" | "loss" | "draw" | "unknown";
   moves_san: string[];
+  // Engine analysis data (from Lichess computer analysis)
+  white_acpl?: number | null;
+  black_acpl?: number | null;
+  white_blunders?: number | null;
+  black_blunders?: number | null;
+  evals?: Array<{ e: number | null; m: number | null }> | null;
 };
 
 type OpponentMoveEventRow = {
@@ -644,7 +650,17 @@ export async function buildOpponentProfileV2(params: {
   const maxGamesCap = params.maxGamesCap == null ? null : Number(params.maxGamesCap);
 
   async function fetchNormalizedFromGames(): Promise<GameNorm[]> {
-    const rows: Array<{ id: string; played_at: string | null; pgn: string; platform_game_id: string | null }> = [];
+    const rows: Array<{
+      id: string;
+      played_at: string | null;
+      pgn: string;
+      platform_game_id: string | null;
+      white_acpl?: number | null;
+      black_acpl?: number | null;
+      white_blunders?: number | null;
+      black_blunders?: number | null;
+      evals_json?: Array<{ e: number | null; m: number | null }> | null;
+    }> = [];
 
     for (;;) {
       if (maxGamesCap != null && fetchedTotal >= maxGamesCap) break;
@@ -653,7 +669,7 @@ export async function buildOpponentProfileV2(params: {
 
       let query = params.supabase
         .from("games")
-        .select("id, pgn, played_at, platform_game_id")
+        .select("id, pgn, played_at, platform_game_id, white_acpl, black_acpl, white_blunders, black_blunders, evals_json")
         .eq("profile_id", params.profileId)
         .eq("platform", params.platform)
         .ilike("username", usernameKey)
@@ -664,7 +680,17 @@ export async function buildOpponentProfileV2(params: {
 
       const { data, error } = await query.range(offset, offset + remaining - 1);
       if (error) throw error;
-      const batch = (data ?? []) as Array<{ id: string; played_at: string | null; pgn: string; platform_game_id: string | null }>;
+      const batch = (data ?? []) as Array<{
+        id: string;
+        played_at: string | null;
+        pgn: string;
+        platform_game_id: string | null;
+        white_acpl?: number | null;
+        black_acpl?: number | null;
+        white_blunders?: number | null;
+        black_blunders?: number | null;
+        evals_json?: Array<{ e: number | null; m: number | null }> | null;
+      }>;
       if (batch.length === 0) break;
 
       rows.push(...batch);
@@ -722,6 +748,12 @@ export async function buildOpponentProfileV2(params: {
         opponent_color: oppColor,
         result,
         moves_san: moves,
+        // Engine analysis data
+        white_acpl: row.white_acpl ?? null,
+        black_acpl: row.black_acpl ?? null,
+        white_blunders: row.white_blunders ?? null,
+        black_blunders: row.black_blunders ?? null,
+        evals: row.evals_json ?? null,
       });
     }
 

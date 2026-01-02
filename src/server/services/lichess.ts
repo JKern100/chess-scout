@@ -3,6 +3,17 @@ type LichessGameJson = {
   createdAt?: number;
   lastMoveAt?: number;
   pgn?: string;
+  analysis?: Array<{
+    eval?: number;
+    mate?: number;
+    best?: string;
+    variation?: string;
+    judgment?: { name: string; comment: string };
+  }>;
+  players?: {
+    white?: { analysis?: { acpl?: number; inaccuracy?: number; mistake?: number; blunder?: number } };
+    black?: { analysis?: { acpl?: number; inaccuracy?: number; mistake?: number; blunder?: number } };
+  };
 };
 
 type LichessUserPerfJson = {
@@ -22,11 +33,27 @@ type LichessUserProfileJson = {
   count?: LichessUserCountJson;
 };
 
+export type LichessGameAnalysis = {
+  acpl: number | null;
+  inaccuracies: number | null;
+  mistakes: number | null;
+  blunders: number | null;
+};
+
+export type LichessEvalEntry = {
+  eval: number | null;
+  mate: number | null;
+  judgment?: { name: string; comment: string };
+};
+
 export type LichessFetchResult = {
   games: Array<{
     platformGameId: string;
     playedAt: string | null;
     pgn: string;
+    whiteAnalysis: LichessGameAnalysis | null;
+    blackAnalysis: LichessGameAnalysis | null;
+    evals: LichessEvalEntry[] | null;
   }>;
   oldestGameAtMs: number | null;
   newestGameAtMs: number | null;
@@ -36,12 +63,16 @@ export async function fetchLichessGamesBatch(params: {
   username: string;
   max: number;
   untilMs?: number;
+  includeEvals?: boolean;
 }): Promise<LichessFetchResult> {
-  const { username, max, untilMs } = params;
+  const { username, max, untilMs, includeEvals = true } = params;
 
   const url = new URL(`https://lichess.org/api/games/user/${encodeURIComponent(username)}`);
   url.searchParams.set("max", String(max));
   url.searchParams.set("pgnInJson", "true");
+  if (includeEvals) {
+    url.searchParams.set("evals", "true");
+  }
 
   if (untilMs !== undefined) {
     url.searchParams.set("until", String(untilMs));
@@ -86,10 +117,41 @@ export async function fetchLichessGamesBatch(params: {
       newest = newest === null ? ts : Math.max(newest, ts);
     }
 
+    // Extract analysis data if available
+    const whiteAnalysis: LichessGameAnalysis | null = parsed.players?.white?.analysis
+      ? {
+          acpl: parsed.players.white.analysis.acpl ?? null,
+          inaccuracies: parsed.players.white.analysis.inaccuracy ?? null,
+          mistakes: parsed.players.white.analysis.mistake ?? null,
+          blunders: parsed.players.white.analysis.blunder ?? null,
+        }
+      : null;
+
+    const blackAnalysis: LichessGameAnalysis | null = parsed.players?.black?.analysis
+      ? {
+          acpl: parsed.players.black.analysis.acpl ?? null,
+          inaccuracies: parsed.players.black.analysis.inaccuracy ?? null,
+          mistakes: parsed.players.black.analysis.mistake ?? null,
+          blunders: parsed.players.black.analysis.blunder ?? null,
+        }
+      : null;
+
+    // Extract per-move evals if available
+    const evals: LichessEvalEntry[] | null = parsed.analysis
+      ? parsed.analysis.map((a) => ({
+          eval: a.eval ?? null,
+          mate: a.mate ?? null,
+          judgment: a.judgment,
+        }))
+      : null;
+
     games.push({
       platformGameId: parsed.id,
       playedAt: typeof ts === "number" ? new Date(ts).toISOString() : null,
       pgn: parsed.pgn,
+      whiteAnalysis,
+      blackAnalysis,
+      evals,
     });
   }
 

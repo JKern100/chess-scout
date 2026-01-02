@@ -86,14 +86,32 @@ export default async function Dashboard() {
           .select("id", { count: "exact", head: true })
           .eq("profile_id", user.id)
           .eq("platform", platform)
-          .eq("username", usernameKey);
+          .ilike("username", usernameKey);
         gamesCount = gamesCountError ? 0 : typeof gamesTableCount === "number" ? gamesTableCount : 0;
+
+        // Fast sync writes to opponent_move_events (not games). Count unique games by ply=1 rows.
+        let eventsGameCount = 0;
+        try {
+          const { count: evCount, error: evErr } = await supabase
+            .from("opponent_move_events")
+            .select("platform_game_id", { count: "exact", head: true })
+            .eq("profile_id", user.id)
+            .eq("platform", platform)
+            .ilike("username", usernameKey)
+            .eq("ply", 1);
+          eventsGameCount = evErr ? 0 : typeof evCount === "number" ? evCount : 0;
+        } catch {
+          eventsGameCount = 0;
+        }
+
+        const syncedCount = Math.max(0, gamesCount, eventsGameCount);
 
         return {
           ...o,
           platform,
           username,
-          games_count: Math.max(gamesCount, importedCount),
+          // Source of truth for "Synced": what's actually persisted in DB for analysis.
+          games_count: syncedCount,
           total_games: typeof totalGames === "number" ? totalGames : undefined,
         };
       })

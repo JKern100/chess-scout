@@ -41,12 +41,13 @@ export async function POST(request: Request) {
 
   const expiresAt = new Date(Date.now() + DEFAULT_OPPONENT_TTL_DAYS * 24 * 60 * 60 * 1000);
 
+  const usernameKey = username.toLowerCase();
   const { count } = await supabase
     .from("games")
     .select("id", { count: "exact", head: true })
     .eq("profile_id", user.id)
     .eq("platform", platform)
-    .eq("username", username);
+    .ilike("username", usernameKey);
 
   const { data: importRow, error } = await supabase
     .from("imports")

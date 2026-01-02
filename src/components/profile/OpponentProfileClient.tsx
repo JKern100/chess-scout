@@ -746,6 +746,12 @@ export function OpponentProfileClient({ platform, username }: Props) {
     return true;
   });
 
+  // Extract engine metrics for Engine Grade badge
+  const engineMetrics = axisAggro?.metrics_json?.contextual?.engine_metrics ?? null;
+  const engineGrade: "S" | "A" | "B" | "C" | null = engineMetrics?.engine_grade ?? null;
+  const engineAcpl: number | null = engineMetrics?.acpl?.overall ?? null;
+  const analyzedGames: number = engineMetrics?.analyzed_games?.total ?? 0;
+
   function OpeningBarList(props: { rows: V2OpeningRow[]; title: string; sampleWarning?: string | null; ctx?: V3Context | null }) {
     const { rows, title, sampleWarning, ctx } = props;
     const filtered = filterPctAtLeastOne(rows);
@@ -1124,20 +1130,40 @@ export function OpponentProfileClient({ platform, username }: Props) {
                     </div>
                   )}
 
-                  {/* Scout's Alert Badge */}
-                  {styleMarkerAlerts.length > 0 && (
-                    <div className="flex flex-wrap gap-2">
-                      {styleMarkerAlerts.map((alert: { type: string; message: string }, idx: number) => (
-                        <div
-                          key={idx}
-                          className="inline-flex items-center gap-1.5 rounded-lg bg-amber-50 border border-amber-200 px-2 py-1"
-                        >
-                          <span className="text-amber-600 text-xs">⚠️</span>
-                          <span className="text-[10px] font-medium text-amber-800">{alert.message}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  {/* Engine Grade Badge + Scout's Alert Badge */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    {/* Engine Grade Badge */}
+                    {engineGrade && (
+                      <div
+                        title={`Engine Grade based on Average Centipawn Loss (ACPL: ${engineAcpl ?? "N/A"}). S: <30, A: 30-50, B: 50-80, C: >80. Based on ${analyzedGames} analyzed games.`}
+                        className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 border ${
+                          engineGrade === "S"
+                            ? "bg-purple-100 border-purple-300 text-purple-800"
+                            : engineGrade === "A"
+                            ? "bg-green-100 border-green-300 text-green-800"
+                            : engineGrade === "B"
+                            ? "bg-yellow-100 border-yellow-300 text-yellow-800"
+                            : "bg-red-100 border-red-300 text-red-800"
+                        }`}
+                      >
+                        <span className="text-xs font-bold">{engineGrade}</span>
+                        <span className="text-[10px] font-medium">
+                          Engine Grade
+                          {engineAcpl != null && <span className="ml-1 opacity-75">({engineAcpl} ACPL)</span>}
+                        </span>
+                      </div>
+                    )}
+                    {/* Scout's Alert Badges */}
+                    {styleMarkerAlerts.map((alert: { type: string; message: string }, idx: number) => (
+                      <div
+                        key={idx}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-amber-50 border border-amber-200 px-2 py-1"
+                      >
+                        <span className="text-amber-600 text-xs">⚠️</span>
+                        <span className="text-[10px] font-medium text-amber-800">{alert.message}</span>
+                      </div>
+                    ))}
+                  </div>
 
                   {/* Pro-Scout Narratives */}
                   <div className="rounded-lg bg-blue-50 border border-blue-200 p-3">

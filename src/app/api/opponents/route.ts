@@ -65,28 +65,34 @@ export async function GET() {
 
   const opponents = await Promise.all(
     baseOpponents.map(async (o) => {
+      const usernameKey = String(o.username ?? "").trim().toLowerCase();
+
       const { count, error: gamesCountError } = await supabase
         .from("games")
         .select("id", { count: "exact", head: true })
         .eq("profile_id", user.id)
         .eq("platform", o.platform)
-        .eq("username", o.username);
-
-      const { data: impCountRow } = await supabase
-        .from("imports")
-        .select("imported_count")
-        .eq("profile_id", user.id)
-        .eq("target_type", "opponent")
-        .eq("platform", o.platform)
-        .eq("username", o.username)
-        .order("updated_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      const importedCount = Number((impCountRow as any)?.imported_count ?? 0);
+        .ilike("username", usernameKey);
 
       const gamesTableCount = gamesCountError ? 0 : typeof count === "number" ? count : 0;
-      const loadedGamesCount = Math.max(0, gamesTableCount, importedCount);
+
+      // Fast sync writes to opponent_move_events (not games). Count unique games by ply=1 rows.
+      let eventsGameCount = 0;
+      try {
+        const { count: evCount, error: evErr } = await supabase
+          .from("opponent_move_events")
+          .select("platform_game_id", { count: "exact", head: true })
+          .eq("profile_id", user.id)
+          .eq("platform", o.platform)
+          .ilike("username", usernameKey)
+          .eq("ply", 1);
+        eventsGameCount = evErr ? 0 : typeof evCount === "number" ? evCount : 0;
+      } catch {
+        eventsGameCount = 0;
+      }
+
+      // Source of truth for "Synced": what's actually persisted in DB for analysis.
+      const loadedGamesCount = Math.max(0, gamesTableCount, eventsGameCount);
 
       let totalGames: number | null = null;
       if (o.platform === "lichess") {
@@ -105,7 +111,7 @@ export async function GET() {
           .eq("profile_id", user.id)
           .eq("target_type", "opponent")
           .eq("platform", o.platform)
-          .eq("username", o.username)
+          .ilike("username", usernameKey)
           .order("last_success_at", { ascending: false })
           .limit(1)
           .maybeSingle();
