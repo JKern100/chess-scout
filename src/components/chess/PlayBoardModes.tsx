@@ -1722,6 +1722,10 @@ export function PlayBoardModes({ initialFen }: Props) {
       onPieceDrop={onPieceDrop}
     >
       {(state) => {
+        // Keep clock tick meta in sync with the authoritative board state.
+        simMetaRef.current.turn = state.game.turn();
+        simMetaRef.current.isGameOver = state.isGameOver;
+
         const shouldHydrateSavedLine = Boolean(savedLineId && mode === "analysis");
 
         if (mode === "analysis") {
