@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Chessboard } from "react-chessboard";
-import { MoreVertical, Check, RefreshCw } from "lucide-react";
+import { MoreVertical, Check, RefreshCw, LayoutGrid, List } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useImportsRealtime } from "@/lib/hooks/useImportsRealtime";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -72,6 +72,22 @@ function formatSavedLineDate(iso: string) {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+type ViewMode = "card" | "list";
+
+type LichessUserStatus = {
+  id: string;
+  name: string;
+  online: boolean;
+  playing: boolean;
+  ratings: Record<string, number>;
+};
+
+type LichessActivity = {
+  username: string;
+  gamesLast7Days: number;
+  activityLevel: "inactive" | "active" | "very_active";
+};
+
 export function DashboardPage({ initialOpponents }: Props) {
   const MIN_GAMES_FOR_ANALYSIS = 10;
   const router = useRouter();
@@ -81,6 +97,17 @@ export function DashboardPage({ initialOpponents }: Props) {
   const [loading, setLoading] = useState(false);
   const [openMenuKey, setOpenMenuKey] = useState<string | null>(null);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+
+  // View toggle state
+  const [viewMode, setViewMode] = useState<ViewMode>("card");
+
+  // Rich data layer - online status and ratings
+  const [lichessStatus, setLichessStatus] = useState<Map<string, LichessUserStatus>>(new Map());
+  const [lichessStatusLoading, setLichessStatusLoading] = useState(false);
+
+  // Rich data layer - activity/busy-ness
+  const [lichessActivity, setLichessActivity] = useState<Map<string, LichessActivity>>(new Map());
+  const activityFetchedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     setIsMounted(true);
@@ -151,6 +178,65 @@ export function DashboardPage({ initialOpponents }: Props) {
     }
     return m;
   }, [opponents]);
+
+  // Fetch Lichess online status and ratings on page load
+  const fetchLichessStatus = useCallback(async () => {
+    const lichessUsers = opponents.filter((o) => o.platform === "lichess").map((o) => o.username);
+    if (lichessUsers.length === 0) return;
+
+    setLichessStatusLoading(true);
+    try {
+      const res = await fetch(`/api/lichess/status?usernames=${encodeURIComponent(lichessUsers.join(","))}`);
+      if (!res.ok) return;
+      const json = await res.json();
+      const users = Array.isArray(json?.users) ? (json.users as LichessUserStatus[]) : [];
+      const map = new Map<string, LichessUserStatus>();
+      for (const u of users) {
+        map.set(u.id.toLowerCase(), u);
+      }
+      setLichessStatus(map);
+    } catch {
+      // Ignore errors - this is non-blocking enrichment
+    } finally {
+      setLichessStatusLoading(false);
+    }
+  }, [opponents]);
+
+  useEffect(() => {
+    if (!isMounted) return;
+    void fetchLichessStatus();
+  }, [isMounted, fetchLichessStatus]);
+
+  // Fetch activity for a single user (lazy, on-demand)
+  const fetchActivity = useCallback(async (username: string) => {
+    const key = username.toLowerCase();
+    if (activityFetchedRef.current.has(key)) return;
+    activityFetchedRef.current.add(key);
+
+    try {
+      const res = await fetch(`/api/lichess/activity?username=${encodeURIComponent(username)}`);
+      if (!res.ok) return;
+      const json = await res.json();
+      if (json?.username) {
+        setLichessActivity((prev) => {
+          const next = new Map(prev);
+          next.set(key, json as LichessActivity);
+          return next;
+        });
+      }
+    } catch {
+      // Ignore errors
+    }
+  }, []);
+
+  // Fetch activity for all Lichess opponents on mount (non-blocking)
+  useEffect(() => {
+    if (!isMounted) return;
+    const lichessUsers = opponents.filter((o) => o.platform === "lichess").map((o) => o.username);
+    for (const u of lichessUsers) {
+      void fetchActivity(u);
+    }
+  }, [isMounted, opponents, fetchActivity]);
 
   async function reloadOpponents() {
     const res = await fetch("/api/opponents", { cache: "no-store" });
@@ -458,6 +544,35 @@ export function DashboardPage({ initialOpponents }: Props) {
         {/* Add Opponent Bar */}
         <AddOpponentBar onAdd={handleAddOpponent} loading={loading} />
 
+        {/* View Toggle */}
+        <div className="flex items-center justify-between">
+          <div className="text-sm font-medium text-zinc-700">
+            {opponents.length} opponent{opponents.length !== 1 ? "s" : ""}
+          </div>
+          <div className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white p-1">
+            <button
+              type="button"
+              className={`inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors ${
+                viewMode === "card" ? "bg-zinc-900 text-white" : "text-zinc-600 hover:bg-zinc-50"
+              }`}
+              title="Card view"
+              onClick={() => setViewMode("card")}
+            >
+              <LayoutGrid className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              className={`inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors ${
+                viewMode === "list" ? "bg-zinc-900 text-white" : "text-zinc-600 hover:bg-zinc-50"
+              }`}
+              title="List view"
+              onClick={() => setViewMode("list")}
+            >
+              <List className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+
         {status ? <div className="text-sm text-neutral-600">{status}</div> : null}
 
         <section>
@@ -595,13 +710,146 @@ export function DashboardPage({ initialOpponents }: Props) {
             </div>
           ) : null}
 
-          <div className="mt-6 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
-            {opponents.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-zinc-200 bg-zinc-50 p-6 text-sm text-zinc-600 md:col-span-2 lg:col-span-3">
-                No opponents yet.
-              </div>
-            ) : null}
+          {opponents.length === 0 ? (
+            <div className="mt-6 rounded-xl border border-dashed border-zinc-200 bg-zinc-50 p-6 text-sm text-zinc-600">
+              No opponents yet.
+            </div>
+          ) : viewMode === "list" ? (
+            /* List View */
+            <div className="mt-6 overflow-hidden rounded-xl border border-zinc-200 bg-white">
+              <table className="w-full text-left text-sm">
+                <thead className="border-b border-zinc-200 bg-zinc-50">
+                  <tr>
+                    <th className="px-4 py-3 font-medium text-zinc-700">Status</th>
+                    <th className="px-4 py-3 font-medium text-zinc-700">Username</th>
+                    <th className="px-4 py-3 font-medium text-zinc-700">Rating</th>
+                    <th className="px-4 py-3 font-medium text-zinc-700">Style</th>
+                    <th className="px-4 py-3 font-medium text-zinc-700">Synced</th>
+                    <th className="px-4 py-3 font-medium text-zinc-700">Activity</th>
+                    <th className="px-4 py-3 font-medium text-zinc-700"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-100">
+                  {opponents.map((o) => {
+                    const key = `${o.platform}:${o.username.toLowerCase()}`;
+                    const latest = byKey.get(key) ?? o;
+                    const dbGamesCount = typeof (latest as any)?.games_count === "number" ? (latest as any).games_count : 0;
+                    const apiTotal = typeof (latest as any)?.total_games === "number" ? Math.max(0, Number((latest as any).total_games)) : 0;
+                    const canUseScout = dbGamesCount >= MIN_GAMES_FOR_ANALYSIS;
+                    const currentKey = latest.platform === "lichess" ? `lichess:${latest.username.toLowerCase()}` : null;
+                    const isGlobalCurrent = Boolean(isImporting && currentKey && currentOpponent === currentKey);
+                    const isFastRunning = isGlobalCurrent;
+                    const isFastQueued = currentKey ? queue.includes(currentKey) && !isGlobalCurrent : false;
+                    const markerBadges = Array.isArray((latest as any)?.style_markers) ? (((latest as any).style_markers as any[]) ?? []) : [];
 
+                    // Rich data
+                    const userStatus = latest.platform === "lichess" ? lichessStatus.get(latest.username.toLowerCase()) : null;
+                    const userActivity = latest.platform === "lichess" ? lichessActivity.get(latest.username.toLowerCase()) : null;
+                    const isOnline = userStatus?.online ?? false;
+                    const blitzRating = userStatus?.ratings?.blitz;
+                    const rapidRating = userStatus?.ratings?.rapid;
+                    const bulletRating = userStatus?.ratings?.bullet;
+                    const displayRating = blitzRating ?? rapidRating ?? bulletRating ?? null;
+
+                    const activityText = userActivity
+                      ? userActivity.activityLevel === "very_active"
+                        ? "Very Active"
+                        : userActivity.activityLevel === "active"
+                          ? "Active"
+                          : "Inactive"
+                      : "—";
+
+                    const syncPct = apiTotal > 0 ? Math.min(100, Math.round((dbGamesCount / apiTotal) * 100)) : 0;
+
+                    return (
+                      <tr key={key} className="hover:bg-zinc-50">
+                        {/* Online Status */}
+                        <td className="px-4 py-3">
+                          <span
+                            className={`inline-block h-2.5 w-2.5 rounded-full ${isOnline ? "bg-[#4CAF50]" : "bg-[#9E9E9E]"}`}
+                            title={isOnline ? "Online" : "Offline"}
+                          />
+                        </td>
+                        {/* Username */}
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-zinc-900">{latest.username}</span>
+                            {latest.platform === "lichess" ? (
+                              <span className="text-[10px] text-zinc-400">lichess</span>
+                            ) : (
+                              <span className="text-[10px] text-zinc-400">chess.com</span>
+                            )}
+                          </div>
+                        </td>
+                        {/* Rating */}
+                        <td className="px-4 py-3 tabular-nums text-zinc-700">
+                          {displayRating ? displayRating : "—"}
+                        </td>
+                        {/* Style Badge */}
+                        <td className="px-4 py-3">
+                          {markerBadges.length > 0 ? (
+                            <span
+                              className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${badgeClass(String(markerBadges[0]?.strength ?? ""))}`}
+                              title={String(markerBadges[0]?.tooltip ?? "") || undefined}
+                            >
+                              {String(markerBadges[0]?.label ?? "")}
+                            </span>
+                          ) : (
+                            <span className="text-zinc-400">—</span>
+                          )}
+                        </td>
+                        {/* Sync Progress */}
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <div className="h-1.5 w-16 overflow-hidden rounded-full bg-zinc-200">
+                              <div
+                                className={`h-full ${isFastRunning ? "bg-blue-500" : syncPct >= 100 ? "bg-green-500" : "bg-zinc-400"}`}
+                                style={{ width: `${syncPct}%` }}
+                              />
+                            </div>
+                            <span className="text-xs tabular-nums text-zinc-600">
+                              {dbGamesCount.toLocaleString()}
+                              {apiTotal > 0 ? `/${apiTotal.toLocaleString()}` : ""}
+                            </span>
+                            {isFastRunning ? (
+                              <RefreshCw className="h-3 w-3 animate-spin text-blue-500" />
+                            ) : null}
+                          </div>
+                        </td>
+                        {/* Activity */}
+                        <td className="px-4 py-3">
+                          <span
+                            className={`text-xs ${
+                              userActivity?.activityLevel === "very_active"
+                                ? "font-medium text-amber-600"
+                                : userActivity?.activityLevel === "active"
+                                  ? "text-zinc-700"
+                                  : "text-zinc-400"
+                            }`}
+                          >
+                            {activityText}
+                          </span>
+                        </td>
+                        {/* Analyze Button */}
+                        <td className="px-4 py-3">
+                          <button
+                            type="button"
+                            className="inline-flex h-8 items-center justify-center rounded-lg bg-zinc-900 px-3 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-60"
+                            disabled={!canUseScout && !isFastRunning}
+                            onClick={() => prepare(latest)}
+                          >
+                            Analyze
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            /* Card View */
+            <div className="mt-6 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
             {opponents.map((o) => {
               const key = `${o.platform}:${o.username.toLowerCase()}`;
               const latest = byKey.get(key) ?? o;
@@ -626,6 +874,16 @@ export function DashboardPage({ initialOpponents }: Props) {
               const isFastRunning = isGlobalCurrent;
               const isFastQueued = currentKey ? queue.includes(currentKey) && !isGlobalCurrent : false;
               const markerBadges = Array.isArray((latest as any)?.style_markers) ? (((latest as any).style_markers as any[]) ?? []) : [];
+
+              // Rich data for card view
+              const userStatus = latest.platform === "lichess" ? lichessStatus.get(latest.username.toLowerCase()) : null;
+              const userActivity = latest.platform === "lichess" ? lichessActivity.get(latest.username.toLowerCase()) : null;
+              const isOnline = userStatus?.online ?? false;
+              const blitzRating = userStatus?.ratings?.blitz;
+              const rapidRating = userStatus?.ratings?.rapid;
+              const bulletRating = userStatus?.ratings?.bullet;
+              const displayRating = blitzRating ?? rapidRating ?? bulletRating ?? null;
+              const activityLevel = userActivity?.activityLevel ?? null;
 
               const menuOpen = openMenuKey === key;
               const primaryLabel = canUseScout ? "Analyze" : "Prepare";
@@ -672,7 +930,16 @@ export function DashboardPage({ initialOpponents }: Props) {
                           {latest.username.slice(0, 1).toUpperCase()}
                         </div>
                         <div className="min-w-0">
-                          <div className="truncate text-base font-semibold text-zinc-900">{latest.username}</div>
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${isOnline ? "bg-[#4CAF50]" : "bg-[#9E9E9E]"}`}
+                              title={isOnline ? "Online" : "Offline"}
+                            />
+                            <span className="truncate text-base font-semibold text-zinc-900">{latest.username}</span>
+                            {displayRating ? (
+                              <span className="shrink-0 text-xs tabular-nums text-zinc-500">{displayRating}</span>
+                            ) : null}
+                          </div>
                           <div className="mt-1 flex flex-wrap items-center gap-1.5">
                             {markerBadges.length ? (
                               markerBadges.slice(0, 2).map((m: any) => (
@@ -733,6 +1000,20 @@ export function DashboardPage({ initialOpponents }: Props) {
                           ) : syncedGamesCount > 0 ? (
                             <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-1 text-[10px] font-medium text-amber-700">
                               Partial
+                            </span>
+                          ) : null}
+                          {/* Activity indicator */}
+                          {activityLevel ? (
+                            <span
+                              className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-medium ${
+                                activityLevel === "very_active"
+                                  ? "bg-amber-100 text-amber-700"
+                                  : activityLevel === "active"
+                                    ? "bg-zinc-100 text-zinc-700"
+                                    : "bg-zinc-50 text-zinc-400"
+                              }`}
+                            >
+                              {activityLevel === "very_active" ? "Very Active" : activityLevel === "active" ? "Active" : "Inactive"}
                             </span>
                           ) : null}
                         </div>
@@ -922,7 +1203,8 @@ export function DashboardPage({ initialOpponents }: Props) {
                 </div>
               );
             })}
-          </div>
+            </div>
+          )}
         </section>
       </main>
     </div>
