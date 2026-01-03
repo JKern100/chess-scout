@@ -21,6 +21,8 @@ import { ChessBoardCore, type ChessBoardCoreState } from "./ChessBoardCore";
 import { SimulationRightSidebar } from "./SimulationRightSidebar";
 import { AnalysisBoard } from "./AnalysisBoard";
 import { LichessBookTab } from "./LichessBookTab";
+import { ScoutOverlay } from "./ScoutOverlay";
+import { useScoutPrediction } from "@/lib/hooks/useScoutPrediction";
 import { OpponentFiltersPanel } from "@/components/chess/OpponentFiltersPanel";
 import { useOpponentFilters } from "@/components/chess/useOpponentFilters";
 import { StyleSpectrumBar, type StyleSpectrumData } from "@/components/profile/StyleSpectrumBar";
@@ -640,6 +642,17 @@ export function PlayBoardModes({ initialFen }: Props) {
   const [blackMs, setBlackMs] = useState<number>(3 * 60_000);
   const [gameStarted, setGameStarted] = useState(false);
   const [firstMoveMade, setFirstMoveMade] = useState(false); // Track if white has made first move (for clock start)
+
+  // Scout overlay state
+  const [scoutOverlayOpen, setScoutOverlayOpen] = useState(false);
+  const {
+    prediction: scoutPrediction,
+    loading: scoutLoading,
+    mode: scoutMode,
+    setMode: setScoutMode,
+    predict: scoutPredict,
+    clearPrediction: clearScoutPrediction,
+  } = useScoutPrediction();
 
   const tickRef = useRef<{ lastTs: number | null }>({ lastTs: null });
   const simMetaRef = useRef<{ turn: "w" | "b"; isGameOver: boolean }>({ turn: "w", isGameOver: false });
@@ -1844,6 +1857,31 @@ export function PlayBoardModes({ initialFen }: Props) {
                 lastOpponentMove={lastOpponentMove}
                 opponentCommentary={opponentCommentary}
                 simBusy={simBusy}
+                scoutEnabled={Boolean(opponentUsername.trim())}
+                onOpenScout={() => {
+                  setScoutOverlayOpen(true);
+                  // Trigger prediction when opening
+                  if (opponentUsername.trim()) {
+                    void scoutPredict({
+                      fen: state.fen,
+                      opponentUsername: opponentUsername.trim(),
+                      moveNumber: Math.ceil(state.game.history().length / 2) + 1,
+                    });
+                  }
+                }}
+              />
+              {/* Scout Overlay */}
+              <ScoutOverlay
+                isOpen={scoutOverlayOpen}
+                onClose={() => {
+                  setScoutOverlayOpen(false);
+                  clearScoutPrediction();
+                }}
+                prediction={scoutPrediction}
+                loading={scoutLoading}
+                mode={scoutMode}
+                onModeChange={setScoutMode}
+                opponentUsername={opponentUsername.trim()}
               />
             </SimulationAutoTrigger>
           </SimulationStartGate>

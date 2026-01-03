@@ -1,6 +1,6 @@
 "use client";
 
-import { Filter, Settings } from "lucide-react";
+import { Filter, Settings, Brain } from "lucide-react";
 import type { ChessBoardCoreState } from "./ChessBoardCore";
 
 type Strategy = "proportional" | "random";
@@ -47,6 +47,9 @@ type Props = {
   lastOpponentMove: { uci: string; san: string | null } | null;
   opponentCommentary: string | null;
   simBusy: boolean;
+  // Scout overlay
+  onOpenScout?: () => void;
+  scoutEnabled?: boolean;
 };
 
 export function SimulationRightSidebar(props: Props) {
@@ -79,6 +82,8 @@ export function SimulationRightSidebar(props: Props) {
     lastOpponentMove,
     opponentCommentary,
     simBusy,
+    onOpenScout,
+    scoutEnabled = false,
   } = props;
 
   const turn = state.game.turn();
@@ -184,6 +189,17 @@ export function SimulationRightSidebar(props: Props) {
           >
             <Settings className="h-5 w-5" />
           </button>
+          {/* Scout Brain Button */}
+          {scoutEnabled && onOpenScout ? (
+            <button
+              type="button"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-sm hover:from-amber-500 hover:to-orange-600"
+              title="Scout Insights"
+              onClick={onOpenScout}
+            >
+              <Brain className="h-5 w-5" />
+            </button>
+          ) : null}
         </div>
 
         <div className="min-w-0 overflow-auto p-3">
