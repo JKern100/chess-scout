@@ -13,7 +13,7 @@ FastAPI microservice that provides hybrid move prediction combining:
 
 ### Prerequisites
 
-- Python 3.10+
+- Python 3.13+ (3.10+ for local development)
 - Stockfish chess engine installed and accessible
 
 ### Installation
@@ -131,3 +131,69 @@ Monitors recent eval deltas. If opponent blundered (>1.0 drop), doubles aggressi
 
 ### Blunder Simulation
 When blunder_rate is high and board tension is high, intentionally selects 3rd or 4th best move to simulate tactical blindness.
+
+## Railway Deployment
+
+### Quick Deploy to Railway
+
+1. **Push to GitHub**
+   ```bash
+   git add .
+   git commit -m "Add Railway deployment config"
+   git push
+   ```
+
+2. **Create Railway Project**
+   - Go to [railway.app](https://railway.app)
+   - Click "New Project" → "Deploy from GitHub repo"
+   - Select your repository
+   - Set **Root Directory**: `scout-api`
+
+3. **Environment Variables**
+   Railway will auto-detect the Dockerfile. Set these environment variables:
+   ```
+   STOCKFISH_PATH=/usr/games/stockfish
+   ```
+
+4. **Deploy**
+   - Railway will automatically build using the Dockerfile
+   - Stockfish is installed via `apt-get install stockfish`
+   - Your API will be live at: `https://your-app.up.railway.app`
+
+### Testing Production Deployment
+
+```bash
+# Test health endpoint
+curl https://your-app.up.railway.app/health
+
+# Test engine analysis
+curl "https://your-app.up.railway.app/analyze?fen=rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR%20w%20KQkq%20-%200%201&depth=15&multipv=3"
+
+# Test prediction
+curl -X POST https://your-app.up.railway.app/predict \
+  -H "Content-Type: application/json" \
+  -d @test_request.json
+```
+
+### Dockerfile Details
+
+The included `Dockerfile`:
+- Uses Python 3.13 slim base image
+- Installs Stockfish via apt (`/usr/games/stockfish`)
+- Installs all Python dependencies
+- Exposes port (Railway sets `PORT` env var)
+- Runs uvicorn server
+
+### Troubleshooting
+
+**Build fails with pydantic-core or asyncpg errors:**
+- Ensure `requirements.txt` uses `>=` version constraints
+- Python 3.13 requires updated versions of these packages
+
+**Stockfish not found:**
+- Verify `STOCKFISH_PATH=/usr/games/stockfish` in Railway env vars
+- Check Railway build logs to confirm stockfish installation
+
+**Port binding errors:**
+- Railway automatically sets `PORT` environment variable
+- Dockerfile CMD uses `${PORT:-8001}` to support both Railway and local dev

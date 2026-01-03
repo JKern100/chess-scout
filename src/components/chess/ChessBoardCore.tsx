@@ -522,7 +522,7 @@ export function ChessBoardCore({ initialFen, soundEnabled = true, arrows, square
             </div>
 
             <div
-              className="flex w-[360px] min-w-0 flex-none flex-col overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm"
+              className="flex w-[432px] min-w-0 flex-none flex-col overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm"
               style={{ maxHeight: boardHeightPx, height: "fit-content" }}
             >
               <div className="min-w-0 flex-col gap-4 overflow-y-auto overflow-x-hidden p-3">{children(state)}</div>

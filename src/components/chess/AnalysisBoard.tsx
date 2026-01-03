@@ -5,6 +5,8 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChessBoardCoreState } from "./ChessBoardCore";
 import { evaluateBestMove, evaluatePositionShallow, type EngineScore } from "@/lib/engine/engineService";
 import { sanToFigurine } from "@/components/chess/FigurineIcon";
+import { useStyleAnalysis } from "@/lib/hooks/useStyleAnalysis";
+import { Zap, AlertTriangle, TrendingUp, Target, Braces } from "lucide-react";
 
 type Strategy = "proportional" | "random";
 
@@ -34,6 +36,16 @@ type Props = {
   } | null;
   setOpponentStats: (s: Props["opponentStats"]) => void;
   setOpponentStatsBusy: (v: boolean) => void;
+  // Style analysis props
+  styleMarkers?: {
+    aggression_index: number;
+    queen_trade_avoidance: number;
+    material_greed: number;
+    complexity_preference: number;
+    space_expansion: number;
+    blunder_rate: number;
+    time_pressure_weakness: number;
+  };
 };
 
 type MoveRow = {
@@ -56,6 +68,12 @@ type CandidateMoveRowProps = {
   isEngine: boolean;
   showEngineColumn: boolean;
   evalLabel: string | null;
+  adjustedEvalLabel?: string | null;
+  styleBadges?: Array<{
+    type: string;
+    value: string;
+    color: string;
+  }>;
   onPlay: (uci: string) => void;
   formatGameCount: (n: number) => string;
   isWhiteMove: boolean;
@@ -73,10 +91,43 @@ const CandidateMoveRow = memo(function CandidateMoveRow(props: CandidateMoveRowP
     isEngine,
     showEngineColumn,
     evalLabel,
+    adjustedEvalLabel,
+    styleBadges,
     onPlay,
     formatGameCount,
     isWhiteMove,
   } = props;
+
+  // Helper to render style badges
+  const renderStyleBadge = (badge: { type: string; value: string; color: string }) => {
+    const iconMap = {
+      aggression: Zap,
+      trade: AlertTriangle,
+      greed: TrendingUp,
+      complexity: Target,
+      space: Braces,
+    };
+    
+    const Icon = iconMap[badge.type as keyof typeof iconMap] || Zap;
+    const colorMap = {
+      red: "text-red-600 bg-red-100",
+      orange: "text-orange-600 bg-orange-100",
+      yellow: "text-yellow-600 bg-yellow-100",
+      purple: "text-purple-600 bg-purple-100",
+      blue: "text-blue-600 bg-blue-100",
+    };
+    
+    return (
+      <span
+        key={badge.type}
+        className={`inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[9px] font-medium ${colorMap[badge.color as keyof typeof colorMap] || "text-zinc-600 bg-zinc-100"}`}
+        title={`${badge.type}: ${badge.value}`}
+      >
+        <Icon className="h-2.5 w-2.5" />
+        {badge.value}
+      </span>
+    );
+  };
 
   return (
     <button
@@ -93,13 +144,27 @@ const CandidateMoveRow = memo(function CandidateMoveRow(props: CandidateMoveRowP
         ) : null}
       </div>
       <div className="font-medium text-zinc-700">{formatGameCount(playedCount)}</div>
-      {showEngineColumn ? <div className="min-w-0 truncate font-medium text-zinc-500">{evalLabel}</div> : null}
-      <div className="h-2.5 overflow-hidden rounded-full border border-zinc-200 bg-zinc-100">
-        <div className="flex h-full w-full">
-          <div className="h-full bg-emerald-500 transition-[width] duration-200" style={{ width: `${winPct}%` }} />
-          <div className="h-full bg-zinc-300 transition-[width] duration-200" style={{ width: `${drawPct}%` }} />
-          <div className="h-full bg-rose-500 transition-[width] duration-200" style={{ width: `${lossPct}%` }} />
+      {showEngineColumn ? (
+        <div className="flex flex-col gap-0.5">
+          <div className="min-w-0 truncate font-medium text-zinc-500">{evalLabel}</div>
+          {adjustedEvalLabel && adjustedEvalLabel !== evalLabel ? (
+            <div className="min-w-0 truncate font-medium text-amber-600">{adjustedEvalLabel}</div>
+          ) : null}
         </div>
+      ) : null}
+      <div className="flex flex-col gap-1">
+        <div className="h-2.5 overflow-hidden rounded-full border border-zinc-200 bg-zinc-100">
+          <div className="flex h-full w-full">
+            <div className="h-full bg-emerald-500 transition-[width] duration-200" style={{ width: `${winPct}%` }} />
+            <div className="h-full bg-zinc-300 transition-[width] duration-200" style={{ width: `${drawPct}%` }} />
+            <div className="h-full bg-rose-500 transition-[width] duration-200" style={{ width: `${lossPct}%` }} />
+          </div>
+        </div>
+        {styleBadges && styleBadges.length > 0 && (
+          <div className="flex flex-wrap gap-0.5">
+            {styleBadges.slice(0, 2).map(renderStyleBadge)}
+          </div>
+        )}
       </div>
       <div className="text-right font-medium text-zinc-700">{freqPct}%</div>
     </button>
@@ -127,6 +192,7 @@ export function AnalysisBoard(props: Props) {
     setOpponentStats,
     opponentStatsBusy,
     setOpponentStatsBusy,
+    styleMarkers,
   } = props;
 
   const engineReqIdRef = useRef(0);
@@ -140,6 +206,13 @@ export function AnalysisBoard(props: Props) {
   const lastAnimatedImportedCountRef = useRef<number>(0);
   const [displayTotalInPos, setDisplayTotalInPos] = useState(0);
   const [displayMoveCounts, setDisplayMoveCounts] = useState<Record<string, number>>({});
+  
+  // Style analysis state
+  const {
+    analysis: styleAnalysis,
+    loading: styleLoading,
+    analyze: analyzeWithStyle,
+  } = useStyleAnalysis();
 
   useEffect(() => {
     if (!showArrow) return;
@@ -581,6 +654,27 @@ export function AnalysisBoard(props: Props) {
     };
   }, [enabled, showEngineColumn, state.fen, visibleMovesKey, nextMoveList.moves]);
 
+  // Style analysis effect
+  useEffect(() => {
+    if (!enabled || !showEngineColumn || !styleMarkers || !nextMoveList.moves?.length) {
+      return;
+    }
+
+    const moves = nextMoveList.moves.slice(0, 12).map(m => m.uci);
+    if (moves.length === 0) return;
+
+    const timeout = window.setTimeout(() => {
+      void analyzeWithStyle({
+        fen: state.fen,
+        moves,
+        opponentUsername,
+        styleMarkers,
+      });
+    }, 500); // Slight delay after engine eval
+
+    return () => window.clearTimeout(timeout);
+  }, [enabled, showEngineColumn, state.fen, nextMoveList.moves, opponentUsername, styleMarkers, analyzeWithStyle]);
+
   const formatGameCount = useCallback((value: number) => {
     const n = Number(value);
     if (!Number.isFinite(n) || n <= 0) return "0";
@@ -633,6 +727,12 @@ export function AnalysisBoard(props: Props) {
                   const freqPct = Math.round(freq * 100);
                   const isEngine = Boolean(engineBestMove?.uci && engineBestMove.uci === m.uci);
                   const evalLabel = showEngineColumn ? (engineMoveEval[m.uci] ?? "…") : null;
+                  
+                  // Get style analysis data for this move
+                  const styleData = styleAnalysis?.find(s => s.move_uci === m.uci);
+                  const adjustedEvalLabel = styleData && showEngineColumn 
+                    ? (styleData.adjusted_eval > 0 ? `+${styleData.adjusted_eval.toFixed(1)}` : styleData.adjusted_eval.toFixed(1))
+                    : null;
 
                   return (
                     <CandidateMoveRow
@@ -647,6 +747,8 @@ export function AnalysisBoard(props: Props) {
                       isEngine={isEngine}
                       showEngineColumn={showEngineColumn}
                       evalLabel={evalLabel}
+                      adjustedEvalLabel={adjustedEvalLabel}
+                      styleBadges={styleData?.badges}
                       onPlay={onPlayMove}
                       formatGameCount={formatGameCount}
                       isWhiteMove={isWhiteToMove}

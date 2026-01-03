@@ -10,6 +10,7 @@ import {
   ChevronsRight,
   Filter,
   GitBranch,
+  Info,
   RotateCcw,
   SlidersHorizontal,
   Volume2,
@@ -643,7 +644,7 @@ export function PlayBoardModes({ initialFen }: Props) {
   const [gameStarted, setGameStarted] = useState(false);
   const [firstMoveMade, setFirstMoveMade] = useState(false); // Track if white has made first move (for clock start)
 
-  // Scout overlay state
+  // Style analysis state
   const [scoutOverlayOpen, setScoutOverlayOpen] = useState(false);
   const {
     prediction: scoutPrediction,
@@ -654,6 +655,7 @@ export function PlayBoardModes({ initialFen }: Props) {
     clearPrediction: clearScoutPrediction,
   } = useScoutPrediction();
 
+  
   const tickRef = useRef<{ lastTs: number | null }>({ lastTs: null });
   const simMetaRef = useRef<{ turn: "w" | "b"; isGameOver: boolean }>({ turn: "w", isGameOver: false });
 
@@ -863,6 +865,39 @@ export function PlayBoardModes({ initialFen }: Props) {
   );
 
   const styleSessionKey = `${opponentUsername.trim().toLowerCase()}|${filtersKey}`;
+
+  // Convert session markers to style markers format for AnalysisBoard
+  const analysisStyleMarkers = useMemo(() => {
+    if (!sessionAxisMarkers.length) return undefined;
+    
+    const markers: any = {
+      aggression_index: 50,
+      queen_trade_avoidance: 50,
+      material_greed: 50,
+      complexity_preference: 50,
+      space_expansion: 50,
+      blunder_rate: 5,
+      time_pressure_weakness: 50,
+    };
+    
+    // Map session markers to style markers
+    sessionAxisMarkers.forEach(m => {
+      const metrics = m.metrics_json || {};
+      if (m.marker_key === "axis_aggression") {
+        markers.aggression_index = Math.max(0, Math.min(100, 50 + (metrics.diff_ratio || 0) * 100));
+      } else if (m.marker_key === "axis_queen_trades") {
+        markers.queen_trade_avoidance = Math.max(0, Math.min(100, 50 - (metrics.diff_ratio || 0) * 100));
+      } else if (m.marker_key === "axis_material") {
+        markers.material_greed = Math.max(0, Math.min(100, 50 + (metrics.diff_ratio || 0) * 100));
+      } else if (m.marker_key === "axis_complexity") {
+        markers.complexity_preference = Math.max(0, Math.min(100, 50 + (metrics.diff_ratio || 0) * 100));
+      } else if (m.marker_key === "axis_space") {
+        markers.space_expansion = Math.max(0, Math.min(100, 50 + (metrics.diff_ratio || 0) * 100));
+      }
+    });
+    
+    return markers;
+  }, [sessionAxisMarkers]);
 
   useEffect(() => {
     void fetchSessionAxisMarkers(opponentUsername, styleSessionKey, String(Date.now()));
@@ -1786,6 +1821,7 @@ export function PlayBoardModes({ initialFen }: Props) {
               setLichessSource={setLichessSource}
               lichessShowArrows={lichessShowArrows}
               setLichessShowArrows={setLichessShowArrows}
+              analysisStyleMarkers={analysisStyleMarkers}
             />
           );
         }
@@ -2000,6 +2036,7 @@ function AnalysisRightSidebar(props: {
   setLichessSource: (s: ExplorerSource) => void;
   lichessShowArrows: boolean;
   setLichessShowArrows: (v: boolean) => void;
+  analysisStyleMarkers?: any;
 }) {
   const {
     state,
@@ -2044,9 +2081,11 @@ function AnalysisRightSidebar(props: {
     setLichessSource,
     lichessShowArrows,
     setLichessShowArrows,
+    analysisStyleMarkers,
   } = props;
 
   const active = analysisRightTab;
+  const [showCandidatesHelp, setShowCandidatesHelp] = useState(false);
 
   useEffect(() => {
     if (active !== "lichess") return;
@@ -2098,49 +2137,94 @@ function AnalysisRightSidebar(props: {
       ) : null}
       <div className="min-w-0 overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm">
         <div className="flex min-w-0 items-center justify-between border-b border-zinc-200 px-2 py-2">
-          <button
-            type="button"
-            className={`inline-flex h-9 w-9 items-center justify-center rounded-xl hover:bg-zinc-50 ${
-              active === "filters" ? "bg-zinc-100 text-zinc-900" : "text-zinc-600"
-            }`}
-            title="Filters"
-            onClick={() => setAnalysisRightTab("filters")}
-          >
-            <Filter className="h-5 w-5" />
-          </button>
-          <button
-            type="button"
-            className={`inline-flex h-9 w-9 items-center justify-center rounded-xl hover:bg-zinc-50 ${
-              active === "preferences" ? "bg-zinc-100 text-zinc-900" : "text-zinc-600"
-            }`}
-            title="Preferences"
-            onClick={() => setAnalysisRightTab("preferences")}
-          >
-            <SlidersHorizontal className="h-5 w-5" />
-          </button>
-          <button
-            type="button"
-            className={`inline-flex h-9 w-9 items-center justify-center rounded-xl hover:bg-zinc-50 ${
-              active === "stats" ? "bg-zinc-100 text-zinc-900" : "text-zinc-600"
-            }`}
-            title="Candidates"
-            onClick={() => setAnalysisRightTab("stats")}
-          >
-            <GitBranch className="h-5 w-5" />
-          </button>
-          <button
-            type="button"
-            className={`inline-flex h-9 w-9 items-center justify-center rounded-xl hover:bg-zinc-50 ${
-              active === "lichess" ? "bg-zinc-100 text-zinc-900" : "text-zinc-600"
-            }`}
-            title="Lichess Book"
-            onClick={() => setAnalysisRightTab("lichess")}
-          >
-            <BookOpen className="h-5 w-5" />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              className={`inline-flex h-9 w-9 items-center justify-center rounded-xl hover:bg-zinc-50 ${
+                active === "filters" ? "bg-zinc-100 text-zinc-900" : "text-zinc-600"
+              }`}
+              title="Filters"
+              onClick={() => setAnalysisRightTab("filters")}
+            >
+              <Filter className="h-5 w-5" />
+            </button>
+            <button
+              type="button"
+              className={`inline-flex h-9 w-9 items-center justify-center rounded-xl hover:bg-zinc-50 ${
+                active === "preferences" ? "bg-zinc-100 text-zinc-900" : "text-zinc-600"
+              }`}
+              title="Preferences"
+              onClick={() => setAnalysisRightTab("preferences")}
+            >
+              <SlidersHorizontal className="h-5 w-5" />
+            </button>
+            <button
+              type="button"
+              className={`inline-flex h-9 w-9 items-center justify-center rounded-xl hover:bg-zinc-50 ${
+                active === "stats" ? "bg-zinc-100 text-zinc-900" : "text-zinc-600"
+              }`}
+              title="Candidates"
+              onClick={() => setAnalysisRightTab("stats")}
+            >
+              <GitBranch className="h-5 w-5" />
+            </button>
+            <button
+              type="button"
+              className={`inline-flex h-9 w-9 items-center justify-center rounded-xl hover:bg-zinc-50 ${
+                active === "lichess" ? "bg-zinc-100 text-zinc-900" : "text-zinc-600"
+              }`}
+              title="Lichess Book"
+              onClick={() => setAnalysisRightTab("lichess")}
+            >
+              <BookOpen className="h-5 w-5" />
+            </button>
+          </div>
+          {active === "stats" && (
+            <button
+              type="button"
+              className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-50 hover:text-zinc-700"
+              title="Help"
+              onClick={() => setShowCandidatesHelp(!showCandidatesHelp)}
+            >
+              <Info className="h-4 w-4" />
+            </button>
+          )}
         </div>
 
         <div className="min-w-0 overflow-auto p-3">
+          {showCandidatesHelp && active === "stats" && (
+            <div className="mb-3 rounded-xl border border-blue-200 bg-blue-50 p-3 text-[11px] leading-relaxed text-blue-900">
+              <div className="mb-2 flex items-center gap-2">
+                <Info className="h-4 w-4 flex-shrink-0" />
+                <div className="font-semibold">Style-Adjusted Analysis</div>
+              </div>
+              <div className="space-y-2">
+                <p>
+                  <strong>Engine Evaluations:</strong> When "Show engine eval column" is enabled, you'll see <strong>two evaluations</strong> for each move:
+                </p>
+                <ul className="ml-4 space-y-1 list-disc">
+                  <li><strong>Top number (black):</strong> Raw Stockfish evaluation</li>
+                  <li><strong>Bottom number (amber):</strong> Style-adjusted evaluation based on opponent's playing style</li>
+                </ul>
+                <p>
+                  <strong>Style Markers:</strong> The adjustment is calculated using the opponent's style profile from the Style Spectrum:
+                </p>
+                <ul className="ml-4 space-y-1 list-disc">
+                  <li><strong className="text-red-600">Aggression</strong> — Boosts moves that attack, check, or pressure the king</li>
+                  <li><strong className="text-orange-600">Trade Penalty</strong> — Penalizes queen trades for players who avoid them</li>
+                  <li><strong className="text-yellow-600">Material Greed</strong> — Boosts captures and material gains</li>
+                  <li><strong className="text-purple-600">Complexity</strong> — Boosts moves that increase tension and complications</li>
+                  <li><strong className="text-blue-600">Space Expansion</strong> — Boosts pawn advances and territorial control</li>
+                </ul>
+                <p>
+                  <strong>Style Badges:</strong> Moves that strongly match the opponent's style show colored badges below the W/D/L bar with the style bonus percentage.
+                </p>
+                <p className="text-[10px] italic text-blue-700">
+                  Note: Style adjustments only appear when opponent has loaded style markers and moves trigger specific patterns (captures, checks, trades, etc.)
+                </p>
+              </div>
+            </div>
+          )}
           {active === "filters" ? (
             analysisFiltersPanel
           ) : active === "preferences" ? (
@@ -2201,6 +2285,7 @@ function AnalysisRightSidebar(props: {
               setOpponentStatsBusy={setAnalysisStatsBusy}
               enabled={active === "stats"}
               showEngineColumn={analysisShowEngineColumn}
+              styleMarkers={analysisStyleMarkers}
             />
           </div>
 
