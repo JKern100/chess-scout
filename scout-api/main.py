@@ -141,20 +141,32 @@ async def analyze_moves_with_style(request: dict):
         from models import StyleMarkers
         markers = StyleMarkers(**style_markers)
         
-        # Get engine analysis for all moves
-        engine_analysis = predictor.engine.analyze_position(fen, depth=15, multipv=len(moves))
-        
-        # Create a map of move to engine data
-        engine_map = {ea["move_uci"]: ea for ea in engine_analysis}
+        # We'll evaluate each move individually to match frontend behavior
         
         results = []
         import chess
         board = chess.Board(fen)
         
         for move_uci in moves:
-            # Get engine evaluation
-            engine_data = engine_map.get(move_uci)
-            engine_eval = engine_data["score_cp"] / 100 if engine_data else 0
+            # Evaluate the position after the move (like frontend does)
+            temp_board = board.copy()
+            move = temp_board.parse_uci(move_uci)
+            temp_board.push(move)
+            
+            # Get engine evaluation of the new position
+            engine_eval = 0
+            try:
+                # Analyze the position after the move directly
+                analysis = predictor.engine.analyze_position(temp_board.fen(), depth=15, multipv=1)
+                if analysis and len(analysis) > 0:
+                    # Convert from side-to-move POV to White POV
+                    score_cp = analysis[0]["score_cp"]
+                    engine_eval = score_cp / 100
+                    # Convert to White POV based on whose turn it is after the move
+                    if temp_board.turn == "b":
+                        engine_eval = -engine_eval
+            except:
+                engine_eval = 0
             
             # Calculate style impact
             try:

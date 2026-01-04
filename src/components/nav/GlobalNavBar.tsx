@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronDown, LayoutDashboard, LineChart, FileText, Settings, RefreshCw, Menu, X, Check } from "lucide-react";
+import { ChevronDown, LayoutDashboard, LineChart, FileText, RefreshCw, Menu, X, Check, UserCircle, LogOut, History, Settings } from "lucide-react";
+import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { useActiveOpponent } from "@/context/ActiveOpponentContext";
 import { useImportQueue } from "@/context/ImportQueueContext";
 
@@ -51,15 +52,21 @@ export function GlobalNavBar() {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const profileDropdownRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // Close dropdown when clicking outside
+  // Close dropdowns when clicking outside
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setDropdownOpen(false);
         setSearchQuery("");
+      }
+      if (profileDropdownRef.current && !profileDropdownRef.current.contains(e.target as Node)) {
+        setProfileDropdownOpen(false);
       }
     }
     document.addEventListener("mousedown", handleClickOutside);
@@ -76,7 +83,34 @@ export function GlobalNavBar() {
   // Close mobile menu on route change
   useEffect(() => {
     setMobileMenuOpen(false);
+    setProfileDropdownOpen(false);
   }, [pathname]);
+
+  // Fetch user email on mount
+  useEffect(() => {
+    async function fetchUser() {
+      try {
+        const supabase = createSupabaseBrowserClient();
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user?.email) {
+          setUserEmail(user.email);
+        }
+      } catch {
+        // ignore
+      }
+    }
+    fetchUser();
+  }, []);
+
+  const handleSignOut = useCallback(async () => {
+    try {
+      const supabase = createSupabaseBrowserClient();
+      await supabase.auth.signOut();
+      router.push("/");
+    } catch {
+      // ignore
+    }
+  }, [router]);
 
   const filteredOpponents = availableOpponents.filter((o) =>
     o.username.toLowerCase().includes(searchQuery.toLowerCase())
@@ -225,14 +259,65 @@ export function GlobalNavBar() {
               </div>
             )}
 
-            {/* Settings Icon */}
-            <button
-              type="button"
-              className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-700"
-              title="Settings"
-            >
-              <Settings className="h-5 w-5" />
-            </button>
+            {/* Profile Dropdown */}
+            <div className="relative" ref={profileDropdownRef}>
+              <button
+                type="button"
+                onClick={() => setProfileDropdownOpen(!profileDropdownOpen)}
+                className="inline-flex h-9 w-9 items-center justify-center rounded-full text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-700"
+                title="Account"
+              >
+                <UserCircle className="h-6 w-6" />
+              </button>
+
+              {/* Profile Dropdown Menu */}
+              {profileDropdownOpen && (
+                <div className="absolute right-0 top-11 z-50 w-64 rounded-xl border border-zinc-200 bg-white shadow-lg">
+                  {/* User Email */}
+                  <div className="border-b border-zinc-100 px-4 py-3">
+                    <div className="text-xs font-medium text-zinc-500">Signed in as</div>
+                    <div className="mt-0.5 truncate text-sm font-medium text-zinc-900">
+                      {userEmail || "Loading..."}
+                    </div>
+                  </div>
+
+                  {/* Menu Items */}
+                  <div className="p-1">
+                    <Link
+                      href="/account"
+                      className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-zinc-700 transition-colors hover:bg-zinc-50"
+                      onClick={() => setProfileDropdownOpen(false)}
+                    >
+                      <Settings className="h-4 w-4 text-zinc-400" />
+                      Account Settings
+                    </Link>
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-zinc-700 transition-colors hover:bg-zinc-50"
+                      onClick={() => {
+                        setProfileDropdownOpen(false);
+                        // TODO: Implement Scout History view
+                      }}
+                    >
+                      <History className="h-4 w-4 text-zinc-400" />
+                      Scout History
+                    </button>
+                  </div>
+
+                  {/* Sign Out */}
+                  <div className="border-t border-zinc-100 p-1">
+                    <button
+                      type="button"
+                      onClick={handleSignOut}
+                      className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-red-600 transition-colors hover:bg-red-50"
+                    >
+                      <LogOut className="h-4 w-4" />
+                      Sign Out
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Mobile: Hamburger Menu Button */}

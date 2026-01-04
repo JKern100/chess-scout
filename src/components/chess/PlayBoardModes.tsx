@@ -26,7 +26,7 @@ import { ChessBoardCore, type ChessBoardCoreState } from "./ChessBoardCore";
 import { SimulationRightSidebar } from "./SimulationRightSidebar";
 import { AnalysisBoard } from "./AnalysisBoard";
 import { LichessBookTab } from "./LichessBookTab";
-import { ScoutOverlay, type OpponentReplyForecast } from "./ScoutOverlay";
+import { ScoutOverlay, ScoutPanelContent, type OpponentReplyForecast } from "./ScoutOverlay";
 import { useScoutPrediction } from "@/lib/hooks/useScoutPrediction";
 import { OpponentFiltersPanel } from "@/components/chess/OpponentFiltersPanel";
 import { useOpponentFilters } from "@/components/chess/useOpponentFilters";
@@ -77,9 +77,9 @@ type Mode = "simulation" | "analysis";
 
 type Strategy = "proportional" | "random";
 
-type AnalysisRightTab = "stats" | "filters" | "preferences" | "lichess";
+type AnalysisRightTab = "stats" | "filters" | "preferences" | "lichess" | "scout";
 
-type SimulationRightTab = "filters" | "settings";
+type SimulationRightTab = "filters" | "settings" | "scout";
 
 type SavedLine = {
   id: string;
@@ -1928,8 +1928,13 @@ export function PlayBoardModes({ initialFen }: Props) {
                 lichessShowArrows={lichessShowArrows}
                 setLichessShowArrows={setLichessShowArrows}
                 analysisStyleMarkers={analysisStyleMarkers}
-                onOpenScout={() => {
-                  setScoutOverlayOpen(true);
+                scoutEnabled={Boolean(opponentUsername.trim())}
+                scoutPrediction={scoutPrediction}
+                scoutLoading={scoutLoading}
+                scoutError={scoutError}
+                scoutMode={scoutMode}
+                onScoutModeChange={setScoutMode}
+                onScoutPredict={() => {
                   if (opponentUsername.trim()) {
                     void scoutPredict({
                       fen: state.fen,
@@ -1939,7 +1944,8 @@ export function PlayBoardModes({ initialFen }: Props) {
                     });
                   }
                 }}
-                scoutEnabled={Boolean(opponentUsername.trim())}
+                scoutOpponentReplyByMove={scoutOpponentReplyByMove}
+                scoutOpponentReplyLoading={scoutOpponentReplyLoading}
               />
               <ScoutOverlay
                 isOpen={scoutOverlayOpen}
@@ -2030,9 +2036,13 @@ export function PlayBoardModes({ initialFen }: Props) {
                 opponentCommentary={opponentCommentary}
                 simBusy={simBusy}
                 scoutEnabled={Boolean(opponentUsername.trim())}
-                onOpenScout={() => {
-                  setScoutOverlayOpen(true);
-                  // Trigger prediction when opening
+                opponentUsername={opponentUsername.trim()}
+                scoutPrediction={scoutPrediction}
+                scoutLoading={scoutLoading}
+                scoutError={scoutError}
+                scoutMode={scoutMode}
+                onScoutModeChange={setScoutMode}
+                onScoutPredict={() => {
                   if (opponentUsername.trim()) {
                     void scoutPredict({
                       fen: state.fen,
@@ -2042,6 +2052,8 @@ export function PlayBoardModes({ initialFen }: Props) {
                     });
                   }
                 }}
+                scoutOpponentReplyByMove={scoutOpponentReplyByMove}
+                scoutOpponentReplyLoading={scoutOpponentReplyLoading}
               />
               {/* Scout Overlay */}
               <ScoutOverlay
@@ -2181,8 +2193,15 @@ function AnalysisRightSidebar(props: {
   lichessShowArrows: boolean;
   setLichessShowArrows: (v: boolean) => void;
   analysisStyleMarkers?: any;
-  onOpenScout?: () => void;
   scoutEnabled?: boolean;
+  scoutPrediction?: any;
+  scoutLoading?: boolean;
+  scoutError?: string | null;
+  scoutMode?: "pure_history" | "hybrid";
+  onScoutModeChange?: (mode: "pure_history" | "hybrid") => void;
+  onScoutPredict?: () => void;
+  scoutOpponentReplyByMove?: Record<string, any> | null;
+  scoutOpponentReplyLoading?: boolean;
 }) {
   const {
     state,
@@ -2230,8 +2249,15 @@ function AnalysisRightSidebar(props: {
     lichessShowArrows,
     setLichessShowArrows,
     analysisStyleMarkers,
-    onOpenScout,
     scoutEnabled = false,
+    scoutPrediction,
+    scoutLoading,
+    scoutError,
+    scoutMode,
+    onScoutModeChange,
+    onScoutPredict,
+    scoutOpponentReplyByMove,
+    scoutOpponentReplyLoading,
   } = props;
 
   const active = analysisRightTab;
@@ -2328,12 +2354,17 @@ function AnalysisRightSidebar(props: {
             >
               <BookOpen className="h-5 w-5" />
             </button>
-            {scoutEnabled && onOpenScout ? (
+            {scoutEnabled ? (
               <button
                 type="button"
-                className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-sm hover:from-amber-500 hover:to-orange-600"
+                className={`inline-flex h-9 w-9 items-center justify-center rounded-xl hover:bg-zinc-50 ${
+                  active === "scout" ? "bg-zinc-100 text-zinc-900" : "text-zinc-600"
+                }`}
                 title="Scout Insights"
-                onClick={onOpenScout}
+                onClick={() => {
+                  setAnalysisRightTab("scout");
+                  if (onScoutPredict) onScoutPredict();
+                }}
               >
                 <Brain className="h-5 w-5" />
               </button>
@@ -2525,6 +2556,21 @@ function AnalysisRightSidebar(props: {
                   }
                 })();
               }}
+            />
+          </div>
+
+          {/* Scout Insights Tab */}
+          <div className={active === "scout" ? "" : "hidden"}>
+            <ScoutPanelContent
+              prediction={scoutPrediction}
+              loading={scoutLoading}
+              error={scoutError}
+              mode={scoutMode}
+              onModeChange={onScoutModeChange}
+              opponentUsername={opponentUsername}
+              opponentReplyByMove={scoutOpponentReplyByMove}
+              opponentReplyLoading={scoutOpponentReplyLoading}
+              onRefresh={onScoutPredict}
             />
           </div>
         </div>

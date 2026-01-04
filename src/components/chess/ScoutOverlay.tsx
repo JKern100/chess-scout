@@ -224,6 +224,175 @@ const TraceLog = memo(function TraceLog({
   );
 });
 
+// Compact inline panel version for sidebar tabs
+export const ScoutPanelContent = memo(function ScoutPanelContent({
+  prediction,
+  loading,
+  error,
+  mode,
+  onModeChange,
+  opponentUsername,
+  opponentReplyByMove,
+  opponentReplyLoading,
+  onRefresh,
+}: {
+  prediction: ScoutPrediction | null;
+  loading?: boolean;
+  error?: string | null;
+  mode?: PredictionMode;
+  onModeChange?: (mode: PredictionMode) => void;
+  opponentUsername: string;
+  opponentReplyByMove?: Record<string, OpponentReplyForecast> | null;
+  opponentReplyLoading?: boolean;
+  onRefresh?: () => void;
+}) {
+  return (
+    <div className="grid gap-3">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="text-[10px] font-medium text-zinc-900">
+          Scout Insights: {opponentUsername}
+        </div>
+        {onRefresh && (
+          <button
+            type="button"
+            className="inline-flex h-6 items-center justify-center rounded-lg px-2 text-[10px] font-medium text-zinc-600 hover:bg-zinc-100"
+            onClick={onRefresh}
+            disabled={loading}
+          >
+            {loading ? "Loading..." : "Refresh"}
+          </button>
+        )}
+      </div>
+
+      {/* Mode Toggle */}
+      {mode && onModeChange && (
+        <div className="flex items-center gap-1 rounded-lg border border-zinc-200 bg-zinc-50 p-0.5">
+          <button
+            type="button"
+            className={`flex-1 rounded-md px-2 py-1 text-[10px] font-medium transition-colors ${
+              mode === "pure_history"
+                ? "bg-white text-zinc-900 shadow-sm"
+                : "text-zinc-500 hover:text-zinc-700"
+            }`}
+            onClick={() => onModeChange("pure_history")}
+          >
+            History Only
+          </button>
+          <button
+            type="button"
+            className={`flex-1 rounded-md px-2 py-1 text-[10px] font-medium transition-colors ${
+              mode === "hybrid"
+                ? "bg-white text-zinc-900 shadow-sm"
+                : "text-zinc-500 hover:text-zinc-700"
+            }`}
+            onClick={() => onModeChange("hybrid")}
+          >
+            Full Scout
+          </button>
+        </div>
+      )}
+
+      {/* Content */}
+      {loading ? (
+        <div className="flex h-32 items-center justify-center">
+          <div className="h-6 w-6 animate-spin rounded-full border-2 border-zinc-300 border-t-zinc-600" />
+        </div>
+      ) : error ? (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-3">
+          <div className="text-[10px] font-medium text-red-700">Error</div>
+          <div className="mt-1 text-[10px] text-red-600">{error}</div>
+        </div>
+      ) : prediction ? (
+        <div className="grid gap-3">
+          {/* Status Indicators */}
+          <div className="flex flex-wrap items-center gap-2">
+            {prediction.tilt_active && (
+              <div className="flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[9px] font-medium text-rose-700">
+                <Zap className="h-2.5 w-2.5" />
+                Tilt
+              </div>
+            )}
+            {prediction.blunder_applied && (
+              <div className="flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-medium text-amber-700">
+                <AlertTriangle className="h-2.5 w-2.5" />
+                Blunder
+              </div>
+            )}
+            <div className="flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[9px] font-medium text-zinc-700">
+              <Target className="h-2.5 w-2.5" />
+              {prediction.selected_move}
+            </div>
+          </div>
+
+          {/* Weight Distribution - Compact */}
+          <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-2">
+            <div className="mb-2 text-[9px] font-medium text-zinc-700">Weight Distribution ({prediction.weights.phase})</div>
+            <div className="flex items-center gap-3 text-[9px]">
+              <div className="flex items-center gap-1">
+                <span className="h-2 w-2 rounded-sm bg-blue-500" />
+                <span className="text-zinc-600">History {Math.round((prediction.weights.history / (prediction.weights.history + prediction.weights.engine + prediction.weights.style)) * 100)}%</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="h-2 w-2 rounded-sm bg-emerald-500" />
+                <span className="text-zinc-600">Engine {Math.round((prediction.weights.engine / (prediction.weights.history + prediction.weights.engine + prediction.weights.style)) * 100)}%</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="h-2 w-2 rounded-sm bg-amber-500" />
+                <span className="text-zinc-600">Style {Math.round((prediction.weights.style / (prediction.weights.history + prediction.weights.engine + prediction.weights.style)) * 100)}%</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Candidate Moves - Compact */}
+          <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-2">
+            <div className="mb-2 text-[9px] font-medium text-zinc-700">Top Candidates</div>
+            <div className="grid gap-1">
+              {prediction.candidates.slice(0, 4).map((c) => (
+                <div
+                  key={c.move}
+                  className={`flex items-center justify-between rounded-lg px-2 py-1 text-[10px] ${
+                    c.move === prediction.selected_move ? "bg-amber-50 ring-1 ring-amber-200" : "bg-white"
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-zinc-900">{c.move}</span>
+                    <span className="text-zinc-500">#{c.engine_rank}</span>
+                  </div>
+                  <span className="font-medium text-zinc-700">{c.final_prob.toFixed(1)}%</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Trace Log - Compact */}
+          <div className="rounded-xl border border-zinc-200 bg-zinc-900 p-2">
+            <div className="mb-1 text-[9px] font-medium text-zinc-400">Logic Trace</div>
+            <div className="max-h-24 overflow-y-auto font-mono text-[9px] leading-relaxed">
+              {prediction.trace_log.slice(0, 6).map((entry, i) => {
+                let color = "text-zinc-500";
+                if (entry.type === "warning") color = "text-amber-400";
+                else if (entry.type === "decision") color = "text-emerald-400";
+                else if (entry.type === "tilt") color = "text-rose-400";
+                else if (entry.type === "logic") color = "text-blue-400";
+                return (
+                  <div key={i} className={`${color} truncate`}>
+                    {entry.message}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="flex h-24 items-center justify-center text-[10px] text-zinc-500">
+          Click refresh to load Scout prediction
+        </div>
+      )}
+    </div>
+  );
+});
+
 export const ScoutOverlay = memo(function ScoutOverlay({
   isOpen,
   onClose,

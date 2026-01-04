@@ -2,6 +2,7 @@
 
 import { Filter, Settings, Brain } from "lucide-react";
 import type { ChessBoardCoreState } from "./ChessBoardCore";
+import { ScoutPanelContent } from "./ScoutOverlay";
 
 type Strategy = "proportional" | "random";
 
@@ -13,7 +14,7 @@ type TimeControlPreset = {
   category: "bullet" | "blitz" | "rapid" | "classical";
 };
 
-type SimulationRightTab = "filters" | "settings";
+type SimulationRightTab = "filters" | "settings" | "scout";
 
 type Props = {
   state: ChessBoardCoreState;
@@ -47,9 +48,17 @@ type Props = {
   lastOpponentMove: { uci: string; san: string | null } | null;
   opponentCommentary: string | null;
   simBusy: boolean;
-  // Scout overlay
-  onOpenScout?: () => void;
+  // Scout tab props
   scoutEnabled?: boolean;
+  opponentUsername?: string;
+  scoutPrediction?: any;
+  scoutLoading?: boolean;
+  scoutError?: string | null;
+  scoutMode?: "pure_history" | "hybrid";
+  onScoutModeChange?: (mode: "pure_history" | "hybrid") => void;
+  onScoutPredict?: () => void;
+  scoutOpponentReplyByMove?: Record<string, any> | null;
+  scoutOpponentReplyLoading?: boolean;
 };
 
 export function SimulationRightSidebar(props: Props) {
@@ -82,8 +91,16 @@ export function SimulationRightSidebar(props: Props) {
     lastOpponentMove,
     opponentCommentary,
     simBusy,
-    onOpenScout,
     scoutEnabled = false,
+    opponentUsername = "",
+    scoutPrediction,
+    scoutLoading,
+    scoutError,
+    scoutMode,
+    onScoutModeChange,
+    onScoutPredict,
+    scoutOpponentReplyByMove,
+    scoutOpponentReplyLoading,
   } = props;
 
   const turn = state.game.turn();
@@ -189,13 +206,18 @@ export function SimulationRightSidebar(props: Props) {
           >
             <Settings className="h-5 w-5" />
           </button>
-          {/* Scout Brain Button */}
-          {scoutEnabled && onOpenScout ? (
+          {/* Scout Brain Tab Button */}
+          {scoutEnabled ? (
             <button
               type="button"
-              className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-sm hover:from-amber-500 hover:to-orange-600"
+              className={`inline-flex h-9 w-9 items-center justify-center rounded-xl hover:bg-zinc-50 ${
+                activeTab === "scout" ? "bg-zinc-100 text-zinc-900" : "text-zinc-600"
+              }`}
               title="Scout Insights"
-              onClick={onOpenScout}
+              onClick={() => {
+                setActiveTab("scout");
+                if (onScoutPredict) onScoutPredict();
+              }}
             >
               <Brain className="h-5 w-5" />
             </button>
@@ -404,6 +426,21 @@ export function SimulationRightSidebar(props: Props) {
               </div>
             </div>
           </div>
+        ) : null}
+
+        {/* Scout Tab Content */}
+        {activeTab === "scout" ? (
+          <ScoutPanelContent
+            prediction={scoutPrediction}
+            loading={scoutLoading}
+            error={scoutError}
+            mode={scoutMode}
+            onModeChange={onScoutModeChange}
+            opponentUsername={opponentUsername}
+            opponentReplyByMove={scoutOpponentReplyByMove}
+            opponentReplyLoading={scoutOpponentReplyLoading}
+            onRefresh={onScoutPredict}
+          />
         ) : null}
         </div>
       </div>

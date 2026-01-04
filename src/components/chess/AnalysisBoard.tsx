@@ -618,21 +618,13 @@ export function AnalysisBoard(props: Props) {
 
             const score = await evaluatePositionShallow(base.fen());
             // Stockfish returns score from side-to-move of the evaluated position.
-            // After applying a candidate move, the side-to-move flips, so invert.
-            const currentTurnPov: EngineScore | null =
-              score?.type === "cp"
-                ? { type: "cp", value: -score.value }
-                : score?.type === "mate"
-                  ? { type: "mate", value: -score.value }
-                  : null;
-
-            // Display consistently as White POV (positive = good for White), matching the main eval display.
-            const turn = state.game.turn();
+            // After the move, it's the other side's turn, so we need to convert to White POV.
+            const turnAfterMove = base.turn();
             const whitePov: EngineScore | null =
-              currentTurnPov?.type === "cp"
-                ? { type: "cp", value: turn === "b" ? -currentTurnPov.value : currentTurnPov.value }
-                : currentTurnPov?.type === "mate"
-                  ? { type: "mate", value: turn === "b" ? -currentTurnPov.value : currentTurnPov.value }
+              score?.type === "cp"
+                ? { type: "cp", value: turnAfterMove === "b" ? -score.value : score.value }
+                : score?.type === "mate"
+                  ? { type: "mate", value: turnAfterMove === "b" ? -score.value : score.value }
                   : null;
 
             out[m.uci] = formatEngineScore(whitePov);
