@@ -60,6 +60,12 @@ export type ScoutPrediction = {
   blunder_applied: boolean;
 };
 
+export type OpponentReplyForecast = {
+  reply_move: string;
+  reply_prob?: number;
+  reply_reason?: string;
+};
+
 type Props = {
   isOpen: boolean;
   onClose: () => void;
@@ -68,6 +74,9 @@ type Props = {
   mode: PredictionMode;
   onModeChange: (mode: PredictionMode) => void;
   opponentUsername: string;
+  opponentReplyByMove?: Record<string, OpponentReplyForecast> | null;
+  opponentReplyLoading?: boolean;
+  error?: string | null;
 };
 
 const AttributionPieChart = memo(function AttributionPieChart({
@@ -223,6 +232,9 @@ export const ScoutOverlay = memo(function ScoutOverlay({
   mode,
   onModeChange,
   opponentUsername,
+  opponentReplyByMove,
+  opponentReplyLoading,
+  error,
 }: Props) {
   if (!isOpen) return null;
 
@@ -288,6 +300,13 @@ export const ScoutOverlay = memo(function ScoutOverlay({
           <div className="flex h-64 items-center justify-center">
             <div className="h-8 w-8 animate-spin rounded-full border-2 border-amber-500 border-t-transparent" />
           </div>
+        ) : error ? (
+          <div className="flex h-64 items-center justify-center">
+            <div className="text-center">
+              <div className="text-red-500 mb-2">Error: {error}</div>
+              <div className="text-zinc-500 text-sm">Please check if Scout API is running</div>
+            </div>
+          </div>
         ) : prediction ? (
           <div className="mt-4 grid gap-6">
             {/* Status Indicators */}
@@ -321,11 +340,19 @@ export const ScoutOverlay = memo(function ScoutOverlay({
               <h3 className="mb-3 text-sm font-semibold text-zinc-900">Candidate Moves</h3>
               <div className="grid gap-2">
                 {prediction.candidates.slice(0, 5).map((c) => (
-                  <CandidateRow
-                    key={c.move}
-                    candidate={c}
-                    isSelected={c.move === prediction.selected_move}
-                  />
+                  <div key={c.move} className="grid gap-1">
+                    <CandidateRow candidate={c} isSelected={c.move === prediction.selected_move} />
+                    {opponentReplyLoading ? (
+                      <div className="px-3 text-[11px] text-zinc-500">Forecasting opponent reply…</div>
+                    ) : opponentReplyByMove && opponentReplyByMove[c.move] ? (
+                      <div className="px-3 text-[11px] text-zinc-500">
+                        Likely reply: <span className="font-medium text-zinc-700">{opponentReplyByMove[c.move]!.reply_move}</span>
+                        {typeof opponentReplyByMove[c.move]!.reply_prob === "number" ? (
+                          <span className="text-zinc-400"> ({opponentReplyByMove[c.move]!.reply_prob!.toFixed(1)}%)</span>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
                 ))}
               </div>
             </div>

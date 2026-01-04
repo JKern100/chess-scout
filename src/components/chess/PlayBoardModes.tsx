@@ -3,7 +3,9 @@
 import { Chess } from "chess.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  AlertTriangle,
   BookOpen,
+  Brain,
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
@@ -11,7 +13,9 @@ import {
   Filter,
   GitBranch,
   Info,
+  Loader2,
   RotateCcw,
+  Search,
   SlidersHorizontal,
   Volume2,
   VolumeX,
@@ -22,7 +26,7 @@ import { ChessBoardCore, type ChessBoardCoreState } from "./ChessBoardCore";
 import { SimulationRightSidebar } from "./SimulationRightSidebar";
 import { AnalysisBoard } from "./AnalysisBoard";
 import { LichessBookTab } from "./LichessBookTab";
-import { ScoutOverlay } from "./ScoutOverlay";
+import { ScoutOverlay, type OpponentReplyForecast } from "./ScoutOverlay";
 import { useScoutPrediction } from "@/lib/hooks/useScoutPrediction";
 import { OpponentFiltersPanel } from "@/components/chess/OpponentFiltersPanel";
 import { useOpponentFilters } from "@/components/chess/useOpponentFilters";
@@ -649,15 +653,105 @@ export function PlayBoardModes({ initialFen }: Props) {
   const {
     prediction: scoutPrediction,
     loading: scoutLoading,
+    error: scoutError,
     mode: scoutMode,
     setMode: setScoutMode,
     predict: scoutPredict,
+    predictOnce: scoutPredictOnce,
     clearPrediction: clearScoutPrediction,
   } = useScoutPrediction();
+
+  const [scoutOpponentReplyByMove, setScoutOpponentReplyByMove] = useState<Record<string, OpponentReplyForecast> | null>(null);
+  const [scoutOpponentReplyLoading, setScoutOpponentReplyLoading] = useState(false);
+  const scoutOpponentReplyReqIdRef = useRef(0);
+  const scoutBoardContextRef = useRef<{ fen: string; turn: "w" | "b"; playerSide: "white" | "black" } | null>(null);
+  const analysisStyleMarkersRef = useRef<any>(undefined);
 
   
   const tickRef = useRef<{ lastTs: number | null }>({ lastTs: null });
   const simMetaRef = useRef<{ turn: "w" | "b"; isGameOver: boolean }>({ turn: "w", isGameOver: false });
+
+  useEffect(() => {
+    if (!scoutOverlayOpen) return;
+    if (!scoutPrediction) return;
+    const trimmedOpp = opponentUsername.trim();
+    if (!trimmedOpp) return;
+
+    const ctx = scoutBoardContextRef.current;
+    if (!ctx) return;
+
+    const turn = ctx.turn;
+    const isPlayersTurn =
+      (ctx.playerSide === "white" && turn === "w") || (ctx.playerSide === "black" && turn === "b");
+    if (!isPlayersTurn) {
+      setScoutOpponentReplyByMove(null);
+      setScoutOpponentReplyLoading(false);
+      return;
+    }
+
+    const reqId = (scoutOpponentReplyReqIdRef.current += 1);
+    setScoutOpponentReplyLoading(true);
+    setScoutOpponentReplyByMove(null);
+
+    const TOP_N = 5;
+    const candidates = scoutPrediction.candidates.slice(0, TOP_N);
+
+    void (async () => {
+      try {
+        const out: Record<string, OpponentReplyForecast> = {};
+
+        const styleMarkers = analysisStyleMarkersRef.current;
+
+        for (const cand of candidates) {
+          if (scoutOpponentReplyReqIdRef.current !== reqId) return;
+
+          const uci = cand.move_uci;
+          const from = uci.slice(0, 2);
+          const to = uci.slice(2, 4);
+          const promotion = uci.length > 4 ? uci.slice(4) : undefined;
+
+          const next = new Chess(ctx.fen);
+          const played = next.move({ from, to, promotion: (promotion as any) ?? undefined });
+          if (!played) continue;
+
+          const nextFen = next.fen();
+          const fenParts = nextFen.split(" ");
+          const fullmoveNumber = Number(fenParts[5] ?? "1");
+
+          const replyPrediction = await scoutPredictOnce({
+            fen: nextFen,
+            opponentUsername: trimmedOpp,
+            styleMarkers,
+            moveNumber: Number.isFinite(fullmoveNumber) ? fullmoveNumber : 1,
+          });
+
+          const replyMove = replyPrediction.selected_move;
+          const replyCandidate = replyPrediction.candidates.find((c) => c.move === replyMove);
+
+          out[cand.move] = {
+            reply_move: replyMove,
+            reply_prob: replyCandidate ? replyCandidate.final_prob : undefined,
+            reply_reason: replyCandidate ? replyCandidate.reason : undefined,
+          };
+
+          if (scoutOpponentReplyReqIdRef.current === reqId) {
+            setScoutOpponentReplyByMove((prev) => ({ ...(prev ?? {}), [cand.move]: out[cand.move]! }));
+          }
+        }
+      } catch {
+        // If forecasting fails, keep base overlay usable.
+      } finally {
+        if (scoutOpponentReplyReqIdRef.current === reqId) {
+          setScoutOpponentReplyLoading(false);
+        }
+      }
+    })();
+  }, [
+    opponentUsername,
+    scoutOverlayOpen,
+    scoutPrediction,
+    scoutPredictOnce,
+  ]);
 
   const selectedTc = useMemo(() => {
     return timeControls.find((t) => t.key === timeControlKey) ?? timeControls[0];
@@ -900,6 +994,10 @@ export function PlayBoardModes({ initialFen }: Props) {
   }, [sessionAxisMarkers]);
 
   useEffect(() => {
+    analysisStyleMarkersRef.current = analysisStyleMarkers;
+  }, [analysisStyleMarkers]);
+
+  useEffect(() => {
     void fetchSessionAxisMarkers(opponentUsername, styleSessionKey, String(Date.now()));
   }, [fetchSessionAxisMarkers, opponentUsername, filtersKey, styleSessionKey]);
 
@@ -1076,7 +1174,7 @@ export function PlayBoardModes({ initialFen }: Props) {
             </svg>
           ) : (
             <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
-              <path d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.1 7.1 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 13.9 1h-3.8a.5.5 0 0 0-.49.42l-.36 2.54c-.58.23-1.12.54-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.7 7.48a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94L2.82 14.52a.5.5 0 0 0-.12.64l1.92 3.32c.13.22.4.31.64.22l2.39-.96c.5.4 1.05.71 1.63.94l.36 2.54c.04.24.25.42.49.42h3.8c.24 0 .45-.18.49-.42l.36-2.54c.58-.23 1.12-.54 1.63-.94l2.39.96c.24.09.51 0 .64-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.5A3.5 3.5 0 1 1 12 8a3.5 3.5 0 0 1 0 7.5z" />
+              <path d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.1 7.1 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 13.9 1h-3.8a.5.5 0 0 0-.49.42l-.36 2.54c-.58.23-1.12.54-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.7 7.48a.5.5 0 0 0-.12.64l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94L2.82 14.52a.5.5 0 0 0 .12.64l1.92 3.32c.13.22.4.31.64.22l2.39-.96c.5.4 1.05.71 1.63.94l.36 2.54c.04.24.25.42.49.42h3.8c.24 0 .45-.18.49-.42l.36-2.54c.58-.23 1.12-.54 1.63-.94l2.39.96c.24.09.51 0 .64-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.5A3.5 3.5 0 1 1 12 8a3.5 3.5 0 0 1 0 7.5z" />
             </svg>
           )}
         </span>
@@ -1773,56 +1871,94 @@ export function PlayBoardModes({ initialFen }: Props) {
         // Keep clock tick meta in sync with the authoritative board state.
         simMetaRef.current.turn = state.game.turn();
         simMetaRef.current.isGameOver = state.isGameOver;
+        scoutBoardContextRef.current = { fen: state.fen, turn: state.game.turn(), playerSide: state.playerSide };
 
         const shouldHydrateSavedLine = Boolean(savedLineId && mode === "analysis");
 
         if (mode === "analysis") {
           return (
-            <AnalysisRightSidebar
-              state={state}
-              savedLineId={savedLineId}
-              shouldHydrateSavedLine={shouldHydrateSavedLine}
-              showSavedLinePopup={showSavedLinePopup}
-              analysisFiltersPanel={analysisFiltersPanel}
-              analysisRightTab={analysisRightTab}
-              setAnalysisRightTab={setAnalysisRightTab}
-              analysisShowArrow={analysisShowArrow}
-              setAnalysisShowArrow={setAnalysisShowArrow}
-              analysisShowEval={analysisShowEval}
-              setAnalysisShowEval={setAnalysisShowEval}
-              analysisShowEngineBest={analysisShowEngineBest}
-              setAnalysisShowEngineBest={setAnalysisShowEngineBest}
-              analysisShowEngineColumn={analysisShowEngineColumn}
-              setAnalysisShowEngineColumn={setAnalysisShowEngineColumn}
-              soundEnabled={soundEnabled}
-              setSoundEnabled={setSoundEnabled}
-              setAnalysisEval={setAnalysisEval}
-              opponentUsername={opponentUsername}
-              opponentImportedCount={opponentImportedCount}
-              analysisIsSyncingOpponent={analysisIsSyncingOpponent}
-              filtersKey={filtersKey}
-              requestOpponentMove={requestOpponentMove}
-              analysisEngineBestUci={analysisEngineBestUci}
-              analysisEngineBestSan={analysisEngineBestSan}
-              handleSetEngineBestMove={handleSetEngineBestMove}
-              analysisStatsBusy={analysisStatsBusy}
-              analysisStats={analysisStats}
-              setAnalysisStats={setAnalysisStats}
-              setAnalysisStatsBusy={setAnalysisStatsBusy}
-              lichessMoves={lichessMoves}
-              setLichessMoves={setLichessMoves}
-              lichessBusy={lichessBusy}
-              setLichessBusy={setLichessBusy}
-              lichessError={lichessError}
-              setLichessError={setLichessError}
-              lichessReqIdRef={lichessReqIdRef}
-              lichessDebounceRef={lichessDebounceRef}
-              lichessSource={lichessSource}
-              setLichessSource={setLichessSource}
-              lichessShowArrows={lichessShowArrows}
-              setLichessShowArrows={setLichessShowArrows}
-              analysisStyleMarkers={analysisStyleMarkers}
-            />
+            <>
+              <AnalysisRightSidebar
+                state={state}
+                savedLineId={savedLineId}
+                shouldHydrateSavedLine={shouldHydrateSavedLine}
+                showSavedLinePopup={showSavedLinePopup}
+                analysisFiltersPanel={analysisFiltersPanel}
+                opponentPlaysColor={opponentPlaysColor}
+                setOpponentPlaysColor={(c) => {
+                  setOpponentPlaysColor(c);
+                  // Sync player side: if opponent plays white, player plays black
+                  state.setPlayerSide(c === "white" ? "black" : "white");
+                }}
+                analysisRightTab={analysisRightTab}
+                setAnalysisRightTab={setAnalysisRightTab}
+                analysisShowArrow={analysisShowArrow}
+                setAnalysisShowArrow={setAnalysisShowArrow}
+                analysisShowEval={analysisShowEval}
+                setAnalysisShowEval={setAnalysisShowEval}
+                analysisShowEngineBest={analysisShowEngineBest}
+                setAnalysisShowEngineBest={setAnalysisShowEngineBest}
+                analysisShowEngineColumn={analysisShowEngineColumn}
+                setAnalysisShowEngineColumn={setAnalysisShowEngineColumn}
+                soundEnabled={soundEnabled}
+                setSoundEnabled={setSoundEnabled}
+                setAnalysisEval={setAnalysisEval}
+                opponentUsername={opponentUsername}
+                opponentImportedCount={opponentImportedCount}
+                analysisIsSyncingOpponent={analysisIsSyncingOpponent}
+                filtersKey={filtersKey}
+                requestOpponentMove={requestOpponentMove}
+                analysisEngineBestUci={analysisEngineBestUci}
+                analysisEngineBestSan={analysisEngineBestSan}
+                handleSetEngineBestMove={handleSetEngineBestMove}
+                analysisStatsBusy={analysisStatsBusy}
+                analysisStats={analysisStats}
+                setAnalysisStats={setAnalysisStats}
+                setAnalysisStatsBusy={setAnalysisStatsBusy}
+                lichessMoves={lichessMoves}
+                setLichessMoves={setLichessMoves}
+                lichessBusy={lichessBusy}
+                setLichessBusy={setLichessBusy}
+                lichessError={lichessError}
+                setLichessError={setLichessError}
+                lichessReqIdRef={lichessReqIdRef}
+                lichessDebounceRef={lichessDebounceRef}
+                lichessSource={lichessSource}
+                setLichessSource={setLichessSource}
+                lichessShowArrows={lichessShowArrows}
+                setLichessShowArrows={setLichessShowArrows}
+                analysisStyleMarkers={analysisStyleMarkers}
+                onOpenScout={() => {
+                  setScoutOverlayOpen(true);
+                  if (opponentUsername.trim()) {
+                    void scoutPredict({
+                      fen: state.fen,
+                      opponentUsername: opponentUsername.trim(),
+                      styleMarkers: analysisStyleMarkers,
+                      moveNumber: Math.ceil(state.game.history().length / 2) + 1,
+                    });
+                  }
+                }}
+                scoutEnabled={Boolean(opponentUsername.trim())}
+              />
+              <ScoutOverlay
+                isOpen={scoutOverlayOpen}
+                onClose={() => {
+                  setScoutOverlayOpen(false);
+                  clearScoutPrediction();
+                  setScoutOpponentReplyByMove(null);
+                  setScoutOpponentReplyLoading(false);
+                }}
+                prediction={scoutPrediction}
+                loading={scoutLoading}
+                mode={scoutMode}
+                onModeChange={setScoutMode}
+                opponentUsername={opponentUsername.trim()}
+                opponentReplyByMove={scoutOpponentReplyByMove}
+                opponentReplyLoading={scoutOpponentReplyLoading}
+                error={scoutError}
+              />
+            </>
           );
         }
 
@@ -1901,6 +2037,7 @@ export function PlayBoardModes({ initialFen }: Props) {
                     void scoutPredict({
                       fen: state.fen,
                       opponentUsername: opponentUsername.trim(),
+                      styleMarkers: analysisStyleMarkers,
                       moveNumber: Math.ceil(state.game.history().length / 2) + 1,
                     });
                   }
@@ -1912,12 +2049,17 @@ export function PlayBoardModes({ initialFen }: Props) {
                 onClose={() => {
                   setScoutOverlayOpen(false);
                   clearScoutPrediction();
+                  setScoutOpponentReplyByMove(null);
+                  setScoutOpponentReplyLoading(false);
                 }}
                 prediction={scoutPrediction}
                 loading={scoutLoading}
                 mode={scoutMode}
                 onModeChange={setScoutMode}
                 opponentUsername={opponentUsername.trim()}
+                opponentReplyByMove={scoutOpponentReplyByMove}
+                opponentReplyLoading={scoutOpponentReplyLoading}
+                error={scoutError}
               />
             </SimulationAutoTrigger>
           </SimulationStartGate>
@@ -1999,6 +2141,8 @@ function AnalysisRightSidebar(props: {
   shouldHydrateSavedLine: boolean;
   showSavedLinePopup: (msg: string) => void;
   analysisFiltersPanel: React.ReactNode;
+  opponentPlaysColor: "white" | "black";
+  setOpponentPlaysColor: (c: "white" | "black") => void;
   analysisRightTab: AnalysisRightTab;
   setAnalysisRightTab: (t: AnalysisRightTab) => void;
   analysisShowArrow: boolean;
@@ -2037,6 +2181,8 @@ function AnalysisRightSidebar(props: {
   lichessShowArrows: boolean;
   setLichessShowArrows: (v: boolean) => void;
   analysisStyleMarkers?: any;
+  onOpenScout?: () => void;
+  scoutEnabled?: boolean;
 }) {
   const {
     state,
@@ -2044,6 +2190,8 @@ function AnalysisRightSidebar(props: {
     shouldHydrateSavedLine,
     showSavedLinePopup,
     analysisFiltersPanel,
+    opponentPlaysColor,
+    setOpponentPlaysColor,
     analysisRightTab,
     setAnalysisRightTab,
     analysisShowArrow,
@@ -2082,6 +2230,8 @@ function AnalysisRightSidebar(props: {
     lichessShowArrows,
     setLichessShowArrows,
     analysisStyleMarkers,
+    onOpenScout,
+    scoutEnabled = false,
   } = props;
 
   const active = analysisRightTab;
@@ -2178,6 +2328,16 @@ function AnalysisRightSidebar(props: {
             >
               <BookOpen className="h-5 w-5" />
             </button>
+            {scoutEnabled && onOpenScout ? (
+              <button
+                type="button"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-sm hover:from-amber-500 hover:to-orange-600"
+                title="Scout Insights"
+                onClick={onOpenScout}
+              >
+                <Brain className="h-5 w-5" />
+              </button>
+            ) : null}
           </div>
           {active === "stats" && (
             <button
@@ -2226,13 +2386,48 @@ function AnalysisRightSidebar(props: {
             </div>
           )}
           {active === "filters" ? (
-            analysisFiltersPanel
+            <div className="grid gap-3">
+              <div className="min-w-0 rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm">
+                <div className="grid gap-2">
+                  <div className="text-[10px] font-medium text-zinc-900">Opponent Plays</div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      className={`inline-flex h-8 flex-1 items-center justify-center rounded-lg text-[10px] font-medium transition-colors ${
+                        opponentPlaysColor === "white"
+                          ? "bg-zinc-900 text-white"
+                          : "border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
+                      }`}
+                      onClick={() => setOpponentPlaysColor("white")}
+                    >
+                      ♔ White
+                    </button>
+                    <button
+                      type="button"
+                      className={`inline-flex h-8 flex-1 items-center justify-center rounded-lg text-[10px] font-medium transition-colors ${
+                        opponentPlaysColor === "black"
+                          ? "bg-zinc-900 text-white"
+                          : "border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
+                      }`}
+                      onClick={() => setOpponentPlaysColor("black")}
+                    >
+                      ♚ Black
+                    </button>
+                  </div>
+                  <div className="text-[9px] text-zinc-500">
+                    You play as {opponentPlaysColor === "white" ? "Black" : "White"}
+                  </div>
+                </div>
+              </div>
+
+              {analysisFiltersPanel}
+            </div>
           ) : active === "preferences" ? (
             <div className="grid gap-2 text-[10px] text-zinc-700">
               <div className="text-[10px] font-medium text-zinc-900">Preferences</div>
               <label className="inline-flex items-center gap-2">
                 <input type="checkbox" checked={analysisShowArrow} onChange={(e) => setAnalysisShowArrow(e.target.checked)} />
-                Show candidate arrows
+                Show arrows
               </label>
               <label className="inline-flex items-center gap-2">
                 <input type="checkbox" checked={analysisShowEval} onChange={(e) => setAnalysisShowEval(e.target.checked)} />

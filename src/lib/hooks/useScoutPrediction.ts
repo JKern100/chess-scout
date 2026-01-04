@@ -44,6 +44,37 @@ export function useScoutPrediction() {
   
   const abortRef = useRef<AbortController | null>(null);
 
+  const predictOnce = useCallback(
+    async (params: PredictParams): Promise<ScoutPrediction> => {
+      const body = {
+        fen: params.fen,
+        mode,
+        opponent_username: params.opponentUsername,
+        style_markers: params.styleMarkers || DEFAULT_STYLE_MARKERS,
+        history_moves: params.historyMoves || [],
+        recent_eval_deltas: params.recentEvalDeltas || [],
+        move_number: params.moveNumber || 1,
+      };
+
+      const res = await fetch(`${SCOUT_API_URL}/predict`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || `Scout API error: ${res.status}`);
+      }
+
+      const data = await res.json();
+      return data as ScoutPrediction;
+    },
+    [mode]
+  );
+
   const predict = useCallback(
     async (params: PredictParams): Promise<ScoutPrediction | null> => {
       // Cancel any pending request
@@ -109,6 +140,7 @@ export function useScoutPrediction() {
     mode,
     setMode,
     predict,
+    predictOnce,
     clearPrediction,
   };
 }
