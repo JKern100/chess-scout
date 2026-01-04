@@ -10,13 +10,13 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # Copy requirements first for better caching
-COPY requirements.txt .
+COPY scout-api/requirements.txt .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
-COPY . .
+COPY scout-api/ .
 
 # Set environment variable for Stockfish path (Railway default location)
 ENV STOCKFISH_PATH=/usr/games/stockfish
