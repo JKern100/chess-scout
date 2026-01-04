@@ -26,6 +26,17 @@ type GameNorm = {
   opponent_color: "w" | "b";
   result: "win" | "loss" | "draw" | "unknown";
   moves_san: string[];
+  // Pre-computed style stats (computed during PGN parsing)
+  style?: {
+    castle_type: "K" | "Q" | null;
+    castle_move: number | null;
+    queen_traded_by_20: boolean;
+    ks_storm: boolean;
+    qs_storm: boolean;
+    pawns_advanced_by_10: number;
+    captures_by_15: number;
+    checks_by_15: number;
+  };
   // Engine analysis data (from Lichess computer analysis)
   white_acpl?: number | null;
   black_acpl?: number | null;
@@ -252,6 +263,83 @@ function hasQueens(chess: Chess) {
   return { hasW, hasB };
 }
 
+function computeStyleFromMoves(
+  movesSan: string[],
+  oppColor: "w" | "b"
+): GameNorm["style"] {
+  const replay = new Chess();
+  let castleType: "K" | "Q" | null = null;
+  let castleMove: number | null = null;
+  let queenTradedBy20 = false;
+  let ksStorm = false;
+  let qsStorm = false;
+  let pawnsAdvancedBy10 = 0;
+  let capturesBy15 = 0;
+  let checksBy15 = 0;
+
+  for (let i = 0; i < movesSan.length; i++) {
+    const ply = i + 1;
+    const mover = ply % 2 === 1 ? "w" : "b";
+    const san = movesSan[i] ?? "";
+
+    let played: any = null;
+    try {
+      played = replay.move(san as any);
+    } catch {
+      break;
+    }
+    if (!played) break;
+
+    if (castleType == null && mover === oppColor) {
+      if (san === "O-O" || san === "0-0") {
+        castleType = "K";
+        castleMove = Math.floor((ply + 1) / 2);
+      } else if (san === "O-O-O" || san === "0-0-0") {
+        castleType = "Q";
+        castleMove = Math.floor((ply + 1) / 2);
+      }
+    }
+
+    if (!queenTradedBy20 && ply <= 40) {
+      const { hasW, hasB } = hasQueens(replay);
+      if (!hasW && !hasB) queenTradedBy20 = true;
+    }
+
+    if (ply <= 20 && mover === oppColor) {
+      if (castleType === "K") {
+        if (played.piece === "p" && (played.to?.[0] === "g" || played.to?.[0] === "h") && (played.to?.[1] === "4" || played.to?.[1] === "5")) {
+          ksStorm = true;
+        }
+      }
+      if (castleType === "Q") {
+        if (played.piece === "p" && (played.to?.[0] === "a" || played.to?.[0] === "b") && (played.to?.[1] === "4" || played.to?.[1] === "5")) {
+          qsStorm = true;
+        }
+      }
+    }
+
+    if (ply <= 10 && mover === oppColor && played.piece === "p") {
+      pawnsAdvancedBy10 += 1;
+    }
+
+    if (ply <= 15 && mover === oppColor) {
+      if (played.captured) capturesBy15 += 1;
+      if (san.includes("+")) checksBy15 += 1;
+    }
+  }
+
+  return {
+    castle_type: castleType,
+    castle_move: castleMove,
+    queen_traded_by_20: queenTradedBy20,
+    ks_storm: ksStorm,
+    qs_storm: qsStorm,
+    pawns_advanced_by_10: pawnsAdvancedBy10,
+    captures_by_15: capturesBy15,
+    checks_by_15: checksBy15,
+  };
+}
+
 function computeHash(ids: string[]) {
   const h = createHash("sha256");
   h.update(ids.join(","), "utf8");
@@ -385,7 +473,6 @@ function computeStyleSignals(games: GameNorm[]): V2StyleSignals {
   let castleMoveSum = 0;
   let castleMoveCount = 0;
 
-  const queenTradePlyLimit = 40;
   let queenTradedBy20 = 0;
   let queenNotTradedBy20 = 0;
 
@@ -400,105 +487,33 @@ function computeStyleSignals(games: GameNorm[]): V2StyleSignals {
   let aggrCount = 0;
 
   for (const g of games) {
-    const chess = new Chess();
-    try {
-      chess.loadPgn("", { strict: false });
-    } catch {
-      // ignore
-    }
+    const s = g.style;
+    if (!s) continue;
 
-    const replay = new Chess();
-
-    let castleType: "K" | "Q" | null = null;
-    let castleMoveNum: number | null = null;
-    let queenTradeFound = false;
-
-    let pawnAdvancedBy10 = 0;
-    let capturesBy15 = 0;
-    let checksBy15 = 0;
-
-    let ksStorm = false;
-    let qsStorm = false;
-
-    for (let i = 0; i < g.moves_san.length; i += 1) {
-      const ply = i + 1;
-      const mover = ply % 2 === 1 ? "w" : "b";
-      const san = g.moves_san[i] ?? "";
-
-      let played: any = null;
-      try {
-        played = replay.move(san as any);
-      } catch {
-        break;
-      }
-      if (!played) break;
-
-      if (castleType == null && mover === g.opponent_color) {
-        if (san === "O-O" || san === "0-0") {
-          castleType = "K";
-          castleMoveNum = moveNumberForPly(ply, mover);
-        } else if (san === "O-O-O" || san === "0-0-0") {
-          castleType = "Q";
-          castleMoveNum = moveNumberForPly(ply, mover);
-        }
-      }
-
-      if (!queenTradeFound && ply <= queenTradePlyLimit) {
-        const { hasW, hasB } = hasQueens(replay);
-        if (!hasW && !hasB) queenTradeFound = true;
-      }
-
-      if (ply <= 20 && mover === g.opponent_color) {
-        if (castleType === "K") {
-          if ((played.piece === "p" && (played.to?.[0] === "g" || played.to?.[0] === "h")) && (played.to?.[1] === "4" || played.to?.[1] === "5")) {
-            ksStorm = true;
-          }
-        }
-        if (castleType === "Q") {
-          if ((played.piece === "p" && (played.to?.[0] === "a" || played.to?.[0] === "b")) && (played.to?.[1] === "4" || played.to?.[1] === "5")) {
-            qsStorm = true;
-          }
-        }
-      }
-
-      if (ply <= 10 && mover === g.opponent_color) {
-        if (played.piece === "p") {
-          const fromRank = Number(String(played.from ?? "").slice(1, 2));
-          const toRank = Number(String(played.to ?? "").slice(1, 2));
-          if (Number.isFinite(fromRank) && Number.isFinite(toRank) && Math.abs(toRank - fromRank) >= 1) pawnAdvancedBy10 += 1;
-        }
-      }
-
-      if (ply <= 15 && mover === g.opponent_color) {
-        if (played.captured) capturesBy15 += 1;
-        if (String(san).includes("+")) checksBy15 += 1;
-      }
-    }
-
-    if (castleType === "K") castlesK += 1;
-    else if (castleType === "Q") castlesQ += 1;
+    if (s.castle_type === "K") castlesK += 1;
+    else if (s.castle_type === "Q") castlesQ += 1;
     else castlesNone += 1;
 
-    if (castleMoveNum != null) {
-      castleMoveSum += castleMoveNum;
+    if (s.castle_move != null) {
+      castleMoveSum += s.castle_move;
       castleMoveCount += 1;
     }
 
-    if (queenTradeFound) queenTradedBy20 += 1;
+    if (s.queen_traded_by_20) queenTradedBy20 += 1;
     else queenNotTradedBy20 += 1;
 
-    if (castleType === "K") {
+    if (s.castle_type === "K") {
       ksEligible += 1;
-      if (ksStorm) ksStormGames += 1;
+      if (s.ks_storm) ksStormGames += 1;
     }
-    if (castleType === "Q") {
+    if (s.castle_type === "Q") {
       qsEligible += 1;
-      if (qsStorm) qsStormGames += 1;
+      if (s.qs_storm) qsStormGames += 1;
     }
 
-    pawnsAdvancedSum += pawnAdvancedBy10;
-    capturesSum += capturesBy15;
-    checksSum += checksBy15;
+    pawnsAdvancedSum += s.pawns_advanced_by_10;
+    capturesSum += s.captures_by_15;
+    checksSum += s.checks_by_15;
     aggrCount += 1;
   }
 
@@ -740,6 +755,7 @@ export async function buildOpponentProfileV2(params: {
       }
 
       const moves = (chess.history() ?? []).map((m) => String(m));
+      const style = computeStyleFromMoves(moves, oppColor);
 
       normalized.push({
         id: String((row as any)?.id ?? (row as any)?.platform_game_id ?? ""),
@@ -749,7 +765,7 @@ export async function buildOpponentProfileV2(params: {
         opponent_color: oppColor,
         result,
         moves_san: moves,
-        // Engine analysis data
+        style,
         white_acpl: row.white_acpl ?? null,
         black_acpl: row.black_acpl ?? null,
         white_blunders: row.white_blunders ?? null,

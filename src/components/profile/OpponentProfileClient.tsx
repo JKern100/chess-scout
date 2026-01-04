@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { OpponentFiltersPanel } from "@/components/chess/OpponentFiltersPanel";
 import { useOpponentFilters } from "@/components/chess/useOpponentFilters";
 import { StyleSpectrumBar, StyleSpectrumData } from "@/components/profile/StyleSpectrumBar";
+import { GenerationProgressModal } from "@/components/profile/GenerationProgressModal";
 
 type ChessPlatform = "lichess" | "chesscom";
 
@@ -488,6 +489,11 @@ export function OpponentProfileClient({ platform, username }: Props) {
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [generateBusy, setGenerateBusy] = useState(false);
 
+  const [progressModalOpen, setProgressModalOpen] = useState(false);
+  const [progressStatus, setProgressStatus] = useState<"idle" | "generating" | "completed" | "cancelled" | "error">("idle");
+  const [progressError, setProgressError] = useState<string | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+
   const fetchProfile = useCallback(async () => {
     setLoadBusy(true);
     setLoadError(null);
@@ -550,8 +556,20 @@ export function OpponentProfileClient({ platform, username }: Props) {
 
   const runGenerate = useCallback(async () => {
     if (generateBusy) return;
+
+    // Cancel any existing request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     setGenerateBusy(true);
     setActionMessage(null);
+    setProgressModalOpen(true);
+    setProgressStatus("generating");
+    setProgressError(null);
+
     try {
       const res = await fetch(
         `/api/opponents/${encodeURIComponent(platform)}/${encodeURIComponent(username)}/profile/generate`,
@@ -565,6 +583,7 @@ export function OpponentProfileClient({ platform, username }: Props) {
             to: toDate || null,
             enable_style_markers: generateStyleMarkers,
           }),
+          signal: controller.signal,
         }
       );
       const json = await res.json().catch(() => ({}));
@@ -604,12 +623,36 @@ export function OpponentProfileClient({ platform, username }: Props) {
       } else {
         setActionMessage(null);
       }
+
+      setProgressStatus("completed");
     } catch (e) {
-      setActionMessage(e instanceof Error ? e.message : "Failed to generate report");
+      if (e instanceof Error && e.name === "AbortError") {
+        setProgressStatus("cancelled");
+      } else {
+        const errorMsg = e instanceof Error ? e.message : "Failed to generate report";
+        setActionMessage(errorMsg);
+        setProgressStatus("error");
+        setProgressError(errorMsg);
+      }
     } finally {
       setGenerateBusy(false);
+      abortControllerRef.current = null;
     }
-  }, [fromDate, generateBusy, generateStyleMarkers, platform, rated, speeds, toDate, username]);
+  }, [fetchProfile, fromDate, generateBusy, generateStyleMarkers, platform, rated, speeds, toDate, username]);
+
+  const handleCancelGeneration = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+  }, []);
+
+  const handleDismissProgressModal = useCallback(() => {
+    setProgressModalOpen(false);
+    if (progressStatus === "completed" || progressStatus === "cancelled" || progressStatus === "error") {
+      setProgressStatus("idle");
+      setProgressError(null);
+    }
+  }, [progressStatus]);
 
   const onClickPrimary = useCallback(() => {
     if (generateBusy) return;
@@ -1568,6 +1611,14 @@ export function OpponentProfileClient({ platform, username }: Props) {
             </div>
           </div>
         ) : null}
+
+        <GenerationProgressModal
+          isOpen={progressModalOpen}
+          onCancel={handleCancelGeneration}
+          onDismiss={handleDismissProgressModal}
+          status={progressStatus}
+          errorMessage={progressError}
+        />
       </div>
     </div>
   );
