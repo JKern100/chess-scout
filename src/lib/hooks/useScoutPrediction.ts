@@ -66,7 +66,14 @@ export function useScoutPrediction() {
 
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.detail || `Scout API error: ${res.status}`);
+        const errorMessage = errData.error || errData.detail || `Scout API error: ${res.status}`;
+        
+        // If Scout API is not configured, show a more user-friendly message
+        if (res.status === 503) {
+          throw new Error("Scout Insights not available on this server");
+        }
+        
+        throw new Error(errorMessage);
       }
 
       const data = await res.json();
@@ -108,7 +115,14 @@ export function useScoutPrediction() {
 
         if (!res.ok) {
           const errData = await res.json().catch(() => ({}));
-          throw new Error(errData.detail || `Scout API error: ${res.status}`);
+          const errorMessage = errData.error || errData.detail || `Scout API error: ${res.status}`;
+          
+          // If Scout API is not configured, show a more user-friendly message
+          if (res.status === 503) {
+            throw new Error("Scout Insights not available on this server");
+          }
+          
+          throw new Error(errorMessage);
         }
 
         const data = await res.json();

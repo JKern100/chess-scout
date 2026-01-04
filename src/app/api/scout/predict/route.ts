@@ -10,6 +10,14 @@ const SCOUT_API_URL = process.env.SCOUT_API_URL || "http://localhost:8001";
  * and enables server-side authentication/rate limiting if needed.
  */
 export async function POST(req: NextRequest) {
+  // Check if Scout API is configured
+  if (!process.env.SCOUT_API_URL || process.env.SCOUT_API_URL.includes("localhost")) {
+    return NextResponse.json(
+      { error: "Scout API not configured on this server" },
+      { status: 503 }
+    );
+  }
+
   try {
     const body = await req.json();
 
