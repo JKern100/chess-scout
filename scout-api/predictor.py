@@ -350,17 +350,54 @@ class ScoutPredictor:
     ) -> PredictionResponse:
         """Hybrid mode: Weighted softmax of history, engine, and style."""
         
+        # Start with engine's top moves
         candidate_sans = [ea["move_san"] for ea in engine_analysis]
+        engine_analysis_map = {ea["move_san"]: ea for ea in engine_analysis}
         
-        # Normalize inputs
+        # CRITICAL FIX: Add high-frequency historical moves that aren't in engine's top picks
+        # This ensures moves like Nc6 (99% frequency) aren't excluded just because
+        # Stockfish prefers other moves
+        total_history_freq = sum(hm.frequency for hm in history_moves) if history_moves else 0
+        history_additions = []
+        
+        for hm in history_moves:
+            if hm.move_san not in candidate_sans:
+                # Include if frequency is significant (>10% of games OR >5 games)
+                freq_pct = (hm.frequency / total_history_freq * 100) if total_history_freq > 0 else 0
+                if freq_pct >= 10 or hm.frequency >= 5:
+                    # Validate move is legal
+                    try:
+                        move = board.parse_san(hm.move_san)
+                        if move in board.legal_moves:
+                            candidate_sans.append(hm.move_san)
+                            # Get engine eval for this move
+                            eval_info = self.engine.analyze_single_move(board.fen(), move.uci())
+                            history_additions.append({
+                                "move_san": hm.move_san,
+                                "move_uci": move.uci(),
+                                "score_cp": eval_info.get("score_cp", -100),  # Default penalty if no eval
+                                "rank": len(engine_analysis) + len(history_additions) + 1,
+                                "from_history": True
+                            })
+                            trace_log.append(TraceLogEntry(
+                                type="logic",
+                                message=f"Added {hm.move_san} from history ({freq_pct:.0f}% freq, {hm.frequency} games)"
+                            ))
+                    except Exception:
+                        pass
+        
+        # Merge history additions into engine analysis for processing
+        extended_analysis = list(engine_analysis) + history_additions
+        
+        # Normalize inputs with the expanded candidate list
         history_scores = self._normalize_history(history_moves, candidate_sans)
-        engine_scores = self._normalize_engine_evals(engine_analysis)
+        engine_scores = self._normalize_engine_evals(extended_analysis)
         
-        # Calculate style fit for each move
+        # Calculate style fit for each move (including history additions)
         style_scores = {}
         attributions = {}
         
-        for ea in engine_analysis:
+        for ea in extended_analysis:
             move_san = ea["move_san"]
             try:
                 move = board.parse_san(move_san)
@@ -370,17 +407,18 @@ class ScoutPredictor:
                 style_scores[move_san] = style_fit
                 attributions[move_san] = attribution
                 
-                # Log significant style impacts
-                if attribution.trade_penalty < 0:
-                    trace_log.append(TraceLogEntry(
-                        type="warning",
-                        message=f"{move_san} penalized {int(-attribution.trade_penalty * 100)}% for trade offer"
-                    ))
-                if attribution.aggression_bonus > 0:
-                    trace_log.append(TraceLogEntry(
-                        type="logic",
-                        message=f"{move_san} boosted {int(attribution.aggression_bonus * 100)}% for aggression"
-                    ))
+                # Log significant style impacts (only for original engine moves to avoid spam)
+                if not ea.get("from_history"):
+                    if attribution.trade_penalty < 0:
+                        trace_log.append(TraceLogEntry(
+                            type="warning",
+                            message=f"{move_san} penalized {int(-attribution.trade_penalty * 100)}% for trade offer"
+                        ))
+                    if attribution.aggression_bonus > 0:
+                        trace_log.append(TraceLogEntry(
+                            type="logic",
+                            message=f"{move_san} boosted {int(attribution.aggression_bonus * 100)}% for aggression"
+                        ))
                     
             except Exception:
                 style_scores[move_san] = 0
@@ -390,7 +428,7 @@ class ScoutPredictor:
         raw_scores = []
         candidates = []
         
-        for ea in engine_analysis:
+        for ea in extended_analysis:
             move_san = ea["move_san"]
             h_score = history_scores.get(move_san, 0)
             e_score = engine_scores.get(move_san, 0)

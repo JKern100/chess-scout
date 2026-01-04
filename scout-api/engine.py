@@ -142,6 +142,49 @@ class EngineWrapper:
             print(f"Move evaluation error: {e}")
             return None
     
+    def analyze_single_move(self, fen: str, move_uci: str, depth: int = 12) -> Dict[str, Any]:
+        """
+        Analyze a specific move and return its evaluation.
+        Used for getting engine eval of history-only moves not in top N.
+        
+        Returns dict with:
+        - score_cp: Centipawn score from side to move perspective
+        - score_mate: Mate in N (if applicable)
+        """
+        if not self.engine:
+            return {"score_cp": -100}  # Default penalty if no engine
+        
+        try:
+            board = chess.Board(fen)
+            move = chess.Move.from_uci(move_uci)
+            
+            if move not in board.legal_moves:
+                return {"score_cp": -100}
+            
+            board.push(move)
+            
+            # Analyze the position after the move
+            analysis = self.engine.analyse(
+                board,
+                chess.engine.Limit(depth=depth),
+                multipv=1
+            )
+            
+            if analysis and "score" in analysis[0]:
+                score = analysis[0]["score"].relative
+                if score.is_mate():
+                    # Negate because we're looking from opponent's view
+                    mate_score = -10000 if score.mate() > 0 else 10000
+                    return {"score_cp": mate_score, "score_mate": -score.mate()}
+                else:
+                    return {"score_cp": -score.score()}  # Negate to get original side's perspective
+            
+            return {"score_cp": -100}
+            
+        except Exception as e:
+            print(f"Single move analysis error: {e}")
+            return {"score_cp": -100}
+    
     def close(self):
         """Shut down the engine."""
         if self.engine:
