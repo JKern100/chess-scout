@@ -33,8 +33,9 @@ const DEFAULT_STYLE_MARKERS: StyleMarkers = {
   time_pressure_weakness: 50,
 };
 
-// Use Next.js API proxy to avoid CORS issues
-const SCOUT_API_URL = "/api/scout";
+// Use Next.js API proxy to avoid CORS issues (for Vercel/deployment where Scout API is separate)
+// On Railway where Scout API runs separately, use the environment variable if provided
+const SCOUT_API_URL = process.env.NEXT_PUBLIC_SCOUT_API_URL || "/api/scout";
 
 export function useScoutPrediction() {
   const [prediction, setPrediction] = useState<ScoutPrediction | null>(null);
