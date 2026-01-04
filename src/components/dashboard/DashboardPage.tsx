@@ -164,6 +164,7 @@ export function DashboardPage({ initialOpponents }: Props) {
         username: string;
         importedCount: number;
         indexedCount: number;
+        scoutBaseCount?: number;
         ready: boolean;
         stage: string;
         status: string;
@@ -401,6 +402,8 @@ export function DashboardPage({ initialOpponents }: Props) {
 
       const initialImported = Number(json?.import?.imported_count ?? 0);
       const initialIndexed = Number(json?.import?.archived_count ?? 0);
+      const initialScoutBaseCount =
+        typeof json?.import?.scout_base_count === "number" ? Number(json.import.scout_base_count) : undefined;
       const initialReady = Boolean(json?.import?.ready);
       const initialStage = String(json?.import?.stage ?? "indexing");
       const initialStatus = String(json?.import?.status ?? "running");
@@ -412,6 +415,7 @@ export function DashboardPage({ initialOpponents }: Props) {
         username: o.username,
         importedCount: initialImported,
         indexedCount: initialIndexed,
+        scoutBaseCount: initialScoutBaseCount,
         ready: initialReady,
         stage: initialStage,
         status: initialStatus,
@@ -580,8 +584,16 @@ export function DashboardPage({ initialOpponents }: Props) {
           {activeImport ? (
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3">
               <div className="text-sm text-zinc-700">
-                Importing <span className="font-medium text-zinc-900">{activeImport.username}</span> · imported:{" "}
-                <span className="font-semibold text-zinc-900">{activeImport.importedCount}</span>
+                Importing <span className="font-medium text-zinc-900">{activeImport.username}</span>
+                {typeof activeImport.scoutBaseCount === "number" ? (
+                  <>
+                    {" "}· Scout Base: <span className="font-semibold text-zinc-900">{activeImport.scoutBaseCount}</span> (Past 3 Years)
+                  </>
+                ) : (
+                  <>
+                    {" "}· imported: <span className="font-semibold text-zinc-900">{activeImport.importedCount}</span>
+                  </>
+                )}
                 {continueBusy ? <span className="text-zinc-500"> · Fetching games…</span> : null}
               </div>
               <button
@@ -633,8 +645,12 @@ export function DashboardPage({ initialOpponents }: Props) {
                 <div className="mt-4 grid gap-4">
                   <div className="grid gap-2">
                     <div className="flex items-center justify-between text-xs text-zinc-700">
-                      <div className="font-medium text-zinc-900">Downloading games</div>
-                      <div className="tabular-nums">{activeImport.importedCount}</div>
+                      <div className="font-medium text-zinc-900">
+                        {typeof activeImport.scoutBaseCount === "number" ? "Scout Base (Past 3 Years)" : "Downloading games"}
+                      </div>
+                      <div className="tabular-nums">
+                        {typeof activeImport.scoutBaseCount === "number" ? activeImport.scoutBaseCount : activeImport.importedCount}
+                      </div>
                     </div>
                     <div className="h-2 w-full overflow-hidden rounded-full bg-zinc-200">
                       {indeterminateArmed && continueBusy ? (
@@ -733,8 +749,12 @@ export function DashboardPage({ initialOpponents }: Props) {
                   {opponents.map((o) => {
                     const key = `${o.platform}:${o.username.toLowerCase()}`;
                     const latest = byKey.get(key) ?? o;
+                    const importRow = importsByKey.get(key) ?? null;
                     const dbGamesCount = typeof (latest as any)?.games_count === "number" ? (latest as any).games_count : 0;
-                    const apiTotal = typeof (latest as any)?.total_games === "number" ? Math.max(0, Number((latest as any).total_games)) : 0;
+                    const realtimeImportedCount = typeof (importRow as any)?.imported_count === "number" ? (importRow as any).imported_count : 0;
+                    const syncedGamesCount = realtimeImportedCount > 0 ? Math.max(dbGamesCount, realtimeImportedCount) : dbGamesCount;
+                    const scoutBaseCount = typeof (importRow as any)?.scout_base_count === "number" ? Number((importRow as any).scout_base_count) : null;
+                    const scoutBaseTotal = scoutBaseCount ?? 0;
                     const canUseScout = dbGamesCount >= MIN_GAMES_FOR_ANALYSIS;
                     const currentKey = latest.platform === "lichess" ? `lichess:${latest.username.toLowerCase()}` : null;
                     const isGlobalCurrent = Boolean(isImporting && currentKey && currentOpponent === currentKey);
@@ -759,7 +779,7 @@ export function DashboardPage({ initialOpponents }: Props) {
                           : "Inactive"
                       : "—";
 
-                    const syncPct = apiTotal > 0 ? Math.min(100, Math.round((dbGamesCount / apiTotal) * 100)) : 0;
+                    const syncPct = scoutBaseTotal > 0 ? Math.min(100, Math.round((syncedGamesCount / scoutBaseTotal) * 100)) : 0;
 
                     return (
                       <tr key={key} className="hover:bg-zinc-50">
@@ -808,8 +828,8 @@ export function DashboardPage({ initialOpponents }: Props) {
                               />
                             </div>
                             <span className="text-xs tabular-nums text-zinc-600">
-                              {dbGamesCount.toLocaleString()}
-                              {apiTotal > 0 ? `/${apiTotal.toLocaleString()}` : ""}
+                              {syncedGamesCount.toLocaleString()}
+                              {scoutBaseTotal > 0 ? `/${scoutBaseTotal.toLocaleString()}` : ""}
                             </span>
                             {isFastRunning ? (
                               <RefreshCw className="h-3 w-3 animate-spin text-blue-500" />
@@ -862,13 +882,16 @@ export function DashboardPage({ initialOpponents }: Props) {
               const importRow = importsByKey.get(key) ?? null;
               const tieredStatus = formatTieredStatus(importRow as any, isActive);
               const downloadedCount = typeof (importRow as any)?.imported_count === "number" ? (importRow as any).imported_count : 0;
+              const scoutBaseCount = typeof (importRow as any)?.scout_base_count === "number" ? Number((importRow as any).scout_base_count) : null;
               // games_count from server = actual games in DB (source of truth)
               const dbGamesCount = typeof (latest as any)?.games_count === "number" ? (latest as any).games_count : 0;
               const currentKey = latest.platform === "lichess" ? `lichess:${latest.username.toLowerCase()}` : null;
               const isGlobalCurrent = Boolean(isImporting && currentKey && currentOpponent === currentKey);
-              // "Synced" must reflect what is actually persisted in DB (never the fast-import worker counter).
-              const syncedGamesCount = dbGamesCount;
-              const apiTotal = typeof (latest as any)?.total_games === "number" ? Math.max(0, Number((latest as any).total_games)) : 0;
+              // "Synced" should reflect realtime imported_count during active import, otherwise DB count
+              const realtimeImportedCount = typeof (importRow as any)?.imported_count === "number" ? (importRow as any).imported_count : 0;
+              const syncedGamesCount = realtimeImportedCount > 0 ? Math.max(dbGamesCount, realtimeImportedCount) : dbGamesCount;
+              // Use scout_base_count (3-year window) as the total, not all-time total_games
+              const scoutBaseTotal = scoutBaseCount ?? 0;
               const canUseScout = dbGamesCount >= MIN_GAMES_FOR_ANALYSIS || isActive;
 
               const isFastRunning = isGlobalCurrent;
@@ -974,49 +997,52 @@ export function DashboardPage({ initialOpponents }: Props) {
                         <div className="flex items-center gap-2 text-xs">
                           <span className="text-neutral-500">Synced:</span>
                           <AnimatedNumber value={syncedGamesCount} className="font-semibold text-neutral-900" />
-                          {apiTotal > 0 ? (
+                        </div>
+                        <div className="text-xs text-neutral-500">
+                          {scoutBaseTotal > 0 ? (
                             <>
                               <span className="text-neutral-400">/</span>
-                              <span className="text-neutral-500">{apiTotal.toLocaleString()}</span>
+                              <span className="tabular-nums">{scoutBaseTotal}</span>
+                              <span className="text-neutral-400"> (3yr)</span>
                             </>
                           ) : null}
-                          <span className="text-neutral-500">games</span>
                         </div>
-                        <div className="flex items-center gap-2">
-                          {isFastRunning ? (
-                            <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-100 px-2.5 py-1 text-[10px] font-medium text-blue-700">
-                              <RefreshCw className="h-3 w-3 animate-spin" />
-                              Syncing
-                            </span>
-                          ) : isFastQueued ? (
-                            <span className="inline-flex items-center rounded-full bg-neutral-200 px-2.5 py-1 text-[10px] font-medium text-neutral-600">
-                              Queued
-                            </span>
-                          ) : syncedGamesCount > 0 && syncedGamesCount >= apiTotal && apiTotal > 0 ? (
-                            <span className="inline-flex items-center gap-1.5 rounded-full bg-green-100 px-2.5 py-1 text-[10px] font-medium text-green-700">
-                              <Check className="h-3 w-3" />
-                              Complete
-                            </span>
-                          ) : syncedGamesCount > 0 ? (
-                            <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-1 text-[10px] font-medium text-amber-700">
-                              Partial
-                            </span>
-                          ) : null}
-                          {/* Activity indicator */}
-                          {activityLevel ? (
-                            <span
-                              className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-medium ${
-                                activityLevel === "very_active"
-                                  ? "bg-amber-100 text-amber-700"
-                                  : activityLevel === "active"
-                                    ? "bg-zinc-100 text-zinc-700"
-                                    : "bg-zinc-50 text-zinc-400"
-                              }`}
-                            >
-                              {activityLevel === "very_active" ? "Very Active" : activityLevel === "active" ? "Active" : "Inactive"}
-                            </span>
-                          ) : null}
-                        </div>
+                      </div>
+
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        {isFastRunning ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-100 px-2.5 py-1 text-[10px] font-medium text-blue-700">
+                            <RefreshCw className="h-3 w-3 animate-spin" />
+                            Syncing
+                          </span>
+                        ) : isFastQueued ? (
+                          <span className="inline-flex items-center rounded-full bg-neutral-200 px-2.5 py-1 text-[10px] font-medium text-neutral-600">
+                            Queued
+                          </span>
+                        ) : syncedGamesCount > 0 && scoutBaseTotal > 0 && syncedGamesCount >= scoutBaseTotal ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-green-100 px-2.5 py-1 text-[10px] font-medium text-green-700">
+                            <Check className="h-3 w-3" />
+                            Complete
+                          </span>
+                        ) : syncedGamesCount > 0 ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-1 text-[10px] font-medium text-amber-700">
+                            Partial
+                          </span>
+                        ) : null}
+
+                        {activityLevel ? (
+                          <span
+                            className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-medium ${
+                              activityLevel === "very_active"
+                                ? "bg-amber-100 text-amber-700"
+                                : activityLevel === "active"
+                                  ? "bg-zinc-100 text-zinc-700"
+                                  : "bg-zinc-50 text-zinc-400"
+                            }`}
+                          >
+                            {activityLevel === "very_active" ? "Very Active" : activityLevel === "active" ? "Active" : "Inactive"}
+                          </span>
+                        ) : null}
                       </div>
                     </div>
 

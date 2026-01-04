@@ -80,31 +80,13 @@ export default async function Dashboard() {
 
         const importedCount = Number((imp as any)?.imported_count ?? 0);
 
-        let gamesCount = 0;
         const { count: gamesTableCount, error: gamesCountError } = await supabase
           .from("games")
           .select("id", { count: "exact", head: true })
           .eq("profile_id", user.id)
           .eq("platform", platform)
           .ilike("username", usernameKey);
-        gamesCount = gamesCountError ? 0 : typeof gamesTableCount === "number" ? gamesTableCount : 0;
-
-        // Fast sync writes to opponent_move_events (not games). Count unique games by ply=1 rows.
-        let eventsGameCount = 0;
-        try {
-          const { count: evCount, error: evErr } = await supabase
-            .from("opponent_move_events")
-            .select("platform_game_id", { count: "exact", head: true })
-            .eq("profile_id", user.id)
-            .eq("platform", platform)
-            .ilike("username", usernameKey)
-            .eq("ply", 1);
-          eventsGameCount = evErr ? 0 : typeof evCount === "number" ? evCount : 0;
-        } catch {
-          eventsGameCount = 0;
-        }
-
-        const syncedCount = Math.max(0, gamesCount, eventsGameCount);
+        const syncedCount = gamesCountError ? 0 : typeof gamesTableCount === "number" ? gamesTableCount : 0;
 
         return {
           ...o,

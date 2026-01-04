@@ -42,19 +42,12 @@ type FlushPayload = {
   played_by: FenAgg;
 };
 
-type FlushEvent = {
+type FlushGame = {
   platform_game_id: string;
   played_at: string | null;
   speed: string | null;
   rated: boolean | null;
-  fen: string;
-  uci: string;
-  san: string | null;
-  ply: number;
-  is_opponent_move: boolean;
-  win: number;
-  loss: number;
-  draw: number;
+  pgn: string;
 };
 
 type WorkerProgress = {
@@ -69,7 +62,7 @@ type WorkerProgress = {
 type WorkerFlush = {
   type: "flush";
   nodes: FlushPayload[];
-  events: FlushEvent[];
+  games: FlushGame[];
   gamesProcessed: number;
 };
 
@@ -94,7 +87,7 @@ type FilterGraph = {
 
 const graphs = new Map<string, FilterGraph>();
 
-const eventBuffer: FlushEvent[] = [];
+const gameBuffer: FlushGame[] = [];
 
 function ensureGraph(filterKey: string): FilterGraph {
   let g = graphs.get(filterKey);
@@ -240,17 +233,17 @@ function flushNodes(maxNodes = 250): FlushPayload[] {
   return out;
 }
 
-function flushEvents(maxEvents = 2000): FlushEvent[] {
-  if (eventBuffer.length === 0) return [];
-  const out = eventBuffer.splice(0, maxEvents);
+function flushGames(maxGames = 100): FlushGame[] {
+  if (gameBuffer.length === 0) return [];
+  const out = gameBuffer.splice(0, maxGames);
   return out;
 }
 
-function emitFlush(params?: { maxNodes?: number; maxEvents?: number }) {
+function emitFlush(params?: { maxNodes?: number; maxGames?: number }) {
   const nodes = flushNodes(params?.maxNodes ?? 250);
-  const events = flushEvents(params?.maxEvents ?? 2000);
-  if (nodes.length === 0 && events.length === 0) return;
-  (self as any).postMessage({ type: "flush", nodes, events, gamesProcessed } satisfies WorkerFlush);
+  const games = flushGames(params?.maxGames ?? 100);
+  if (nodes.length === 0 && games.length === 0) return;
+  (self as any).postMessage({ type: "flush", nodes, games, gamesProcessed } satisfies WorkerFlush);
 }
 
 async function runImport(params: ImportStartMessage) {
@@ -261,7 +254,7 @@ async function runImport(params: ImportStartMessage) {
   fenMap.clear();
   dirtyFens.clear();
   graphs.clear();
-  eventBuffer.length = 0;
+  gameBuffer.length = 0;
 
   const user = params.username.trim();
   if (!user) {
@@ -380,22 +373,6 @@ async function runImport(params: ImportStartMessage) {
 
         const isOpponentMove = Boolean(moveColor && moveColor === oppColor);
 
-        // Record an event row for precise filtering.
-        eventBuffer.push({
-          platform_game_id: platformGameId,
-          played_at: playedAtIso,
-          speed: speed ?? null,
-          rated: ratedFlag ?? null,
-          fen: fenKey,
-          uci,
-          san: mv?.san != null ? String(mv.san) : null,
-          ply,
-          is_opponent_move: isOpponentMove,
-          win: outcome.win,
-          loss: outcome.loss,
-          draw: outcome.draw,
-        });
-
         let played: any = null;
         try {
           played = replay.move({ from: mv.from, to: mv.to, promotion: mv.promotion });
@@ -454,6 +431,14 @@ async function runImport(params: ImportStartMessage) {
         }
       }
 
+      gameBuffer.push({
+        platform_game_id: platformGameId,
+        played_at: playedAtIso,
+        speed: speed ?? null,
+        rated: ratedFlag ?? null,
+        pgn,
+      });
+
       gamesProcessed += 1;
 
       if (gamesProcessed % flushEveryGames === 0) {
@@ -477,8 +462,7 @@ async function runImport(params: ImportStartMessage) {
     // ignore
   }
 
-  emitFlush({ maxNodes: 500, maxEvents: 5000 });
-  // Flush any remaining dirty nodes / event rows.
+  emitFlush({ maxNodes: 500, maxGames: 200 });
   const hasDirty = () => {
     for (const [, g] of graphs) {
       if (g.dirty.size > 0) return true;
@@ -486,8 +470,8 @@ async function runImport(params: ImportStartMessage) {
     return false;
   };
 
-  while (hasDirty() || eventBuffer.length > 0) {
-    emitFlush({ maxNodes: 500, maxEvents: 5000 });
+  while (hasDirty() || gameBuffer.length > 0) {
+    emitFlush({ maxNodes: 500, maxGames: 200 });
   }
   (self as any).postMessage({ type: "done", gamesProcessed, newestGameTimestamp } satisfies WorkerDone);
 }

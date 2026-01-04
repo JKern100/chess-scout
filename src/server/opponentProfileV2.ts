@@ -631,6 +631,7 @@ export async function buildOpponentProfileV2(params: {
   maxGamesCap?: number | null;
   segmentMinGames?: number;
   includeNormalized?: boolean;
+  preferEvents?: boolean;
 }): Promise<{ profile: OpponentProfileV2; filtersUsed: OpponentProfileFilters; normalized?: GameNorm[] }>
 {
   const { fromIso, toIso } = parseDateRangeIso({ from: params.filters.from, to: params.filters.to });
@@ -852,7 +853,9 @@ export async function buildOpponentProfileV2(params: {
         if (!ply || ply <= 0) continue;
         const move = (r.san ?? r.uci ?? "").trim();
         if (!move) continue;
-        rec.movesByPly[ply - 1] = move;
+        if (Number.isFinite(ply - 1) && ply - 1 >= 0) {
+          rec.movesByPly[ply - 1] = move;
+        }
       }
 
       if (byGame.size >= capGames) break;
@@ -878,13 +881,26 @@ export async function buildOpponentProfileV2(params: {
   }
 
   let normalized: GameNorm[] = [];
-  try {
-    normalized = await fetchNormalizedFromGames();
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    const fallbackOk = msg.includes("relation") || msg.includes("games") || msg.includes("does not exist") || msg.includes("column");
-    if (!fallbackOk) throw e;
-    normalized = [];
+  if (params.preferEvents) {
+    try {
+      normalized = await fetchNormalizedFromEvents();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const fallbackOk = msg.includes("relation") || msg.includes("opponent_move_events") || msg.includes("does not exist") || msg.includes("column");
+      if (!fallbackOk) throw e;
+      normalized = [];
+    }
+  }
+
+  if (normalized.length === 0) {
+    try {
+      normalized = await fetchNormalizedFromGames();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const fallbackOk = msg.includes("relation") || msg.includes("games") || msg.includes("does not exist") || msg.includes("column");
+      if (!fallbackOk) throw e;
+      normalized = [];
+    }
   }
 
   if (normalized.length === 0) {

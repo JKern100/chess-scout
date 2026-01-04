@@ -20,6 +20,7 @@ const ImportQueueContext = createContext<ImportQueueContextValue | null>(null);
 
 const PROGRESS_STORAGE_KEY = "chessscout.fastImport.progressByOpponent.v2";
 const LAST_SYNC_STORAGE_KEY = "chessscout.fastImport.lastSyncTimestamp.v1";
+const QUEUE_STORAGE_KEY = "chessscout.fastImport.queue.v1";
 
 function normalizeOpponentId(opponentId: string) {
   const raw = String(opponentId ?? "").trim();
@@ -45,7 +46,24 @@ function parseOpponentId(opponentId: string): { platform: "lichess" | "chesscom"
 }
 
 export function ImportQueueProvider({ children }: { children: React.ReactNode }) {
-  const [queue, setQueue] = useState<string[]>([]);
+  const [queue, setQueue] = useState<string[]>(() => {
+    try {
+      if (typeof window === "undefined") return [];
+      const raw = window.localStorage.getItem(QUEUE_STORAGE_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw) as unknown;
+      if (!Array.isArray(parsed)) return [];
+      const out: string[] = [];
+      for (const item of parsed) {
+        const norm = normalizeOpponentId(String(item ?? ""));
+        if (!norm) continue;
+        if (!out.includes(norm)) out.push(norm);
+      }
+      return out;
+    } catch {
+      return [];
+    }
+  });
   const [isImporting, setIsImporting] = useState(false);
   const [currentOpponent, setCurrentOpponent] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
@@ -96,6 +114,10 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
   const importingRef = useRef(false);
   const currentOpponentRef = useRef<string | null>(null);
   const persistTimerRef = useRef<number | null>(null);
+  const queuePersistTimerRef = useRef<number | null>(null);
+
+  const progressByOpponentRef = useRef<Record<string, number>>({});
+  const lastSyncTimestampRef = useRef<Record<string, number>>({});
 
   const lastSyncedPollAtRef = useRef(0);
 
@@ -115,25 +137,14 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
     try {
       const usernameKey = parsed.username.toLowerCase();
 
-      const [{ count: gamesCount, error: gamesErr }, { count: evCount, error: evErr }] = await Promise.all([
-        client
-          .from("games")
-          .select("id", { count: "exact", head: true })
-          .eq("profile_id", user.id)
-          .eq("platform", parsed.platform)
-          .ilike("username", usernameKey),
-        client
-          .from("opponent_move_events")
-          .select("platform_game_id", { count: "exact", head: true })
-          .eq("profile_id", user.id)
-          .eq("platform", parsed.platform)
-          .ilike("username", usernameKey)
-          .eq("ply", 1),
-      ]);
+      const { count: gamesCount, error: gamesErr } = await client
+        .from("games")
+        .select("id", { count: "exact", head: true })
+        .eq("profile_id", user.id)
+        .eq("platform", parsed.platform)
+        .ilike("username", usernameKey);
 
-      const g = gamesErr ? 0 : typeof gamesCount === "number" ? gamesCount : 0;
-      const e = evErr ? 0 : typeof evCount === "number" ? evCount : 0;
-      const total = Math.max(0, g, e);
+      const total = gamesErr ? 0 : typeof gamesCount === "number" ? gamesCount : 0;
       setSyncedCount(total);
     } catch {
       // best-effort
@@ -143,6 +154,30 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
   useEffect(() => {
     queueRef.current = queue;
   }, [queue]);
+
+  useEffect(() => {
+    progressByOpponentRef.current = progressByOpponent;
+  }, [progressByOpponent]);
+
+  useEffect(() => {
+    lastSyncTimestampRef.current = lastSyncTimestamp;
+  }, [lastSyncTimestamp]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const onBeforeUnload = () => {
+      try {
+        window.localStorage.setItem(PROGRESS_STORAGE_KEY, JSON.stringify(progressByOpponentRef.current));
+        window.localStorage.setItem(LAST_SYNC_STORAGE_KEY, JSON.stringify(lastSyncTimestampRef.current));
+        window.localStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(queueRef.current));
+      } catch {
+      }
+    };
+
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, []);
 
   useEffect(() => {
     importingRef.current = isImporting;
@@ -164,6 +199,7 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
       try {
         window.localStorage.setItem(PROGRESS_STORAGE_KEY, JSON.stringify(progressByOpponent));
         window.localStorage.setItem(LAST_SYNC_STORAGE_KEY, JSON.stringify(lastSyncTimestamp));
+        window.localStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(queueRef.current));
       } catch {
         // ignore
       }
@@ -175,7 +211,31 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
         persistTimerRef.current = null;
       }
     };
-  }, [progressByOpponent]);
+  }, [lastSyncTimestamp, progressByOpponent]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (queuePersistTimerRef.current != null) {
+      window.clearTimeout(queuePersistTimerRef.current);
+      queuePersistTimerRef.current = null;
+    }
+
+    queuePersistTimerRef.current = window.setTimeout(() => {
+      queuePersistTimerRef.current = null;
+      try {
+        window.localStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(queueRef.current));
+      } catch {
+        // ignore
+      }
+    }, 250);
+
+    return () => {
+      if (queuePersistTimerRef.current != null) {
+        window.clearTimeout(queuePersistTimerRef.current);
+        queuePersistTimerRef.current = null;
+      }
+    };
+  }, [queue]);
 
   const finishCurrent = useCallback(() => {
     if (finishingRef.current) return;

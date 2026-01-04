@@ -71,7 +71,7 @@ export function ImportSupervisor() {
       if (now0 < backoffUntilMs.current) return;
 
       // Avoid doing work in fully backgrounded tabs.
-      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+      if (false && typeof document !== "undefined" && document.visibilityState === "hidden") {
         return;
       }
 

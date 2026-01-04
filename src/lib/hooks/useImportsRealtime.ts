@@ -17,6 +17,10 @@ export type ImportRow = {
   last_game_at: string | null;
   cursor_until: string | null;
   newest_game_at?: string | null;
+  scout_base_since?: string | null;
+  scout_base_count?: number | null;
+  scout_base_fallback?: boolean | null;
+  scout_base_fallback_limit?: number | null;
   last_error: string | null;
   updated_at: string;
 };

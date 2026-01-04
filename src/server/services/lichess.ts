@@ -62,16 +62,21 @@ export type LichessFetchResult = {
 export async function fetchLichessGamesBatch(params: {
   username: string;
   max: number;
+  sinceMs?: number;
   untilMs?: number;
   includeEvals?: boolean;
 }): Promise<LichessFetchResult> {
-  const { username, max, untilMs, includeEvals = true } = params;
+  const { username, max, sinceMs, untilMs, includeEvals = true } = params;
 
   const url = new URL(`https://lichess.org/api/games/user/${encodeURIComponent(username)}`);
   url.searchParams.set("max", String(max));
   url.searchParams.set("pgnInJson", "true");
   if (includeEvals) {
     url.searchParams.set("evals", "true");
+  }
+
+  if (sinceMs !== undefined) {
+    url.searchParams.set("since", String(sinceMs));
   }
 
   if (untilMs !== undefined) {
@@ -160,6 +165,42 @@ export async function fetchLichessGamesBatch(params: {
     oldestGameAtMs: oldest,
     newestGameAtMs: newest,
   };
+}
+
+export async function countLichessGamesSince(params: {
+  username: string;
+  sinceMs: number;
+  untilMs?: number;
+  cap?: number;
+}): Promise<number> {
+  const { username, sinceMs, untilMs, cap = 20000 } = params;
+
+  let total = 0;
+  let cursor = untilMs;
+  const batchMax = 500;
+
+  for (;;) {
+    if (total >= cap) break;
+
+    const batch = await fetchLichessGamesBatch({
+      username,
+      max: batchMax,
+      sinceMs,
+      untilMs: cursor,
+      includeEvals: false,
+    });
+
+    if (batch.games.length === 0) break;
+    total += batch.games.length;
+
+    if (batch.oldestGameAtMs == null) break;
+    const nextCursor = batch.oldestGameAtMs - 1;
+    if (!Number.isFinite(nextCursor) || nextCursor <= 0) break;
+    if (nextCursor < sinceMs) break;
+    cursor = nextCursor;
+  }
+
+  return total;
 }
 
 export type LichessRatingsSnapshot = Record<

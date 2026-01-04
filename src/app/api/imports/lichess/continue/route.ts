@@ -40,7 +40,7 @@ export async function POST(request: Request) {
   const { data: imp, error: impError } = await supabase
     .from("imports")
     .select(
-      "id, profile_id, target_type, platform, username, status, imported_count, cursor_until, newest_game_at, ready, stage, archived_count"
+      "id, profile_id, target_type, platform, username, status, imported_count, cursor_until, newest_game_at, ready, stage, archived_count, scout_base_since, scout_base_count, scout_base_fallback, scout_base_fallback_limit"
     )
     .eq("id", importId)
     .eq("profile_id", user.id)
@@ -66,10 +66,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unsupported platform" }, { status: 400 });
   }
 
-  const lockKey = `${user.id}:${imp.username}`;
+  const lockKey = `${imp.profile_id}:${imp.platform}:${imp.username}`;
   const heldAt = continueLocks.get(lockKey);
   if (heldAt && Date.now() - heldAt < CONTINUE_LOCK_TTL_MS) {
-    return NextResponse.json({ error: "Lichess import already in progress" }, { status: 429 });
+    return NextResponse.json({ busy: true }, { status: 202 });
   }
   continueLocks.set(lockKey, Date.now());
 
@@ -77,17 +77,62 @@ export async function POST(request: Request) {
     const t0 = Date.now();
     const untilMs = imp.cursor_until ? new Date(imp.cursor_until).getTime() : undefined;
 
+    let scoutBaseSinceIso = (imp as any)?.scout_base_since as string | null | undefined;
+    let scoutBaseFallback = Boolean((imp as any)?.scout_base_fallback);
+    const scoutBaseFallbackLimitRaw = (imp as any)?.scout_base_fallback_limit;
+    const scoutBaseFallbackLimit = Number.isFinite(Number(scoutBaseFallbackLimitRaw))
+      ? Math.max(1, Number(scoutBaseFallbackLimitRaw))
+      : 100;
+    let scoutBaseCount = typeof (imp as any)?.scout_base_count === "number" ? (imp as any).scout_base_count : null;
+
+    if (imp.target_type === "opponent" && scoutBaseSinceIso == null) {
+      const SCOUT_BASE_YEARS = 3;
+      const FALLBACK_MOST_RECENT_LIMIT = 100;
+      const nowMs = Date.now();
+      const sinceMs3y = new Date(nowMs).setFullYear(new Date(nowMs).getFullYear() - SCOUT_BASE_YEARS);
+      scoutBaseSinceIso = new Date(sinceMs3y).toISOString();
+
+      try {
+        const { countLichessGamesSince } = await import("@/server/services/lichess");
+        scoutBaseCount = await countLichessGamesSince({ username: imp.username, sinceMs: sinceMs3y, cap: 50000 });
+        scoutBaseFallback = (scoutBaseCount ?? 0) === 0;
+      } catch {
+        scoutBaseCount = null;
+        scoutBaseFallback = false;
+      }
+
+      await supabase
+        .from("imports")
+        .update({
+          scout_base_since: scoutBaseSinceIso,
+          scout_base_count: scoutBaseCount,
+          scout_base_fallback: scoutBaseFallback,
+          scout_base_fallback_limit: FALLBACK_MOST_RECENT_LIMIT,
+        })
+        .eq("id", imp.id);
+    }
+
+    const sinceMs =
+      imp.target_type === "opponent" && !scoutBaseFallback && scoutBaseSinceIso
+        ? new Date(scoutBaseSinceIso).getTime()
+        : undefined;
+
     const stage = typeof (imp as any)?.stage === "string" ? String((imp as any).stage) : "indexing";
     const ready = Boolean((imp as any)?.ready);
     const importedCountBefore = importedCountGate;
     const indexedCountBefore = indexedCountGate;
 
-    const batchMax = ready || stage === "archiving" ? STAGE2_BATCH_MAX : STAGE1_BATCH_MAX;
+    let batchMax = ready || stage === "archiving" ? STAGE2_BATCH_MAX : STAGE1_BATCH_MAX;
+    if (imp.target_type === "opponent" && scoutBaseFallback) {
+      const remaining = scoutBaseFallbackLimit - importedCountBefore;
+      batchMax = Math.max(0, Math.min(batchMax, remaining));
+    }
 
     const tFetch0 = Date.now();
     const batch = await fetchLichessGamesBatch({
       username: imp.username,
       max: batchMax,
+      sinceMs,
       untilMs,
     });
     const tFetch1 = Date.now();
@@ -98,15 +143,20 @@ export async function POST(request: Request) {
         phase: "fetch",
         importId: imp.id,
         username: imp.username,
+        sinceMs: sinceMs ?? null,
         untilMs: untilMs ?? null,
         batchMax,
         batchLen: batch.games.length,
         oldestGameAtMs: batch.oldestGameAtMs,
         newestGameAtMs: batch.newestGameAtMs,
+        scoutBaseCount,
+        scoutBaseFallback,
+        importedCountBefore,
+        indexedCountBefore,
       })
     );
 
-    if (batch.games.length === 0) {
+    if (batch.games.length === 0 || batchMax <= 0) {
       // No more games to fetch. If this is an opponent import and we still haven't indexed
       // the already-synced games into opponent_move_events, keep working through them.
       if (imp.target_type === "opponent" && indexedCountBefore < importedCountBefore) {
@@ -207,7 +257,7 @@ export async function POST(request: Request) {
         })
         .eq("id", imp.id)
         .select(
-          "id, profile_id, target_type, platform, username, status, imported_count, last_game_at, cursor_until, newest_game_at, ready, stage, archived_count, last_success_at, expires_at, last_error, updated_at"
+          "id, profile_id, target_type, platform, username, status, imported_count, last_game_at, cursor_until, newest_game_at, ready, stage, archived_count, last_success_at, expires_at, last_error, updated_at, scout_base_since, scout_base_count, scout_base_fallback, scout_base_fallback_limit"
         )
         .single();
 
@@ -282,13 +332,15 @@ export async function POST(request: Request) {
 
     const importedCountAfter = importedCountBefore + insertedCount;
 
+    // If we're in fallback mode (no games in last 3 years), stop after importing the most recent N games.
+    const fallbackReached =
+      imp.target_type === "opponent" && scoutBaseFallback && importedCountAfter >= scoutBaseFallbackLimit;
+
     const shouldIndexMovesStage1 = imp.target_type === "opponent" && !ready;
     const shouldIndexMovesStage2 = imp.target_type === "opponent" && (ready || stage === "archiving");
 
     let indexedGameCount = 0;
 
-    // If we didn't insert any new games (duplicates / already imported), indexing can stall.
-    // Keep indexing from the existing games table using archived_count as an offset.
     if (insertedCount === 0 && (shouldIndexMovesStage1 || shouldIndexMovesStage2)) {
       try {
         const start = Math.max(0, indexedCountBefore);
@@ -378,11 +430,24 @@ export async function POST(request: Request) {
           ? untilMs - 1
           : null;
 
+    const indexedCountAfterCalc = indexedCountBefore + indexedGameCount;
+    const noNewGamesAndCaughtUp =
+      insertedCount === 0 &&
+      imp.target_type === "opponent" &&
+      indexedCountAfterCalc >= importedCountBefore;
+
     const updatePayload: any = {
       imported_count: importedCountAfter,
       last_success_at: new Date().toISOString(),
       last_error: null,
     };
+
+    if (fallbackReached || noNewGamesAndCaughtUp) {
+      updatePayload.status = "complete";
+      updatePayload.stage = "complete";
+      updatePayload.ready = true;
+      updatePayload.cursor_until = null;
+    }
 
     if (imp.target_type === "opponent" && indexedGameCount > 0) {
       const indexedCountAfter = indexedCountBefore + indexedGameCount;
@@ -413,7 +478,7 @@ export async function POST(request: Request) {
       .update(updatePayload)
       .eq("id", imp.id)
       .select(
-        "id, profile_id, target_type, platform, username, status, imported_count, last_game_at, cursor_until, newest_game_at, ready, stage, archived_count, last_success_at, expires_at, last_error, updated_at"
+        "id, profile_id, target_type, platform, username, status, imported_count, last_game_at, cursor_until, newest_game_at, ready, stage, archived_count, last_success_at, expires_at, last_error, updated_at, scout_base_since, scout_base_count, scout_base_fallback, scout_base_fallback_limit"
       )
       .single();
 
@@ -430,6 +495,22 @@ export async function POST(request: Request) {
     );
 
     if (updateErr) {
+      const msg = String(updateErr.message || "");
+      const missingColumn =
+        msg.includes("scout_base_since") ||
+        msg.includes("scout_base_count") ||
+        msg.includes("scout_base_fallback") ||
+        msg.includes("scout_base_fallback_limit");
+      if (missingColumn) {
+        return NextResponse.json(
+          {
+            error: "Imports table is missing Scout Base columns. Run scripts/supabase_imports_scout_base.sql in Supabase SQL editor.",
+            needs_migration: true,
+            details: updateErr.message,
+          },
+          { status: 409 }
+        );
+      }
       return NextResponse.json({ error: updateErr.message }, { status: 500 });
     }
 
