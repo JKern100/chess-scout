@@ -615,6 +615,7 @@ export function OpponentProfileClient({ platform, username }: Props) {
 
   const runGenerate = useCallback(async () => {
     if (generateBusy) return;
+    console.log("[OpponentProfileClient] Starting regeneration for", { platform, username });
 
     // Cancel any existing request
     if (abortControllerRef.current) {
@@ -630,23 +631,25 @@ export function OpponentProfileClient({ platform, username }: Props) {
     setProgressError(null);
 
     try {
-      const res = await fetch(
-        `/api/opponents/${encodeURIComponent(platform)}/${encodeURIComponent(username)}/profile/generate`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            speeds,
-            rated,
-            from: fromDate || null,
-            to: toDate || null,
-            enable_style_markers: generateStyleMarkers,
-            enable_ai_narrative: true,
-            subject_type: "opponent", // TODO: detect self-analysis from context
-          }),
-          signal: controller.signal,
-        }
-      );
+      const url = `/api/opponents/${encodeURIComponent(platform)}/${encodeURIComponent(username)}/profile/generate`;
+      console.log("[OpponentProfileClient] Sending POST to:", url);
+      
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          speeds,
+          rated,
+          from: fromDate || null,
+          to: toDate || null,
+          enable_style_markers: generateStyleMarkers,
+          enable_ai_narrative: true,
+          subject_type: "opponent", // TODO: detect self-analysis from context
+        }),
+        signal: controller.signal,
+      });
+      
+      console.log("[OpponentProfileClient] Response status:", res.status);
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
         const needs = Boolean((json as any)?.needs_migration);

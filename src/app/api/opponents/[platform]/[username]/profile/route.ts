@@ -41,7 +41,7 @@ export async function GET(_request: Request, context: { params: Promise<Params> 
     .select(fullSelect)
     .eq("profile_id", user.id)
     .eq("platform", platform)
-    .eq("username", username)
+    .ilike("username", usernameKey)
     .maybeSingle();
 
   if (error) {
@@ -65,7 +65,7 @@ export async function GET(_request: Request, context: { params: Promise<Params> 
       .select(baseSelect)
       .eq("profile_id", user.id)
       .eq("platform", platform)
-      .eq("username", username)
+      .ilike("username", usernameKey)
       .maybeSingle();
 
     if (fallbackError) {

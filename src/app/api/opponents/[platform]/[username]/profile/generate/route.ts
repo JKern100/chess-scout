@@ -213,8 +213,13 @@ export async function POST(request: Request, context: { params: Promise<Params> 
     let responseProfile: any = saved;
     let aiError: string | null = null;
     
+    console.log("[ProfileGenerate] enableAiNarrative:", enableAiNarrative);
+    console.log("[ProfileGenerate] saved row ai_quick_summary exists:", !!saved?.ai_quick_summary);
+    console.log("[ProfileGenerate] saved row ai_narrative_generated_at:", saved?.ai_narrative_generated_at);
+    
     // Always try to generate AI narrative
     if (enableAiNarrative) {
+      console.log("[ProfileGenerate] Starting AI narrative generation...");
       try {
         // Fetch stored style markers for the narrative
         const { data: markers } = await supabase
@@ -225,6 +230,9 @@ export async function POST(request: Request, context: { params: Promise<Params> 
           .ilike("username", usernameKey)
           .eq("source_type", "PROFILE");
 
+        console.log("[ProfileGenerate] Fetched", markers?.length ?? 0, "style markers");
+        console.log("[ProfileGenerate] Calling generateNarrativeWithRetry...");
+
         const narrative = await generateNarrativeWithRetry({
           profileJson: profile,
           styleMarkers: markers ?? [],
@@ -233,13 +241,17 @@ export async function POST(request: Request, context: { params: Promise<Params> 
           platform,
         });
 
+        console.log("[ProfileGenerate] Narrative generated, quick_summary length:", narrative.quick_summary.length);
+        console.log("[ProfileGenerate] Narrative generated_at:", narrative.generated_at);
+
         aiNarrative = {
           quick_summary: narrative.quick_summary,
           comprehensive_report: narrative.comprehensive_report,
         };
 
-        // Store narrative in database
-        await supabase
+        // Store narrative in database - use case-insensitive username match
+        console.log("[ProfileGenerate] Updating database with new narrative...");
+        const { error: updateError, count: updateCount } = await supabase
           .from("opponent_profiles")
           .update({
             ai_quick_summary: narrative.quick_summary,
@@ -250,7 +262,13 @@ export async function POST(request: Request, context: { params: Promise<Params> 
           })
           .eq("profile_id", user.id)
           .eq("platform", platform)
-          .eq("username", username);
+          .ilike("username", usernameKey);
+
+        console.log("[ProfileGenerate] Update result - error:", updateError?.message ?? "none", "count:", updateCount);
+
+        if (updateError) {
+          console.error("[ProfileGenerate] Failed to store AI narrative:", updateError.message);
+        }
 
         // Re-fetch updated row so frontend immediately receives ai_* fields (no refresh needed)
         const { data: updatedProfile } = await supabase
@@ -258,8 +276,10 @@ export async function POST(request: Request, context: { params: Promise<Params> 
           .select(selectFields)
           .eq("profile_id", user.id)
           .eq("platform", platform)
-          .eq("username", username)
+          .ilike("username", usernameKey)
           .maybeSingle();
+
+        console.log("[ProfileGenerate] Re-fetched profile, ai_narrative_generated_at:", updatedProfile?.ai_narrative_generated_at);
 
         if (updatedProfile) responseProfile = updatedProfile;
 
@@ -268,7 +288,11 @@ export async function POST(request: Request, context: { params: Promise<Params> 
         aiError = narrativeError instanceof Error ? narrativeError.message : String(narrativeError);
         console.error("[ProfileGenerate] AI narrative generation failed:", aiError);
       }
+    } else {
+      console.log("[ProfileGenerate] AI narrative generation SKIPPED (enableAiNarrative is false)");
     }
+    
+    console.log("[ProfileGenerate] Final responseProfile ai_narrative_generated_at:", responseProfile?.ai_narrative_generated_at);
     
     return NextResponse.json({ 
       opponent_profile: responseProfile, 
