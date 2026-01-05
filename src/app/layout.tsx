@@ -4,6 +4,7 @@ import "./globals.css";
 import { ImportSupervisor } from "@/components/imports/ImportSupervisor";
 import { ImportQueueProvider } from "@/context/ImportQueueContext";
 import { ActiveOpponentProvider } from "@/context/ActiveOpponentContext";
+import { OnboardingProvider } from "@/context/OnboardingContext";
 import { GlobalNavBar } from "@/components/nav/GlobalNavBar";
 import { NavPaddingWrapper } from "@/components/nav/NavPaddingWrapper";
 
@@ -35,8 +36,10 @@ export default function RootLayout({
         <ImportSupervisor />
         <ImportQueueProvider>
           <ActiveOpponentProvider>
-            <GlobalNavBar />
-            <NavPaddingWrapper>{children}</NavPaddingWrapper>
+            <OnboardingProvider>
+              <GlobalNavBar />
+              <NavPaddingWrapper>{children}</NavPaddingWrapper>
+            </OnboardingProvider>
           </ActiveOpponentProvider>
         </ImportQueueProvider>
       </body>
