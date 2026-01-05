@@ -120,6 +120,11 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
   const lastSyncTimestampRef = useRef<Record<string, number>>({});
 
   const lastSyncedPollAtRef = useRef(0);
+  const lastActivityAtRef = useRef(0);
+  const activityTimeoutRef = useRef<number | null>(null);
+
+  // Activity timeout - if no progress for 90 seconds, consider import stalled
+  const ACTIVITY_TIMEOUT_MS = 90000;
 
   const pollSyncedCount = useCallback(async (opponentId: string) => {
     const parsed = parseOpponentId(opponentId);
@@ -264,6 +269,9 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
 
     importerRef.current = createOpeningGraphImporter({
       onStatus: (s) => {
+        // Update activity timestamp on any status update
+        lastActivityAtRef.current = Date.now();
+
         // gp is games processed in THIS session
         const gp = Math.max(0, Number(s.gamesProcessed ?? 0));
         // Total = base (from previous syncs) + current session progress
@@ -290,6 +298,7 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
           }
         }
         if (s.phase === "done" || s.phase === "error") {
+          console.log("[ImportQueue] Import completed with phase:", s.phase, "games:", s.gamesProcessed);
           finishCurrent();
         }
       },
@@ -318,6 +327,8 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
     setIsImporting(true);
     const nextKey = normalizeOpponentId(next);
     setCurrentOpponent(nextKey);
+    lastActivityAtRef.current = Date.now();
+    console.log("[ImportQueue] Starting import for:", nextKey);
     
     // Set base count to previous synced count (for cumulative display)
     // Also get the last sync timestamp for incremental sync
@@ -359,6 +370,35 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
     }, 2500);
     return () => window.clearInterval(id);
   }, [currentOpponent, isImporting, pollSyncedCount]);
+
+  // Activity timeout monitor - detect stalled imports
+  useEffect(() => {
+    if (!isImporting) {
+      if (activityTimeoutRef.current) {
+        window.clearInterval(activityTimeoutRef.current);
+        activityTimeoutRef.current = null;
+      }
+      return;
+    }
+
+    activityTimeoutRef.current = window.setInterval(() => {
+      const now = Date.now();
+      const lastActivity = lastActivityAtRef.current;
+      const elapsed = now - lastActivity;
+
+      if (elapsed > ACTIVITY_TIMEOUT_MS) {
+        console.warn("[ImportQueue] Activity timeout - no progress for", Math.round(elapsed / 1000), "seconds. Finishing import.");
+        finishCurrent();
+      }
+    }, 10000); // Check every 10 seconds
+
+    return () => {
+      if (activityTimeoutRef.current) {
+        window.clearInterval(activityTimeoutRef.current);
+        activityTimeoutRef.current = null;
+      }
+    };
+  }, [isImporting, finishCurrent]);
 
   useEffect(() => {
     if (isImporting) return;

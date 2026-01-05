@@ -190,17 +190,23 @@ export function createOpeningGraphImporter(params: {
       }
 
       if (msg.type === "done") {
+        console.log("[ImportService] Received done message, games:", msg.gamesProcessed);
+        // Wait for pending writes then signal completion
         writeQueue = writeQueue
           .then(() => {
+            console.log("[ImportService] Write queue flushed, signaling done");
             setStatus({ phase: "done", gamesProcessed: msg.gamesProcessed, newestGameTimestamp: msg.newestGameTimestamp ?? null });
           })
-          .catch(() => {
-            // ignore
+          .catch((e) => {
+            // Even if writes fail, we should signal completion so queue progresses
+            console.error("[ImportService] Write queue error during done:", e);
+            setStatus({ phase: "done", gamesProcessed: msg.gamesProcessed, newestGameTimestamp: msg.newestGameTimestamp ?? null });
           });
       }
     };
 
     worker.onerror = (e: ErrorEvent) => {
+      console.error("[ImportService] Worker error:", e.message);
       setStatus({ phase: "error", lastError: e.message || "Worker error" });
     };
 

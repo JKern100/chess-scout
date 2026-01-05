@@ -206,18 +206,18 @@ export function GlobalNavBar() {
                   <input
                     ref={searchInputRef}
                     type="text"
-                    placeholder="Search opponents..."
+                    placeholder="Search players..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm outline-none placeholder:text-zinc-400 focus:border-zinc-300 focus:bg-white"
                   />
                 </div>
 
-                {/* Opponent List */}
+                {/* Player List */}
                 <div className="max-h-64 overflow-y-auto p-1">
                   {filteredOpponents.length === 0 ? (
                     <div className="px-3 py-4 text-center text-sm text-zinc-500">
-                      {availableOpponents.length === 0 ? "No opponents imported yet" : "No matches found"}
+                      {availableOpponents.length === 0 ? "No players imported yet" : "No matches found"}
                     </div>
                   ) : (
                     filteredOpponents.map((o) => {
@@ -234,7 +234,10 @@ export function GlobalNavBar() {
                           }`}
                         >
                           <div className="flex items-center gap-2">
-                            <span className="font-medium">{o.username}</span>
+                            <span className="font-medium">
+                              {o.username}
+                              {o.isSelf && <span className="ml-1 text-zinc-500">(self)</span>}
+                            </span>
                             <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-zinc-500">
                               {o.platform}
                             </span>
@@ -343,9 +346,9 @@ export function GlobalNavBar() {
         }`}
       >
         <div className="p-4">
-          {/* Mobile Opponent Switcher */}
+          {/* Mobile Player Switcher */}
           <div className="mb-4">
-            <div className="mb-2 text-xs font-medium text-zinc-500">Current Opponent</div>
+            <div className="mb-2 text-xs font-medium text-zinc-500">Current Player</div>
             <select
               value={activeOpponent ? `${activeOpponent.platform}:${activeOpponent.username}` : ""}
               onChange={(e) => {
@@ -359,10 +362,10 @@ export function GlobalNavBar() {
               }}
               className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-900"
             >
-              <option value="">Select opponent</option>
+              <option value="">Select player</option>
               {availableOpponents.map((o) => (
                 <option key={`${o.platform}:${o.username}`} value={`${o.platform}:${o.username}`}>
-                  {o.username} ({o.platform})
+                  {o.username}{o.isSelf ? " (self)" : ""} ({o.platform})
                 </option>
               ))}
             </select>

@@ -76,6 +76,8 @@ let stopRequested = false;
 let gamesProcessed = 0;
 let bytesRead = 0;
 let newestGameTimestamp: number | null = null;
+let lastHeartbeatAt = 0;
+const HEARTBEAT_INTERVAL_MS = 5000; // Send heartbeat every 5 seconds
 
 const fenMap = new Map<string, FenAgg>();
 const dirtyFens = new Set<string>();
@@ -314,6 +316,13 @@ async function runImport(params: ImportStartMessage) {
       buf += decoder.decode(value, { stream: true });
     }
 
+    // Send heartbeat to indicate we're still actively streaming
+    const now = Date.now();
+    if (now - lastHeartbeatAt >= HEARTBEAT_INTERVAL_MS) {
+      lastHeartbeatAt = now;
+      (self as any).postMessage({ type: "progress", gamesProcessed, bytesRead, status: "running", newestGameTimestamp } satisfies WorkerProgress);
+    }
+
     let idx: number;
     while ((idx = buf.indexOf("\n")) >= 0) {
       if (stopRequested) break;
@@ -462,6 +471,8 @@ async function runImport(params: ImportStartMessage) {
     // ignore
   }
 
+  // Final flush of remaining data
+  console.log("[Worker] Stream ended, flushing remaining data. Games processed:", gamesProcessed);
   emitFlush({ maxNodes: 500, maxGames: 200 });
   const hasDirty = () => {
     for (const [, g] of graphs) {
@@ -473,6 +484,7 @@ async function runImport(params: ImportStartMessage) {
   while (hasDirty() || gameBuffer.length > 0) {
     emitFlush({ maxNodes: 500, maxGames: 200 });
   }
+  console.log("[Worker] Import complete. Total games:", gamesProcessed);
   (self as any).postMessage({ type: "done", gamesProcessed, newestGameTimestamp } satisfies WorkerDone);
 }
 

@@ -53,6 +53,15 @@ export async function GET() {
 
   const rows = (data ?? []) as unknown as OpponentRow[];
 
+  // Fetch user's own profile to include as "self" in the players list
+  const { data: profileData } = await supabase
+    .from("profiles")
+    .select("primary_platform, platform_username, user_profile_generated_at")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  const selfProfile = profileData as { primary_platform?: string; platform_username?: string; user_profile_generated_at?: string } | null;
+
   const baseOpponents = rows
     .map((r) => ({
       platform: (r.platform as ChessPlatform) ?? "lichess",
@@ -186,7 +195,68 @@ export async function GET() {
     // ignore missing table / schema errors
   }
 
-  return NextResponse.json({ opponents });
+  // Add user's own profile at the end if they have set up their identity
+  let selfPlayer: OpponentRow | null = null;
+  if (selfProfile?.platform_username && selfProfile?.primary_platform) {
+    const selfPlatform = (selfProfile.primary_platform === "chesscom" ? "chesscom" : "lichess") as ChessPlatform;
+    const selfUsername = String(selfProfile.platform_username).trim();
+    const selfUsernameKey = selfUsername.toLowerCase();
+
+    // Get games count for self
+    const { count: selfGamesCount } = await supabase
+      .from("games")
+      .select("id", { count: "exact", head: true })
+      .eq("profile_id", user.id)
+      .eq("platform", selfPlatform)
+      .ilike("username", selfUsernameKey);
+
+    // Get total games from Lichess if applicable
+    let selfTotalGames: number | null = null;
+    if (selfPlatform === "lichess") {
+      try {
+        selfTotalGames = await fetchLichessUserTotalGames({ username: selfUsername });
+      } catch {
+        selfTotalGames = null;
+      }
+    }
+
+    // Get style markers for self
+    const { data: selfMarkers } = await supabase
+      .from("opponent_style_markers")
+      .select("marker_key, label, strength, tooltip, updated_at")
+      .eq("profile_id", user.id)
+      .eq("platform", selfPlatform)
+      .ilike("username", selfUsernameKey)
+      .eq("source_type", "PROFILE");
+
+    const sortedSelfMarkers = (selfMarkers ?? [])
+      .sort((a, b) => {
+        const sr = strengthRank(b?.strength) - strengthRank(a?.strength);
+        if (sr !== 0) return sr;
+        const ta = String(a?.updated_at ?? "");
+        const tb = String(b?.updated_at ?? "");
+        return ta < tb ? 1 : ta > tb ? -1 : 0;
+      })
+      .slice(0, 2)
+      .map((m) => ({
+        marker_key: String(m?.marker_key ?? ""),
+        label: String(m?.label ?? ""),
+        strength: String(m?.strength ?? ""),
+        tooltip: String(m?.tooltip ?? ""),
+      }));
+
+    selfPlayer = {
+      platform: selfPlatform,
+      username: selfUsername,
+      created_at: selfProfile.user_profile_generated_at ?? new Date().toISOString(),
+      last_refreshed_at: selfProfile.user_profile_generated_at ?? null,
+      games_count: typeof selfGamesCount === "number" ? selfGamesCount : 0,
+      total_games: typeof selfTotalGames === "number" ? selfTotalGames : undefined,
+      style_markers: sortedSelfMarkers,
+    };
+  }
+
+  return NextResponse.json({ opponents, selfPlayer });
 }
 
 export async function POST(request: Request) {

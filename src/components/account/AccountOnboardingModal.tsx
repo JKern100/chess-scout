@@ -96,6 +96,9 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
     };
   }, [step, platformUsername, primaryPlatform]);
 
+  // Minimum games needed for a meaningful profile
+  const MIN_GAMES_FOR_PROFILE = 50;
+
   // Auto-advance from syncing when enough games are synced or sync completes
   useEffect(() => {
     if (step === "syncing" && !isUserSyncing && syncedGamesCount > 0) {
@@ -424,8 +427,8 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
                 )}
               </div>
 
-              <div className="flex items-center justify-center gap-3">
-                {isUserSyncing && (
+              <div className="flex flex-col items-center justify-center gap-3">
+                {isUserSyncing && syncedGamesCount >= MIN_GAMES_FOR_PROFILE && (
                   <button
                     type="button"
                     onClick={handleSkipToFilters}
@@ -433,6 +436,11 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
                   >
                     Continue (sync in background)
                   </button>
+                )}
+                {isUserSyncing && syncedGamesCount < MIN_GAMES_FOR_PROFILE && (
+                  <div className="text-xs text-zinc-500">
+                    Waiting for at least {MIN_GAMES_FOR_PROFILE} games to generate a meaningful profile...
+                  </div>
                 )}
                 {!isUserSyncing && syncedGamesCount > 0 && (
                   <button
@@ -475,6 +483,14 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
                 <div className="mt-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{generateError}</div>
               )}
 
+              {syncedGamesCount < MIN_GAMES_FOR_PROFILE && (
+                <div className="mt-4 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-700">
+                  You need at least {MIN_GAMES_FOR_PROFILE} synced games to generate a meaningful profile. 
+                  Currently synced: {syncedGamesCount} games.
+                  {isUserSyncing ? " Please wait while we import more games..." : " Please go back and wait for more games to sync."}
+                </div>
+              )}
+
               <div className="mt-6 flex items-center justify-between">
                 <button
                   type="button"
@@ -486,8 +502,9 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
                 <button
                   type="button"
                   onClick={handleGenerateProfile}
-                  disabled={isGenerating || syncedGamesCount === 0}
+                  disabled={isGenerating || syncedGamesCount < MIN_GAMES_FOR_PROFILE}
                   className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-zinc-900 px-6 text-sm font-medium text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  title={syncedGamesCount < MIN_GAMES_FOR_PROFILE ? `Need at least ${MIN_GAMES_FOR_PROFILE} games (have ${syncedGamesCount})` : undefined}
                 >
                   {isGenerating ? (
                     <>

@@ -8,15 +8,17 @@ type ActiveOpponent = {
   platform: ChessPlatform;
   username: string;
   rating?: number | null;
+  isSelf?: boolean;
 } | null;
 
 type ActiveOpponentContextValue = {
   activeOpponent: ActiveOpponent;
   setActiveOpponent: (opponent: ActiveOpponent) => void;
-  availableOpponents: Array<{ platform: ChessPlatform; username: string; rating?: number | null }>;
-  setAvailableOpponents: (opponents: Array<{ platform: ChessPlatform; username: string; rating?: number | null }>) => void;
+  availableOpponents: Array<{ platform: ChessPlatform; username: string; rating?: number | null; isSelf?: boolean }>;
+  setAvailableOpponents: (opponents: Array<{ platform: ChessPlatform; username: string; rating?: number | null; isSelf?: boolean }>) => void;
   refreshOpponents: () => Promise<void>;
   isLoading: boolean;
+  selfPlayer: { platform: ChessPlatform; username: string } | null;
 };
 
 const ActiveOpponentContext = createContext<ActiveOpponentContextValue | null>(null);
@@ -25,8 +27,9 @@ const STORAGE_KEY = "chessscout.activeOpponent";
 
 export function ActiveOpponentProvider({ children }: { children: React.ReactNode }) {
   const [activeOpponent, setActiveOpponentState] = useState<ActiveOpponent>(null);
-  const [availableOpponents, setAvailableOpponents] = useState<Array<{ platform: ChessPlatform; username: string; rating?: number | null }>>([]);
+  const [availableOpponents, setAvailableOpponents] = useState<Array<{ platform: ChessPlatform; username: string; rating?: number | null; isSelf?: boolean }>>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [selfPlayer, setSelfPlayer] = useState<{ platform: ChessPlatform; username: string } | null>(null);
 
   // Load from localStorage on mount
   useEffect(() => {
@@ -76,8 +79,37 @@ export function ActiveOpponentProvider({ children }: { children: React.ReactNode
           platform: (o?.platform === "chesscom" ? "chesscom" : "lichess") as ChessPlatform,
           username: String(o?.username ?? "").trim(),
           rating: typeof o?.rating === "number" ? o.rating : null,
+          isSelf: false,
         }))
         .filter((o) => o.username);
+
+      // Add self player at the end if available
+      const selfData = json?.selfPlayer;
+      if (selfData?.username && selfData?.platform) {
+        const selfEntry = {
+          platform: (selfData.platform === "chesscom" ? "chesscom" : "lichess") as ChessPlatform,
+          username: String(selfData.username).trim(),
+          rating: null,
+          isSelf: true,
+        };
+        // Only add if not already in list (avoid duplicate if user scouted themselves)
+        const isDuplicate = out.some(
+          (o) => o.platform === selfEntry.platform && o.username.toLowerCase() === selfEntry.username.toLowerCase()
+        );
+        if (!isDuplicate) {
+          out.push(selfEntry);
+        } else {
+          // Mark the existing entry as self
+          const existing = out.find(
+            (o) => o.platform === selfEntry.platform && o.username.toLowerCase() === selfEntry.username.toLowerCase()
+          );
+          if (existing) existing.isSelf = true;
+        }
+        setSelfPlayer({ platform: selfEntry.platform, username: selfEntry.username });
+      } else {
+        setSelfPlayer(null);
+      }
+
       setAvailableOpponents(out);
 
       // If no active opponent set but we have opponents, set the first one
@@ -98,6 +130,7 @@ export function ActiveOpponentProvider({ children }: { children: React.ReactNode
     setAvailableOpponents,
     refreshOpponents,
     isLoading,
+    selfPlayer,
   };
 
   return (
