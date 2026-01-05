@@ -5,6 +5,8 @@ import { OpponentFiltersPanel } from "@/components/chess/OpponentFiltersPanel";
 import { useOpponentFilters } from "@/components/chess/useOpponentFilters";
 import { StyleSpectrumBar, StyleSpectrumData } from "@/components/profile/StyleSpectrumBar";
 import { GenerationProgressModal } from "@/components/profile/GenerationProgressModal";
+import ReactMarkdown from "react-markdown";
+import { Download, Mail } from "lucide-react";
 
 type ChessPlatform = "lichess" | "chesscom";
 
@@ -210,6 +212,10 @@ type OpponentProfileRow = {
   date_range_start?: string | null;
   date_range_end?: string | null;
   source_game_ids_hash?: string | null;
+  ai_quick_summary?: string | null;
+  ai_comprehensive_report?: string | null;
+  ai_narrative_generated_at?: string | null;
+  ai_subject_type?: "self" | "opponent" | null;
 };
 
 type StoredStyleMarker = {
@@ -602,6 +608,8 @@ export function OpponentProfileClient({ platform, username }: Props) {
   const [datasetOpen, setDatasetOpen] = useState(false);
   const [styleMarkersOpen, setStyleMarkersOpen] = useState(true);
   const [generateStyleMarkers, setGenerateStyleMarkers] = useState(true);
+  const [narrativeMode, setNarrativeMode] = useState<"quick" | "comprehensive">("quick");
+  const [narrativeOpen, setNarrativeOpen] = useState(true);
   const [styleMarkerColorFilter, setStyleMarkerColorFilter] = useState<"overall" | "white" | "black">("overall");
   const [styleMarkerCategoryFilter, setStyleMarkerCategoryFilter] = useState<string | null>(null);
 
@@ -633,6 +641,8 @@ export function OpponentProfileClient({ platform, username }: Props) {
             from: fromDate || null,
             to: toDate || null,
             enable_style_markers: generateStyleMarkers,
+            enable_ai_narrative: true,
+            subject_type: "opponent", // TODO: detect self-analysis from context
           }),
           signal: controller.signal,
         }
@@ -708,6 +718,93 @@ export function OpponentProfileClient({ platform, username }: Props) {
       setProgressError(null);
     }
   }, [progressStatus]);
+
+  const handleDownloadPdf = useCallback(async () => {
+    const content = narrativeMode === "quick" 
+      ? profileRow?.ai_quick_summary 
+      : profileRow?.ai_comprehensive_report;
+    
+    if (!content) return;
+
+    // Dynamically import html2pdf to avoid SSR issues
+    const html2pdf = (await import("html2pdf.js")).default;
+    
+    // Create a styled HTML document for the PDF
+    const reportTitle = narrativeMode === "quick" ? "Quick Analysis" : "Comprehensive Report";
+    const subjectLabel = profileRow?.ai_subject_type === "self" ? "Self-Review" : "Opponent Scout";
+    
+    const htmlContent = `
+      <div style="font-family: 'Segoe UI', system-ui, sans-serif; padding: 40px; max-width: 800px; margin: 0 auto;">
+        <div style="text-align: center; margin-bottom: 32px; padding-bottom: 24px; border-bottom: 2px solid #3b82f6;">
+          <h1 style="font-size: 28px; font-weight: bold; color: #1e40af; margin: 0 0 8px 0;">♟ ChessScout</h1>
+          <p style="font-size: 14px; color: #64748b; margin: 0;">AI-Powered Chess Analysis</p>
+        </div>
+        <div style="margin-bottom: 24px;">
+          <h2 style="font-size: 20px; font-weight: 600; color: #1e293b; margin: 0 0 8px 0;">${reportTitle}: ${username}</h2>
+          <div style="display: flex; gap: 16px; font-size: 12px; color: #64748b;">
+            <span style="background: #eff6ff; color: #1d4ed8; padding: 4px 12px; border-radius: 12px;">${subjectLabel}</span>
+            <span>Platform: ${platform}</span>
+            ${profileRow?.ai_narrative_generated_at ? `<span>Generated: ${new Date(profileRow.ai_narrative_generated_at).toLocaleDateString()}</span>` : ""}
+          </div>
+        </div>
+        <div style="font-size: 14px; line-height: 1.7; color: #334155;">
+          ${content.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+                   .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+                   .replace(/^### (.+)$/gm, '<h4 style="font-size: 14px; font-weight: 600; margin: 16px 0 8px 0; color: #1e293b;">$1</h4>')
+                   .replace(/^## (.+)$/gm, '<h3 style="font-size: 16px; font-weight: 600; margin: 20px 0 12px 0; color: #1e293b;">$1</h3>')
+                   .replace(/^# (.+)$/gm, '<h2 style="font-size: 18px; font-weight: 600; margin: 24px 0 14px 0; color: #1e293b;">$1</h2>')
+                   .replace(/^\* (.+)$/gm, '<li style="margin: 4px 0 4px 20px;">$1</li>')
+                   .replace(/^- (.+)$/gm, '<li style="margin: 4px 0 4px 20px;">$1</li>')
+                   .replace(/^\d+\. (.+)$/gm, '<li style="margin: 4px 0 4px 20px;">$1</li>')
+                   .replace(/\n\n/g, '</p><p style="margin: 12px 0;">')
+                   .replace(/\n/g, '<br>')}
+        </div>
+        <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #e2e8f0; text-align: center; font-size: 11px; color: #94a3b8;">
+          Generated by ChessScout • ${new Date().toLocaleDateString()}
+        </div>
+      </div>
+    `;
+
+    const element = document.createElement("div");
+    element.innerHTML = htmlContent;
+
+    const opt = {
+      margin: 10,
+      filename: `ChessScout_${username}_${narrativeMode}_${new Date().toISOString().split("T")[0]}.pdf`,
+      image: { type: "jpeg" as const, quality: 0.98 },
+      html2canvas: { scale: 2 },
+      jsPDF: { unit: "mm" as const, format: "a4" as const, orientation: "portrait" as const },
+    };
+
+    await html2pdf().set(opt).from(element).save();
+  }, [narrativeMode, platform, profileRow, username]);
+
+  const handleShareEmail = useCallback(() => {
+    const content = narrativeMode === "quick" 
+      ? profileRow?.ai_quick_summary 
+      : profileRow?.ai_comprehensive_report;
+    
+    if (!content) return;
+
+    const reportTitle = narrativeMode === "quick" ? "Quick Analysis" : "Comprehensive Report";
+    const subjectLabel = profileRow?.ai_subject_type === "self" ? "Self-Review" : "Opponent Scout";
+    
+    const subject = encodeURIComponent(`ChessScout ${subjectLabel}: ${username} - ${reportTitle}`);
+    const body = encodeURIComponent(
+      `ChessScout AI Coach Analysis\n` +
+      `================================\n\n` +
+      `Player: ${username}\n` +
+      `Platform: ${platform}\n` +
+      `Report Type: ${reportTitle} (${subjectLabel})\n` +
+      `${profileRow?.ai_narrative_generated_at ? `Generated: ${new Date(profileRow.ai_narrative_generated_at).toLocaleDateString()}\n` : ""}` +
+      `\n================================\n\n` +
+      `${content}\n\n` +
+      `--------------------------------\n` +
+      `Generated by ChessScout`
+    );
+
+    window.location.href = `mailto:?subject=${subject}&body=${body}`;
+  }, [narrativeMode, platform, profileRow, username]);
 
   const onClickPrimary = useCallback(() => {
     if (generateBusy) return;
@@ -980,13 +1077,99 @@ export function OpponentProfileClient({ platform, username }: Props) {
               </div>
             </div>
 
+            {/* AI Coach Analysis Section - Always visible */}
+            <div className="rounded-xl border border-blue-200 bg-gradient-to-br from-blue-50 to-white p-4 shadow-sm">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-blue-800">AI Coach Analysis</span>
+                  {profileRow?.ai_subject_type && (
+                    <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-medium text-blue-700">
+                      {profileRow.ai_subject_type === "self" ? "Self-Review" : "Opponent Scout"}
+                    </span>
+                  )}
+                </div>
+                {(profileRow?.ai_quick_summary || profileRow?.ai_comprehensive_report) && (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <div className="inline-flex items-center gap-1 rounded-lg border border-blue-200 bg-white p-0.5">
+                      <button
+                        type="button"
+                        onClick={() => setNarrativeMode("quick")}
+                        className={`rounded-md px-2 py-1 text-[10px] font-medium transition-colors ${
+                          narrativeMode === "quick"
+                            ? "bg-blue-600 text-white"
+                            : "text-blue-700 hover:bg-blue-50"
+                        }`}
+                      >
+                        Quick
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setNarrativeMode("comprehensive")}
+                        className={`rounded-md px-2 py-1 text-[10px] font-medium transition-colors ${
+                          narrativeMode === "comprehensive"
+                            ? "bg-blue-600 text-white"
+                            : "text-blue-700 hover:bg-blue-50"
+                        }`}
+                      >
+                        Full Report
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setNarrativeOpen((v) => !v)}
+                      className="inline-flex h-7 items-center justify-center rounded-lg border border-blue-200 bg-white px-2 text-[10px] font-medium text-blue-700 hover:bg-blue-50"
+                    >
+                      {narrativeOpen ? "Hide" : "Show"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDownloadPdf()}
+                      className="inline-flex h-7 items-center justify-center gap-1 rounded-lg border border-blue-200 bg-white px-2 text-[10px] font-medium text-blue-700 hover:bg-blue-50"
+                      title="Download as PDF"
+                    >
+                      <Download className="h-3 w-3" />
+                      PDF
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleShareEmail()}
+                      className="inline-flex h-7 items-center justify-center gap-1 rounded-lg border border-blue-200 bg-white px-2 text-[10px] font-medium text-blue-700 hover:bg-blue-50"
+                      title="Share via Email"
+                    >
+                      <Mail className="h-3 w-3" />
+                      Email
+                    </button>
+                  </div>
+                )}
+              </div>
+              {(profileRow?.ai_quick_summary || profileRow?.ai_comprehensive_report) ? (
+                narrativeOpen && (
+                  <div className="mt-3">
+                    {narrativeMode === "quick" ? (
+                      <div className="prose prose-sm prose-neutral max-w-none text-sm leading-relaxed text-neutral-800 [&>p]:my-2 [&>ul]:my-2 [&>ul]:ml-4 [&>ul]:list-disc [&>ol]:my-2 [&>ol]:ml-4 [&>ol]:list-decimal [&>strong]:font-semibold [&>h1]:text-base [&>h1]:font-bold [&>h1]:mt-3 [&>h2]:text-sm [&>h2]:font-semibold [&>h2]:mt-2 [&>h3]:text-xs [&>h3]:font-semibold [&>h3]:mt-2">
+                        <ReactMarkdown>{profileRow.ai_quick_summary ?? ""}</ReactMarkdown>
+                      </div>
+                    ) : (
+                      <div className="prose prose-sm prose-neutral max-w-none text-sm leading-relaxed text-neutral-800 [&>p]:my-2 [&>ul]:my-2 [&>ul]:ml-4 [&>ul]:list-disc [&>ol]:my-2 [&>ol]:ml-4 [&>ol]:list-decimal [&>strong]:font-semibold [&>h1]:text-base [&>h1]:font-bold [&>h1]:mt-4 [&>h2]:text-sm [&>h2]:font-semibold [&>h2]:mt-3 [&>h3]:text-xs [&>h3]:font-semibold [&>h3]:mt-2 [&>li]:my-1">
+                        <ReactMarkdown>{profileRow.ai_comprehensive_report ?? ""}</ReactMarkdown>
+                      </div>
+                    )}
+                    {profileRow.ai_narrative_generated_at && (
+                      <div className="mt-3 text-[10px] text-blue-600">
+                        Generated: {formatDateTime(profileRow.ai_narrative_generated_at)}
+                      </div>
+                    )}
+                  </div>
+                )
+              ) : (
+                <div className="mt-3 text-sm text-blue-700/70">
+                  AI analysis will be generated when you regenerate this profile.
+                </div>
+              )}
+            </div>
+
             {hasV3 && v3Addon ? (
               <div className="grid gap-3">
-                <div className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
-                  <div className="text-xs font-semibold text-neutral-700">Prep insights</div>
-                  <div className="mt-2 text-sm text-neutral-900">{v3Addon.prep_summary}</div>
-                  {v3Addon.message ? <div className="mt-2 text-xs text-neutral-600">{v3Addon.message}</div> : null}
-                </div>
 
                 <div className="grid gap-3 md:grid-cols-3">
                   {[
@@ -1263,27 +1446,7 @@ export function OpponentProfileClient({ platform, username }: Props) {
                     ))}
                   </div>
 
-                  {/* Pro-Scout Narratives */}
-                  <div className="rounded-lg bg-blue-50 border border-blue-200 p-3">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="text-blue-600 text-sm">🔍</span>
-                      <span className="text-[11px] font-semibold text-blue-800">Scout&apos;s Analysis</span>
-                    </div>
-                    {filteredNarratives.length > 0 ? (
-                      <div className="grid gap-2">
-                        {filteredNarratives.slice(0, 3).map((n, idx) => (
-                          <div key={idx} className="text-[10px] text-blue-900 leading-relaxed">
-                            {n.narrative}
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="text-[10px] text-blue-900/70">
-                        No signature deviations detected in this context.
-                        {" "}Narratives trigger when a metric is &gt;1.5x above or &lt;0.67x below the category benchmark (min 10 games).
-                      </div>
-                    )}
-                  </div>
+                  {/* Pro-Scout Narratives section removed - replaced by AI Coach */}
 
                   <div className="grid gap-3">
                     <StyleSpectrumBar

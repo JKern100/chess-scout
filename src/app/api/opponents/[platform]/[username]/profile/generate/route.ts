@@ -4,6 +4,7 @@ import { buildOpponentProfile, type ChessPlatform, type LichessSpeed } from "@/s
 import { buildOpponentProfileV2 } from "@/server/opponentProfileV2";
 import { buildOpponentProfileV3Addon } from "@/server/opponentProfileV3";
 import { calculateAndStoreMarkers } from "@/server/styleMarkerService";
+import { generateNarrativeWithRetry, type SubjectType } from "@/server/geminiNarrativeService";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -14,10 +15,12 @@ type Params = {
 };
 
 export async function POST(request: Request, context: { params: Promise<Params> }) {
+  console.log("[PROFILE GENERATE] START - ", new Date().toISOString());
   const resolvedParams = await context.params;
   const platform = resolvedParams.platform as ChessPlatform;
   const username = String(resolvedParams.username ?? "").trim();
   const usernameKey = username.toLowerCase();
+  console.log("[PROFILE GENERATE] Processing:", { platform, username });
 
   if (!username) {
     return NextResponse.json({ error: "username is required" }, { status: 400 });
@@ -54,6 +57,8 @@ export async function POST(request: Request, context: { params: Promise<Params> 
     const rated = ratedRaw === "rated" ? "rated" : ratedRaw === "casual" ? "casual" : "any";
 
     const enableStyleMarkers = Boolean(body?.enable_style_markers);
+    const enableAiNarrative = Boolean(body?.enable_ai_narrative ?? true); // Default to true
+    const subjectType: SubjectType = body?.subject_type === "self" ? "self" : "opponent";
 
     const from = typeof body?.from === "string" ? String(body.from) : null;
     const to = typeof body?.to === "string" ? String(body.to) : null;
@@ -153,6 +158,9 @@ export async function POST(request: Request, context: { params: Promise<Params> 
       debugCounts = debug;
     }
 
+    const selectFields =
+      "id, profile_id, platform, username, ratings, fetched_at, filters_json, profile_version, profile_json, stats_json, games_analyzed, generated_at, date_range_start, date_range_end, source_game_ids_hash, ai_quick_summary, ai_comprehensive_report, ai_narrative_generated_at, ai_subject_type, ai_model_used, created_at, updated_at";
+
     const { data: saved, error } = await supabase
       .from("opponent_profiles")
       .upsert(
@@ -173,9 +181,7 @@ export async function POST(request: Request, context: { params: Promise<Params> 
         },
         { onConflict: "profile_id,platform,username" }
       )
-      .select(
-        "id, profile_id, platform, username, ratings, fetched_at, filters_json, profile_version, profile_json, stats_json, games_analyzed, generated_at, date_range_start, date_range_end, source_game_ids_hash, created_at, updated_at"
-      )
+      .select(selectFields)
       .single();
 
     if (error) {
@@ -202,7 +208,74 @@ export async function POST(request: Request, context: { params: Promise<Params> 
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    return NextResponse.json({ opponent_profile: saved, debug_counts: debugCounts });
+    // Generate AI narrative if enabled and we have games
+    let aiNarrative: { quick_summary: string; comprehensive_report: string } | null = null;
+    let responseProfile: any = saved;
+    let aiError: string | null = null;
+    
+    // Always try to generate AI narrative
+    if (enableAiNarrative) {
+      try {
+        // Fetch stored style markers for the narrative
+        const { data: markers } = await supabase
+          .from("opponent_style_markers")
+          .select("marker_key, label, strength, tooltip, metrics_json")
+          .eq("profile_id", user.id)
+          .eq("platform", platform)
+          .ilike("username", usernameKey)
+          .eq("source_type", "PROFILE");
+
+        const narrative = await generateNarrativeWithRetry({
+          profileJson: profile,
+          styleMarkers: markers ?? [],
+          subjectType,
+          username,
+          platform,
+        });
+
+        aiNarrative = {
+          quick_summary: narrative.quick_summary,
+          comprehensive_report: narrative.comprehensive_report,
+        };
+
+        // Store narrative in database
+        await supabase
+          .from("opponent_profiles")
+          .update({
+            ai_quick_summary: narrative.quick_summary,
+            ai_comprehensive_report: narrative.comprehensive_report,
+            ai_narrative_generated_at: narrative.generated_at,
+            ai_subject_type: narrative.subject_type,
+            ai_model_used: narrative.model_used,
+          })
+          .eq("profile_id", user.id)
+          .eq("platform", platform)
+          .eq("username", username);
+
+        // Re-fetch updated row so frontend immediately receives ai_* fields (no refresh needed)
+        const { data: updatedProfile } = await supabase
+          .from("opponent_profiles")
+          .select(selectFields)
+          .eq("profile_id", user.id)
+          .eq("platform", platform)
+          .eq("username", username)
+          .maybeSingle();
+
+        if (updatedProfile) responseProfile = updatedProfile;
+
+        console.log("[ProfileGenerate] AI narrative generated successfully for", username, "with subject_type:", subjectType);
+      } catch (narrativeError) {
+        aiError = narrativeError instanceof Error ? narrativeError.message : String(narrativeError);
+        console.error("[ProfileGenerate] AI narrative generation failed:", aiError);
+      }
+    }
+    
+    return NextResponse.json({ 
+      opponent_profile: responseProfile, 
+      debug_counts: debugCounts,
+      ai_narrative: aiNarrative,
+      ai_error: aiError,
+    });
   } catch (e) {
     console.error("Opponent profile generation failed", {
       platform,

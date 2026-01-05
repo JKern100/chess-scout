@@ -33,7 +33,7 @@ export async function GET(_request: Request, context: { params: Promise<Params> 
   }
 
   const fullSelect =
-    "id, profile_id, platform, username, ratings, fetched_at, filters_json, profile_version, profile_json, stats_json, games_analyzed, generated_at, date_range_start, date_range_end, source_game_ids_hash, created_at, updated_at";
+    "id, profile_id, platform, username, ratings, fetched_at, filters_json, profile_version, profile_json, stats_json, games_analyzed, generated_at, date_range_start, date_range_end, source_game_ids_hash, created_at, updated_at, ai_quick_summary, ai_comprehensive_report, ai_narrative_generated_at, ai_subject_type";
   const baseSelect = "id, profile_id, platform, username, ratings, fetched_at, created_at, updated_at";
 
   const { data, error } = await supabase
