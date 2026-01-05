@@ -58,26 +58,8 @@ export async function POST(request: Request, context: { params: Promise<Params> 
     const from = typeof body?.from === "string" ? String(body.from) : null;
     const to = typeof body?.to === "string" ? String(body.to) : null;
 
-    const isVercel = Boolean(process.env.VERCEL);
-    let maxGamesCap: number | null = null;
-    let spanDays: number | null = null;
-    if (isVercel) {
-      try {
-        const fromMs = from ? new Date(from).getTime() : null;
-        const toMs = to ? new Date(to).getTime() : Date.now();
-        if (fromMs && Number.isFinite(fromMs) && Number.isFinite(toMs)) {
-          spanDays = Math.abs(toMs - fromMs) / (1000 * 60 * 60 * 24);
-          // Vercel serverless needs aggressive caps for large ranges.
-          if (spanDays >= 365) maxGamesCap = 1500;
-          else if (spanDays >= 180) maxGamesCap = 2500;
-          else if (spanDays >= 90) maxGamesCap = 4000;
-        }
-      } catch {
-        maxGamesCap = null;
-      }
-    }
-
-    const preferEvents = Boolean(isVercel && spanDays != null && spanDays >= 90);
+    // Fixed cap of 5000 games for all date ranges (consistent with Session route)
+    const maxGamesCap = 5000;
 
     const [{ profile: profileV2, normalized, filtersUsed }, statsV1Result] = await Promise.all([
       buildOpponentProfileV2({
@@ -88,7 +70,6 @@ export async function POST(request: Request, context: { params: Promise<Params> 
         filters: { speeds, rated, from, to },
         includeNormalized: true,
         maxGamesCap,
-        preferEvents,
       }),
       (async () => {
         try {

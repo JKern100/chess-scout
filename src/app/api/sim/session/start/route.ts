@@ -58,6 +58,9 @@ export async function POST(request: Request) {
     // - all 5 speeds selected => treat as "any"
     const speedsFilter: LichessSpeed[] = !speedsProvided ? [] : speeds;
 
+    // Fixed cap of 5000 games for all date ranges (consistent with Profile route)
+    const maxGamesCap = 5000;
+
     try {
       const { normalized } = await buildOpponentProfileV2({
         supabase,
@@ -66,8 +69,7 @@ export async function POST(request: Request) {
         username,
         filters: { speeds: speedsFilter, rated, from, to },
         includeNormalized: true,
-        // Keep sessions responsive; can be raised if needed.
-        maxGamesCap: 5000,
+        maxGamesCap,
       });
 
       if (Array.isArray(normalized) && normalized.length > 0) {

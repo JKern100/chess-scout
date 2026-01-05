@@ -5,6 +5,90 @@ import { useState } from "react";
 import { DateRangePresetSelect } from "./DateRangePresetSelect";
 import type { DatePreset, OpponentRatedFilter, OpponentSpeed } from "./useOpponentFilters";
 
+function StyleMarkersHelpModal({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div
+        className="max-h-[80vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-5 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-base font-semibold text-zinc-900">ChessScout Style Markers</h3>
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100"
+          >
+            ✕
+          </button>
+        </div>
+        
+        <div className="text-[13px] leading-relaxed space-y-4">
+          <section>
+            <h4 className="font-semibold text-zinc-800 mb-1">What are Style Markers?</h4>
+            <p className="text-zinc-600">
+              Style Markers are behavioral fingerprints computed from your opponent&apos;s historical games. 
+              They quantify <strong>how</strong> someone plays—their tendencies, preferences, and patterns.
+            </p>
+          </section>
+
+          <section>
+            <h4 className="font-semibold text-zinc-800 mb-1">How are they calculated?</h4>
+            <p className="text-zinc-600 mb-2">
+              Each marker analyzes the opponent&apos;s games matching your current filters:
+            </p>
+            <ul className="text-zinc-600 text-[12px] space-y-1 list-disc list-inside">
+              <li><strong>Queen Trades:</strong> % of games with both queens off by move 20</li>
+              <li><strong>Aggression:</strong> Captures + checks in the first 15 moves</li>
+              <li><strong>Game Length:</strong> Average game length in full moves</li>
+              <li><strong>Opposite Castling:</strong> % of games with opposite-side castling</li>
+              <li><strong>Castling Timing:</strong> Average ply when opponent castles</li>
+            </ul>
+          </section>
+
+          <section>
+            <h4 className="font-semibold text-zinc-800 mb-1">Opening & Color Context</h4>
+            <p className="text-zinc-600">
+              Style varies by opening type and color. Once generated, you can filter markers by:
+            </p>
+            <ul className="text-zinc-600 text-[12px] space-y-1 mt-2 list-disc list-inside">
+              <li><strong>Open:</strong> 1.e4 e5 — tactical, open lines</li>
+              <li><strong>Semi-Open:</strong> 1.e4 (c5, e6, etc.) — asymmetric tension</li>
+              <li><strong>Closed:</strong> 1.d4 d5 — positional, slow builds</li>
+              <li><strong>Indian:</strong> 1.d4 Nf6 — hypermodern systems</li>
+              <li><strong>Flank:</strong> 1.c4, 1.Nf3, etc. — flexible setups</li>
+            </ul>
+          </section>
+
+          <section>
+            <h4 className="font-semibold text-zinc-800 mb-1">How Scout Uses Style Markers</h4>
+            <p className="text-zinc-600">
+              The Scout prediction engine (🧠) combines three factors:
+            </p>
+            <ul className="text-zinc-600 text-[12px] space-y-1 mt-2 list-disc list-inside">
+              <li><strong>History (α):</strong> Moves the opponent has actually played here</li>
+              <li><strong>Engine (β):</strong> Objectively best moves (Stockfish)</li>
+              <li><strong>Style (γ):</strong> Moves fitting the opponent&apos;s behavioral profile</li>
+            </ul>
+            <p className="text-zinc-600 mt-2">
+              Weights shift by phase: <strong>opening</strong> (history 70%), 
+              <strong> middlegame</strong> (style 50%), <strong>endgame</strong> (engine 80%).
+            </p>
+          </section>
+
+          <div className="p-3 bg-amber-50 rounded-lg border border-amber-100">
+            <p className="text-[11px] text-amber-800 font-medium mb-1">⚠️ Performance Note</p>
+            <p className="text-[11px] text-amber-700">
+              Generating style markers requires processing game data and adds ~1-2s to filter changes. 
+              Disable this option if you don&apos;t need behavioral analysis for move predictions.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 type Props = {
   speeds: OpponentSpeed[];
   setSpeeds: (next: OpponentSpeed[] | ((prev: OpponentSpeed[]) => OpponentSpeed[])) => void;
@@ -43,6 +127,7 @@ export function OpponentFiltersPanel(props: Props) {
   } = props;
 
   const [generateStyleMarkersLocal, setGenerateStyleMarkersLocal] = useState(true);
+  const [styleMarkersHelpOpen, setStyleMarkersHelpOpen] = useState(false);
   const generateStyleMarkers = typeof generateStyleMarkersProp === "boolean" ? generateStyleMarkersProp : generateStyleMarkersLocal;
   const setGenerateStyleMarkers =
     typeof setGenerateStyleMarkersProp === "function" ? setGenerateStyleMarkersProp : setGenerateStyleMarkersLocal;
@@ -127,11 +212,16 @@ export function OpponentFiltersPanel(props: Props) {
               </div>
             </div>
 
-            <label
-              className="mt-1 inline-flex select-none items-center justify-between gap-3 rounded-xl border border-zinc-200 bg-white px-3 py-2"
-              htmlFor="opp-filter-style-markers"
+            <div
+              className="flex items-center gap-1.5 text-[10px] text-zinc-500"
+              title="For performance reasons, analysis is limited to the 5,000 most recent games matching your filters. If you have more games in the selected range, older games will be excluded."
             >
-              <span className="flex min-w-0 items-center gap-2">
+              <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-zinc-300 text-[8px] font-semibold text-zinc-400">i</span>
+              <span>Analysis limited to 5,000 most recent games</span>
+            </div>
+
+            <div className="mt-1 flex select-none items-center justify-between gap-3 rounded-xl border border-zinc-200 bg-white px-3 py-2">
+              <label className="flex min-w-0 items-center gap-2 cursor-pointer" htmlFor="opp-filter-style-markers">
                 <input
                   id="opp-filter-style-markers"
                   type="checkbox"
@@ -140,20 +230,23 @@ export function OpponentFiltersPanel(props: Props) {
                   className="h-4 w-4 accent-[#FFFF00]"
                 />
                 <span className="truncate text-[10px] font-medium text-zinc-900">Generate ChessScout Style Markers</span>
-              </span>
+              </label>
 
-              <span
-                title="Used in move predictions"
-                className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-zinc-200 bg-white text-[10px] font-semibold text-zinc-600"
+              <button
+                type="button"
+                onClick={() => setStyleMarkersHelpOpen(true)}
+                className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-zinc-200 bg-white text-[10px] font-semibold text-zinc-600 hover:bg-zinc-50"
               >
                 i
-              </span>
-            </label>
+              </button>
+            </div>
           </div>
 
           {footerNote ? <div className="text-[10px] text-zinc-600">{footerNote}</div> : null}
         </div>
       </div>
+
+      {styleMarkersHelpOpen && <StyleMarkersHelpModal onClose={() => setStyleMarkersHelpOpen(false)} />}
     </div>
   );
 }

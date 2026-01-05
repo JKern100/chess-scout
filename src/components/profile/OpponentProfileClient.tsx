@@ -505,10 +505,9 @@ export function OpponentProfileClient({ platform, username }: Props) {
       if (!res.ok) throw new Error(String((json as any)?.error ?? "Failed to load report"));
       setNeedsMigration(Boolean((json as any)?.needs_migration));
       setProfileRow(((json as any)?.opponent_profile as OpponentProfileRow | null) ?? null);
-      setStoredStyleMarkers((((json as any)?.style_markers as StoredStyleMarker[]) ?? []).filter(Boolean));
+      // Note: We no longer use PROFILE markers here - SESSION markers are fetched separately
     } catch (e) {
       setProfileRow(null);
-      setStoredStyleMarkers([]);
       setNeedsMigration(false);
       setLoadError(e instanceof Error ? e.message : "Failed to load report");
     } finally {
@@ -516,9 +515,61 @@ export function OpponentProfileClient({ platform, username }: Props) {
     }
   }, [platform, username]);
 
+  // Build session key from current filters (same format as Analysis page)
+  const sessionKey = useMemo(() => {
+    const speedsPart = speeds.length > 0 ? speeds.slice().sort().join(",") : "any";
+    const ratedPart = rated;
+    const fromPart = fromDate || "";
+    const toPart = toDate || "";
+    return `${speedsPart}|${ratedPart}|${fromPart}|${toPart}`;
+  }, [speeds, rated, fromDate, toDate]);
+
+  // Fetch SESSION markers (same as Analysis page uses)
+  const fetchSessionMarkers = useCallback(async (sk: string) => {
+    try {
+      const res = await fetch(
+        `/api/sim/session/markers?platform=${encodeURIComponent(platform)}&username=${encodeURIComponent(username)}&session_key=${encodeURIComponent(sk)}`,
+        { cache: "no-store" }
+      );
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) return;
+      const rows = Array.isArray((json as any)?.markers) ? ((json as any).markers as StoredStyleMarker[]) : [];
+      setStoredStyleMarkers(rows.filter(Boolean));
+    } catch {
+      // Silent fail - markers will just not display
+    }
+  }, [platform, username]);
+
+  // Compute SESSION markers (triggers /api/sim/session/start)
+  const computeSessionMarkers = useCallback(async (sk: string) => {
+    try {
+      await fetch("/api/sim/session/start", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          platform,
+          username,
+          speeds,
+          rated,
+          from: fromDate || null,
+          to: toDate || null,
+          enableStyleMarkers: true,
+          session_key: sk,
+        }),
+      });
+    } catch {
+      // Silent fail
+    }
+  }, [platform, username, speeds, rated, fromDate, toDate]);
+
   useEffect(() => {
     void fetchProfile();
   }, [fetchProfile]);
+
+  // Also fetch SESSION markers on mount and when filters change (if they exist from Analysis page)
+  useEffect(() => {
+    void fetchSessionMarkers(sessionKey);
+  }, [fetchSessionMarkers, sessionKey]);
 
   const currentFiltersSummary = useMemo(() => {
     return formatFiltersSummary({ speeds, rated, fromDate, toDate });
@@ -595,8 +646,12 @@ export function OpponentProfileClient({ platform, username }: Props) {
       setNeedsMigration(Boolean((json as any)?.needs_migration));
       setProfileRow(((json as any)?.opponent_profile as OpponentProfileRow | null) ?? null);
 
-      // Stored style markers are fetched via GET /profile. Refresh so UI updates immediately.
-      await fetchProfile();
+      // Compute SESSION markers with current filters (same data source as Analysis page)
+      // This ensures Profile and Analysis pages show identical style marker values
+      if (generateStyleMarkers) {
+        await computeSessionMarkers(sessionKey);
+        await fetchSessionMarkers(sessionKey);
+      }
 
       const v2Games = Number((json as any)?.opponent_profile?.profile_json?.games_analyzed ?? NaN);
 
@@ -638,7 +693,7 @@ export function OpponentProfileClient({ platform, username }: Props) {
       setGenerateBusy(false);
       abortControllerRef.current = null;
     }
-  }, [fetchProfile, fromDate, generateBusy, generateStyleMarkers, platform, rated, speeds, toDate, username]);
+  }, [computeSessionMarkers, fetchSessionMarkers, fromDate, generateBusy, generateStyleMarkers, platform, rated, sessionKey, speeds, toDate, username]);
 
   const handleCancelGeneration = useCallback(() => {
     if (abortControllerRef.current) {
