@@ -6,6 +6,7 @@ type ImportRow = {
   id: string;
   platform: "lichess" | "chesscom";
   status: "idle" | "running" | "stopped" | "complete" | "error";
+  target_type?: "self" | "opponent";
 };
 
 async function fetchImportStatus(): Promise<ImportRow[]> {
@@ -106,7 +107,8 @@ export function ImportSupervisor() {
       })();
       if (stopped.current) return;
 
-      const running = imports.filter((i) => i?.status === "running" && i?.platform === "lichess" && i?.id);
+      // Only handle "self" imports here - opponent imports are handled by ImportQueueContext
+      const running = imports.filter((i) => i?.status === "running" && i?.platform === "lichess" && i?.id && i?.target_type === "self");
 
       if (running.length === 0) {
         const now = Date.now();

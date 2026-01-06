@@ -14,7 +14,7 @@ export function DateRangePresetSelect(props: Props) {
     <div className="flex min-w-0 items-center gap-2">
       <div className="text-[10px] font-medium text-zinc-900">Date range</div>
       <select
-        className="h-8 min-w-0 flex-1 rounded-xl border border-zinc-200 bg-white px-3 text-[10px] text-zinc-900 outline-none focus:border-zinc-400"
+        className="h-9 min-w-0 flex-1 rounded-xl border border-zinc-200 bg-white px-3 text-[11px] text-zinc-900 outline-none focus:border-zinc-400"
         value={value}
         onChange={(e) => onChange(e.target.value as DatePreset)}
       >

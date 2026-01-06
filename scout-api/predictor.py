@@ -11,7 +11,7 @@ import random
 from models import (
     PredictionMode, StyleMarkers, HistoryMove,
     PredictionResponse, CandidateMove, MoveAttribution,
-    PhaseWeights, TraceLogEntry
+    PhaseWeights, TraceLogEntry, HabitDetection, MoveSourceAttribution
 )
 from engine import EngineWrapper
 from heuristics import ChessHeuristics
@@ -22,12 +22,35 @@ class ScoutPredictor:
     Main prediction engine that combines history, engine analysis, and style markers.
     """
     
-    # Phase weight configurations
+    # Phase weight configurations (fallback when PI-based weighting doesn't apply)
     PHASE_WEIGHTS = {
         "opening": {"history": 0.7, "engine": 0.1, "style": 0.2},
         "middlegame": {"history": 0.1, "engine": 0.4, "style": 0.5},
         "endgame": {"history": 0.05, "engine": 0.8, "style": 0.15},
     }
+
+    # When it is not the opponent's turn (planning / your-move context), we disable
+    # style and focus on history vs engine.
+    NON_OPP_TURN_WEIGHTS = {
+        "opening": {"history": 0.8, "engine": 0.2, "style": 0.0},
+        "middlegame": {"history": 0.3, "engine": 0.7, "style": 0.0},
+        "endgame": {"history": 0.3, "engine": 0.7, "style": 0.0},
+    }
+    
+    # PI-based weight configurations
+    # "95% Move" - High predictability, history dominates
+    HABIT_WEIGHTS = {"history": 0.90, "engine": 0.05, "style": 0.05}
+    # "Chameleon" - Low predictability, style dominates
+    CHAMELEON_WEIGHTS = {"history": 0.20, "engine": 0.20, "style": 0.60}
+    # Low sample fallback - ignore history
+    LOW_SAMPLE_WEIGHTS = {"history": 0.0, "engine": 0.30, "style": 0.70}
+    
+    # Thresholds
+    MIN_SAMPLE_SIZE = 5  # N < 5 means ignore history
+    HABIT_PI_THRESHOLD = 0.85  # PI > 0.85 = "95% Move"
+    CHAMELEON_PI_THRESHOLD = 0.40  # PI < 0.40 = "Chameleon"
+    HABIT_DISPLAY_THRESHOLD = 0.90  # Display habit banner if frequency > 90%
+    HABIT_MIN_SAMPLE = 10  # Minimum N for habit banner
     
     def __init__(self, stockfish_path: str = "stockfish"):
         """Initialize the predictor with Stockfish engine."""
@@ -46,8 +69,108 @@ class ScoutPredictor:
         else:
             return "endgame"
     
+    def _calculate_pi(self, history_moves: List[HistoryMove]) -> Tuple[float, int]:
+        """
+        Calculate the Predictability Index (PI) for a position.
+        PI = sum of squared frequencies (normalized).
+        
+        Returns (PI value 0-1, sample size N)
+        """
+        if not history_moves:
+            return 0.0, 0
+        
+        total = sum(hm.frequency for hm in history_moves)
+        if total == 0:
+            return 0.0, 0
+        
+        # PI = sum of (p_i)^2 where p_i is the normalized frequency
+        pi = sum((hm.frequency / total) ** 2 for hm in history_moves)
+        return pi, total
+    
+    def _detect_habit(self, history_moves: List[HistoryMove]) -> HabitDetection:
+        """
+        Detect if there's a dominant "habit" move (>90% frequency with N>10).
+        """
+        if not history_moves:
+            return HabitDetection()
+        
+        total = sum(hm.frequency for hm in history_moves)
+        if total < self.HABIT_MIN_SAMPLE:
+            return HabitDetection(sample_size=total)
+        
+        # Find highest frequency move
+        sorted_moves = sorted(history_moves, key=lambda x: x.frequency, reverse=True)
+        top_move = sorted_moves[0]
+        freq_pct = (top_move.frequency / total) * 100
+        
+        if freq_pct >= self.HABIT_DISPLAY_THRESHOLD * 100:
+            return HabitDetection(
+                detected=True,
+                move=top_move.move_san,
+                frequency=freq_pct,
+                sample_size=total
+            )
+        
+        return HabitDetection(sample_size=total)
+    
+    def _get_dynamic_weights(
+        self, 
+        move_number: int, 
+        history_moves: List[HistoryMove],
+        is_opponent_turn: bool = True,
+    ) -> Tuple[PhaseWeights, str]:
+        """
+        Get weights using dynamic PI-based logic.
+        
+        Returns (PhaseWeights, weight_mode)
+        """
+        phase = self._determine_phase(move_number)
+
+        # If it is not the opponent's turn, disable style and use deterministic
+        # phase weights focused on book (opening) vs accuracy (mid/end).
+        if not is_opponent_turn:
+            weights = self.NON_OPP_TURN_WEIGHTS[phase]
+            return PhaseWeights(
+                phase=phase,
+                history=weights["history"],
+                engine=weights["engine"],
+                style=weights["style"],
+                predictability_index=0.0,
+                sample_size=sum(hm.frequency for hm in history_moves) if history_moves else 0,
+                weight_mode="non_opponent_turn",
+            ), "non_opponent_turn"
+        pi, sample_size = self._calculate_pi(history_moves)
+        
+        # Phase 1: Confidence threshold - if N < 5, ignore history
+        if sample_size < self.MIN_SAMPLE_SIZE:
+            weights = self.LOW_SAMPLE_WEIGHTS
+            weight_mode = "low_sample"
+        # Phase 2: PI-based weighting
+        elif pi > self.HABIT_PI_THRESHOLD:
+            # "95% Move" - high predictability, history dominates
+            weights = self.HABIT_WEIGHTS
+            weight_mode = "habit"
+        elif pi < self.CHAMELEON_PI_THRESHOLD:
+            # "Chameleon" - low predictability, style dominates
+            weights = self.CHAMELEON_WEIGHTS
+            weight_mode = "chameleon"
+        else:
+            # Standard phase-based weighting
+            weights = self.PHASE_WEIGHTS[phase]
+            weight_mode = "phase"
+        
+        return PhaseWeights(
+            phase=phase,
+            history=weights["history"],
+            engine=weights["engine"],
+            style=weights["style"],
+            predictability_index=pi,
+            sample_size=sample_size,
+            weight_mode=weight_mode
+        ), weight_mode
+    
     def _get_phase_weights(self, move_number: int) -> PhaseWeights:
-        """Get the alpha, beta, gamma weights for the current phase."""
+        """Get the alpha, beta, gamma weights for the current phase (legacy method)."""
         phase = self._determine_phase(move_number)
         weights = self.PHASE_WEIGHTS[phase]
         return PhaseWeights(
@@ -187,7 +310,8 @@ class ScoutPredictor:
         style_markers: StyleMarkers,
         history_moves: List[HistoryMove],
         recent_eval_deltas: List[float],
-        move_number: int
+        move_number: int,
+        is_opponent_turn: bool = True,
     ) -> PredictionResponse:
         """
         Main prediction method.
@@ -198,12 +322,26 @@ class ScoutPredictor:
         trace_log: List[TraceLogEntry] = []
         board = chess.Board(fen)
         
-        # Get phase weights
-        weights = self._get_phase_weights(move_number)
+        # Get dynamic weights based on PI
+        weights, weight_mode = self._get_dynamic_weights(move_number, history_moves, is_opponent_turn)
+        
+        # Detect habit moves
+        habit_detection = self._detect_habit(history_moves)
+        
         trace_log.append(TraceLogEntry(
             type="logic",
             message=f"Phase: {weights.phase} (α={weights.history:.2f}, β={weights.engine:.2f}, γ={weights.style:.2f})"
         ))
+        trace_log.append(TraceLogEntry(
+            type="logic",
+            message=f"PI={weights.predictability_index:.2f}, N={weights.sample_size}, Mode={weight_mode}"
+        ))
+        
+        if habit_detection.detected:
+            trace_log.append(TraceLogEntry(
+                type="decision",
+                message=f"HABIT: {habit_detection.move} played {habit_detection.frequency:.0f}% of the time (N={habit_detection.sample_size})"
+            ))
         
         # Check for tilt state
         tilt_active = ChessHeuristics.detect_tilt(recent_eval_deltas)
@@ -254,13 +392,13 @@ class ScoutPredictor:
         # Pure History Mode
         if mode == PredictionMode.PURE_HISTORY:
             return self._predict_pure_history(
-                board, engine_analysis, history_moves, weights, trace_log, tilt_active
+                board, engine_analysis, history_moves, weights, trace_log, tilt_active, habit_detection
             )
         
         # Hybrid Mode
         return self._predict_hybrid(
             board, engine_analysis, history_moves, working_markers,
-            weights, trace_log, tilt_active, move_number
+            weights, trace_log, tilt_active, move_number, habit_detection
         )
     
     def _predict_pure_history(
@@ -270,7 +408,8 @@ class ScoutPredictor:
         history_moves: List[HistoryMove],
         weights: PhaseWeights,
         trace_log: List[TraceLogEntry],
-        tilt_active: bool
+        tilt_active: bool,
+        habit_detection: HabitDetection
     ) -> PredictionResponse:
         """Pure history mode: Use history if available, fallback to engine."""
         
@@ -326,6 +465,17 @@ class ScoutPredictor:
                 reason="Selected from history" if ea["move_san"] == selected_move else ""
             ))
         
+        # Determine move source attribution
+        move_source = MoveSourceAttribution(
+            primary_source="history" if history_moves else "engine",
+            history_contribution=100.0 if history_moves else 0.0,
+            style_contribution=0.0,
+            engine_contribution=0.0 if history_moves else 100.0
+        )
+        
+        # Suggest fast move timing for habit moves
+        suggested_delay = 500 if habit_detection.detected and habit_detection.move == selected_move else 1500
+        
         return PredictionResponse(
             prediction_mode=PredictionMode.PURE_HISTORY,
             selected_move=selected_move,
@@ -334,7 +484,10 @@ class ScoutPredictor:
             candidates=candidates,
             trace_log=trace_log,
             tilt_active=tilt_active,
-            blunder_applied=False
+            blunder_applied=False,
+            habit_detection=habit_detection,
+            move_source=move_source,
+            suggested_delay_ms=suggested_delay
         )
     
     def _predict_hybrid(
@@ -346,7 +499,8 @@ class ScoutPredictor:
         weights: PhaseWeights,
         trace_log: List[TraceLogEntry],
         tilt_active: bool,
-        move_number: int
+        move_number: int,
+        habit_detection: HabitDetection
     ) -> PredictionResponse:
         """Hybrid mode: Weighted softmax of history, engine, and style."""
         
@@ -510,6 +664,18 @@ class ScoutPredictor:
             message=f"Selected: {selected.move} (prob: {selected.final_prob:.1f}%)"
         ))
         
+        # Calculate move source attribution based on weights
+        move_source = MoveSourceAttribution(
+            primary_source="history" if weights.history >= max(weights.style, weights.engine) else 
+                          ("style" if weights.style >= weights.engine else "engine"),
+            history_contribution=weights.history * 100,
+            style_contribution=weights.style * 100,
+            engine_contribution=weights.engine * 100
+        )
+        
+        # Suggest fast move timing for habit moves
+        suggested_delay = 500 if habit_detection.detected and habit_detection.move == selected.move else 1500
+        
         return PredictionResponse(
             prediction_mode=PredictionMode.HYBRID,
             selected_move=selected.move,
@@ -518,5 +684,8 @@ class ScoutPredictor:
             candidates=final_candidates,
             trace_log=trace_log,
             tilt_active=tilt_active,
-            blunder_applied=blunder_applied
+            blunder_applied=blunder_applied,
+            habit_detection=habit_detection,
+            move_source=move_source,
+            suggested_delay_ms=suggested_delay
         )

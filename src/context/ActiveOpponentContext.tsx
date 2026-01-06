@@ -1,6 +1,7 @@
 "use client";
 
 import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { useImportQueue } from "@/context/ImportQueueContext";
 
 type ChessPlatform = "lichess" | "chesscom";
 
@@ -31,6 +32,8 @@ export function ActiveOpponentProvider({ children }: { children: React.ReactNode
   const [isLoading, setIsLoading] = useState(false);
   const [selfPlayer, setSelfPlayer] = useState<{ platform: ChessPlatform; username: string } | null>(null);
 
+  const { isImporting, currentOpponent } = useImportQueue();
+
   // Load from localStorage on mount
   useEffect(() => {
     try {
@@ -50,11 +53,6 @@ export function ActiveOpponentProvider({ children }: { children: React.ReactNode
     }
   }, []);
 
-  // Fetch available opponents on mount
-  useEffect(() => {
-    void refreshOpponents();
-  }, []);
-
   const setActiveOpponent = useCallback((opponent: ActiveOpponent) => {
     setActiveOpponentState(opponent);
     try {
@@ -68,7 +66,7 @@ export function ActiveOpponentProvider({ children }: { children: React.ReactNode
     }
   }, []);
 
-  const refreshOpponents = useCallback(async () => {
+  async function refreshOpponents() {
     setIsLoading(true);
     try {
       const res = await fetch("/api/opponents", { cache: "no-store" });
@@ -121,7 +119,25 @@ export function ActiveOpponentProvider({ children }: { children: React.ReactNode
     } finally {
       setIsLoading(false);
     }
-  }, [activeOpponent, setActiveOpponent]);
+  }
+
+  // Fetch available opponents on mount
+  useEffect(() => {
+    void refreshOpponents();
+  }, []);
+
+  // While a sync is running, periodically refresh opponents so newly-started opponent
+  // imports show up in the dropdown without requiring a page reload.
+  useEffect(() => {
+    if (!isImporting) return;
+
+    void refreshOpponents();
+    const id = window.setInterval(() => {
+      void refreshOpponents();
+    }, 5000);
+
+    return () => window.clearInterval(id);
+  }, [currentOpponent, isImporting]);
 
   const value: ActiveOpponentContextValue = {
     activeOpponent,

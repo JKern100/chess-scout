@@ -17,6 +17,7 @@ type HistoryMove = {
 type PredictParams = {
   fen: string;
   opponentUsername: string;
+  isOpponentTurn?: boolean;
   styleMarkers?: StyleMarkers;
   historyMoves?: HistoryMove[];
   recentEvalDeltas?: number[];
@@ -51,6 +52,7 @@ export function useScoutPrediction() {
         fen: params.fen,
         mode,
         opponent_username: params.opponentUsername,
+        is_opponent_turn: params.isOpponentTurn ?? true,
         style_markers: params.styleMarkers || DEFAULT_STYLE_MARKERS,
         history_moves: params.historyMoves || [],
         recent_eval_deltas: params.recentEvalDeltas || [],
@@ -99,6 +101,7 @@ export function useScoutPrediction() {
           fen: params.fen,
           mode,
           opponent_username: params.opponentUsername,
+          is_opponent_turn: params.isOpponentTurn ?? true,
           style_markers: params.styleMarkers || DEFAULT_STYLE_MARKERS,
           history_moves: params.historyMoves || [],
           recent_eval_deltas: params.recentEvalDeltas || [],

@@ -380,7 +380,26 @@ export function ImportPanel({ selfUsername, selfPlatform }: Props) {
                       {imp.platform} / {imp.username}
                     </div>
                     <div className="text-xs text-zinc-700">
-                      {imp.status === "running" ? "Importing" : "Status"}: {imp.status} · imported: {imp.imported_count}
+                      {imp.status === "running" ? (
+                        <>
+                          <span className="inline-flex items-center gap-1">
+                            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-500" />
+                            {(imp as any).stage === "archiving" ? "Indexing" : "Syncing"}
+                          </span>
+                          {" · "}synced: {imp.imported_count}
+                          {imp.target_type === "opponent" && typeof (imp as any).archived_count === "number" && (
+                            <> · indexed: {(imp as any).archived_count}</>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          Status: <span className={imp.status === "complete" ? "text-emerald-600" : imp.status === "error" ? "text-red-600" : ""}>{imp.status}</span>
+                          {" · "}synced: {imp.imported_count}
+                          {imp.target_type === "opponent" && typeof (imp as any).archived_count === "number" && (
+                            <> · indexed: {(imp as any).archived_count}</>
+                          )}
+                        </>
+                      )}
                     </div>
                     {imp.last_error ? (
                       <div className="text-xs text-red-600">{imp.last_error}</div>

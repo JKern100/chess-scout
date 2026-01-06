@@ -7,8 +7,13 @@ export type OpponentRatedFilter = "any" | "rated" | "casual";
 
 export type DatePreset = "7d" | "30d" | "6m" | "18m" | "all" | "custom";
 
-const DEFAULT_SPEEDS: OpponentSpeed[] = ["bullet", "blitz", "rapid", "classical", "correspondence"];
+export const DEFAULT_SPEEDS: OpponentSpeed[] = ["bullet", "blitz", "rapid", "classical", "correspondence"];
 const STORAGE_KEY = "chessscout.opponentFilters";
+
+export function buildFiltersKey(args: { speeds: OpponentSpeed[]; rated: OpponentRatedFilter; from: string; to: string }) {
+  const speedsKey = [...args.speeds].sort().join(",");
+  return `${speedsKey}|${args.rated}|${args.from}|${args.to}`;
+}
 
 function formatDateInput(d: Date) {
   const yyyy = d.getFullYear();
@@ -30,18 +35,34 @@ export function getDateRangeFromPreset(preset: DatePreset, now: Date) {
   return { from: formatDateInput(start), to: formatDateInput(end) };
 }
 
-export function useOpponentFilters() {
+type UseOpponentFiltersOptions = {
+  storageKey?: string;
+  persist?: boolean;
+};
+
+export function useOpponentFilters(options?: UseOpponentFiltersOptions) {
+  const storageKey = options?.storageKey ?? STORAGE_KEY;
+  const persist = options?.persist ?? true;
+
   const [speeds, setSpeeds] = useState<OpponentSpeed[]>(DEFAULT_SPEEDS);
   const [rated, setRated] = useState<OpponentRatedFilter>("any");
   const [datePreset, setDatePreset] = useState<DatePreset>("6m");
   const [fromDate, setFromDate] = useState<string>(() => getDateRangeFromPreset("6m", new Date()).from ?? "");
   const [toDate, setToDate] = useState<string>(() => getDateRangeFromPreset("6m", new Date()).to ?? "");
 
+  const [hydrated, setHydrated] = useState(false);
+  const [loadedFromStorage, setLoadedFromStorage] = useState(false);
+
   useEffect(() => {
     try {
-      const raw = window.localStorage.getItem(STORAGE_KEY) ?? "";
-      if (!raw) return;
+      const raw = window.localStorage.getItem(storageKey) ?? "";
+      if (!raw) {
+        setLoadedFromStorage(false);
+        return;
+      }
       const parsed = JSON.parse(raw) as any;
+
+      setLoadedFromStorage(true);
 
       const rawSpeeds = Array.isArray(parsed?.speeds) ? (parsed.speeds as any[]) : [];
       const nextSpeeds = rawSpeeds
@@ -92,23 +113,26 @@ export function useOpponentFilters() {
       }
     } catch {
       // ignore
+      setLoadedFromStorage(false);
+    } finally {
+      setHydrated(true);
     }
-  }, []);
+  }, [storageKey]);
 
   useEffect(() => {
+    if (!persist) return;
     try {
       window.localStorage.setItem(
-        STORAGE_KEY,
+        storageKey,
         JSON.stringify({ speeds, rated, datePreset, from: fromDate, to: toDate })
       );
     } catch {
       // ignore
     }
-  }, [datePreset, speeds, rated, fromDate, toDate]);
+  }, [datePreset, speeds, rated, fromDate, toDate, persist, storageKey]);
 
   const filtersKey = useMemo(() => {
-    const speedsKey = [...speeds].sort().join(",");
-    return `${speedsKey}|${rated}|${fromDate}|${toDate}`;
+    return buildFiltersKey({ speeds, rated, from: fromDate, to: toDate });
   }, [speeds, rated, fromDate, toDate]);
 
   function setPreset(next: DatePreset) {
@@ -140,5 +164,7 @@ export function useOpponentFilters() {
     toDate,
     setToDate: setToDateManual,
     filtersKey,
+    hydrated,
+    loadedFromStorage,
   };
 }

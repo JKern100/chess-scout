@@ -33,6 +33,7 @@ export type ChessBoardCoreState = {
 type Props = {
   initialFen?: string;
   soundEnabled?: boolean;
+  onFenChange?: (fen: string) => void;
   arrows?: any[] | ((state: ChessBoardCoreState) => any[]);
   squareStyles?: Record<string, React.CSSProperties> | ((state: ChessBoardCoreState) => Record<string, React.CSSProperties>);
   specialArrow?:
@@ -50,7 +51,7 @@ const PLAYER_SIDE_STORAGE_KEY = "chessscout_player_side";
 
 const BOARD_HEIGHT_STORAGE_KEY = "chessscout_analysis_board_height_px";
 
-export function ChessBoardCore({ initialFen, soundEnabled = true, arrows, squareStyles, specialArrow, leftPanel, aboveBoard, belowBoard, onPieceDrop, underBoard, children }: Props) {
+export function ChessBoardCore({ initialFen, soundEnabled = true, onFenChange, arrows, squareStyles, specialArrow, leftPanel, aboveBoard, belowBoard, onPieceDrop, underBoard, children }: Props) {
   const initialGame = useMemo(() => {
     const g = new Chess();
     if (initialFen) {
@@ -247,6 +248,7 @@ export function ChessBoardCore({ initialFen, soundEnabled = true, arrows, square
     });
     setRedoFens([]);
     setRedoMoves([]);
+    if (onFenChange) onFenChange(nextFen);
   }
 
   function hydrateFromFenAndMoves(startingFen: string, movesSan: string[]) {
@@ -278,6 +280,7 @@ export function ChessBoardCore({ initialFen, soundEnabled = true, arrows, square
     setMoveHistory(applied);
     setRedoFens([]);
     setRedoMoves([]);
+    if (onFenChange) onFenChange(g.fen());
   }
 
   function undoPlies(count: number) {
@@ -299,7 +302,10 @@ export function ChessBoardCore({ initialFen, soundEnabled = true, arrows, square
     const targetFen = nextFenHistory[nextFenHistory.length - 1];
     if (targetFen) {
       const g = loadGameFromFen(targetFen);
-      if (g) setGame(g);
+      if (g) {
+        setGame(g);
+        if (onFenChange) onFenChange(targetFen);
+      }
     }
   }
 
@@ -325,7 +331,10 @@ export function ChessBoardCore({ initialFen, soundEnabled = true, arrows, square
     const targetFen = nextFenHistory[nextFenHistory.length - 1];
     if (targetFen) {
       const g = loadGameFromFen(targetFen);
-      if (g) setGame(g);
+      if (g) {
+        setGame(g);
+        if (onFenChange) onFenChange(targetFen);
+      }
     }
   }
 
@@ -344,6 +353,7 @@ export function ChessBoardCore({ initialFen, soundEnabled = true, arrows, square
     setMoveHistory([]);
     setRedoFens([]);
     setRedoMoves([]);
+    if (onFenChange) onFenChange(g.fen());
   }
 
   const isGameOver = game.isGameOver();

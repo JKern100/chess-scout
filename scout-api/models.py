@@ -37,6 +37,7 @@ class PredictionRequest(BaseModel):
     fen: str = Field(description="Current board position in FEN notation")
     mode: PredictionMode = Field(default=PredictionMode.HYBRID, description="Prediction mode")
     opponent_username: str = Field(description="Opponent username for context")
+    is_opponent_turn: bool = Field(default=True, description="Whether it is currently the opponent's turn to move")
     style_markers: StyleMarkers = Field(default_factory=StyleMarkers, description="Opponent style profile")
     history_moves: List[HistoryMove] = Field(default_factory=list, description="Historical moves at this position")
     recent_eval_deltas: List[float] = Field(default_factory=list, description="Eval changes of last 3 moves (for tilt detection)")
@@ -73,12 +74,31 @@ class PhaseWeights(BaseModel):
     history: float = Field(description="Alpha weight for history")
     engine: float = Field(description="Beta weight for engine")
     style: float = Field(description="Gamma weight for style")
+    predictability_index: float = Field(default=0.0, description="PI = sum of squared frequencies (0-1)")
+    sample_size: int = Field(default=0, description="N = total games in position history")
+    weight_mode: str = Field(default="phase", description="'habit' (PI>0.85), 'chameleon' (PI<0.40), 'phase' (default)")
 
 
 class TraceLogEntry(BaseModel):
     """A single entry in the logic trace log."""
     type: str = Field(description="logic, warning, decision, tilt")
     message: str
+
+
+class HabitDetection(BaseModel):
+    """Habit detection result for the '95% Move' feature."""
+    detected: bool = Field(default=False, description="True if a dominant habit move exists")
+    move: Optional[str] = Field(default=None, description="The habit move in SAN")
+    frequency: float = Field(default=0.0, description="Frequency percentage (0-100)")
+    sample_size: int = Field(default=0, description="Number of games in sample")
+
+
+class MoveSourceAttribution(BaseModel):
+    """Attribution of where move prediction came from."""
+    primary_source: str = Field(default="engine", description="'history', 'style', or 'engine'")
+    history_contribution: float = Field(default=0.0, description="Percentage from history (0-100)")
+    style_contribution: float = Field(default=0.0, description="Percentage from style (0-100)")
+    engine_contribution: float = Field(default=0.0, description="Percentage from engine (0-100)")
 
 
 class PredictionResponse(BaseModel):
@@ -91,3 +111,6 @@ class PredictionResponse(BaseModel):
     trace_log: List[TraceLogEntry] = Field(default_factory=list)
     tilt_active: bool = Field(default=False, description="Whether opponent is in tilt state")
     blunder_applied: bool = Field(default=False, description="Whether blunder simulation was applied")
+    habit_detection: HabitDetection = Field(default_factory=HabitDetection, description="Habit detection result")
+    move_source: MoveSourceAttribution = Field(default_factory=MoveSourceAttribution, description="Primary source attribution")
+    suggested_delay_ms: int = Field(default=1500, description="Suggested delay before playing move (ms)")

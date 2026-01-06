@@ -28,8 +28,8 @@ import { AnalysisBoard } from "./AnalysisBoard";
 import { LichessBookTab } from "./LichessBookTab";
 import { ScoutOverlay, ScoutPanelContent, type OpponentReplyForecast } from "./ScoutOverlay";
 import { useScoutPrediction } from "@/lib/hooks/useScoutPrediction";
-import { OpponentFiltersPanel } from "@/components/chess/OpponentFiltersPanel";
-import { useOpponentFilters } from "@/components/chess/useOpponentFilters";
+import { OpponentFiltersPanel } from "./OpponentFiltersPanel";
+import { buildFiltersKey, DEFAULT_SPEEDS, getDateRangeFromPreset, useOpponentFilters } from "./useOpponentFilters";
 import { StyleSpectrumBar, type StyleSpectrumData } from "@/components/profile/StyleSpectrumBar";
 import { useImportsRealtime } from "@/lib/hooks/useImportsRealtime";
 import { fetchLichessStats, type LichessExplorerMove, type ExplorerSource } from "@/lib/lichess/explorer";
@@ -606,18 +606,133 @@ export function PlayBoardModes({ initialFen }: Props) {
     progressByOpponent,
   } = useImportQueue();
   const {
-    speeds: filterSpeeds,
-    setSpeeds: setFilterSpeeds,
-    rated: filterRated,
-    setRated: setFilterRated,
-    datePreset: filterDatePreset,
-    setDatePreset: setFilterDatePreset,
-    fromDate: filterFromDate,
-    setFromDate: setFilterFromDate,
-    toDate: filterToDate,
-    setToDate: setFilterToDate,
-    filtersKey,
-  } = useOpponentFilters();
+    speeds: draftSpeeds,
+    setSpeeds: setDraftSpeeds,
+    rated: draftRated,
+    setRated: setDraftRated,
+    datePreset: draftDatePreset,
+    setDatePreset: setDraftDatePreset,
+    fromDate: draftFromDate,
+    setFromDate: setDraftFromDate,
+    toDate: draftToDate,
+    setToDate: setDraftToDate,
+    hydrated: draftFiltersHydrated,
+  } = useOpponentFilters({ storageKey: "chessscout.analysisFiltersDraft", persist: true });
+
+  const [analysisAppliedFilters, setAnalysisAppliedFilters] = useState<{
+    speeds: typeof DEFAULT_SPEEDS;
+    rated: "any" | "rated" | "casual";
+    datePreset: "7d" | "30d" | "6m" | "18m" | "all" | "custom";
+    fromDate: string;
+    toDate: string;
+  }>(() => {
+    const now = new Date();
+    const range = getDateRangeFromPreset("6m", now);
+    return {
+      speeds: DEFAULT_SPEEDS,
+      rated: "any",
+      datePreset: "6m",
+      fromDate: range.from ?? "",
+      toDate: range.to ?? "",
+    };
+  });
+
+  const analysisAppliedFiltersKey = useMemo(() => {
+    return buildFiltersKey({
+      speeds: analysisAppliedFilters.speeds,
+      rated: analysisAppliedFilters.rated,
+      from: analysisAppliedFilters.fromDate,
+      to: analysisAppliedFilters.toDate,
+    });
+  }, [analysisAppliedFilters]);
+
+  const analysisDraftFiltersKey = useMemo(() => {
+    return buildFiltersKey({ speeds: draftSpeeds, rated: draftRated, from: draftFromDate, to: draftToDate });
+  }, [draftFromDate, draftRated, draftSpeeds, draftToDate]);
+
+  const analysisDraftDirty = useMemo(() => {
+    if (!draftFiltersHydrated) return false;
+    return analysisDraftFiltersKey !== analysisAppliedFiltersKey;
+  }, [analysisAppliedFiltersKey, analysisDraftFiltersKey, draftFiltersHydrated]);
+
+  const [analysisFilterApply, setAnalysisFilterApply] = useState<{
+    status: "applied" | "applying";
+    key: string | null;
+  }>({ status: "applied", key: null });
+
+  const analysisHasAutoAppliedRef = useRef(false);
+
+  const applyAnalysisFilters = useCallback(() => {
+    const nextKey = buildFiltersKey({ speeds: draftSpeeds, rated: draftRated, from: draftFromDate, to: draftToDate });
+    setAnalysisFilterApply({ status: "applying", key: nextKey });
+    setAnalysisAppliedFilters({
+      speeds: draftSpeeds,
+      rated: draftRated,
+      datePreset: draftDatePreset,
+      fromDate: draftFromDate,
+      toDate: draftToDate,
+    });
+    try {
+      window.localStorage.setItem(
+        "chessscout.analysisFiltersApplied",
+        JSON.stringify({
+          speeds: draftSpeeds,
+          rated: draftRated,
+          datePreset: draftDatePreset,
+          from: draftFromDate,
+          to: draftToDate,
+        })
+      );
+    } catch {
+      // ignore
+    }
+  }, [draftDatePreset, draftFromDate, draftRated, draftSpeeds, draftToDate]);
+
+  useEffect(() => {
+    if (!draftFiltersHydrated) return;
+    if (analysisHasAutoAppliedRef.current) return;
+    try {
+      const raw = window.localStorage.getItem("chessscout.analysisFiltersApplied") ?? "";
+      if (!raw) {
+        // First visit: run once with defaults (all speeds + past 6 months)
+        analysisHasAutoAppliedRef.current = true;
+        applyAnalysisFilters();
+        return;
+      }
+      const parsed = JSON.parse(raw) as any;
+      const rawSpeeds = Array.isArray(parsed?.speeds) ? (parsed.speeds as any[]) : [];
+      const nextSpeeds = rawSpeeds
+        .map((s) => String(s))
+        .filter((s) => ["bullet", "blitz", "rapid", "classical", "correspondence"].includes(s)) as any;
+      const rawRated = String(parsed?.rated ?? "any");
+      const storedFrom = typeof parsed?.from === "string" ? parsed.from : "";
+      const storedTo = typeof parsed?.to === "string" ? parsed.to : "";
+      const rawPreset = String(parsed?.datePreset ?? "");
+      const preset =
+        rawPreset === "7d" ||
+        rawPreset === "30d" ||
+        rawPreset === "6m" ||
+        rawPreset === "18m" ||
+        rawPreset === "all" ||
+        rawPreset === "custom"
+          ? rawPreset
+          : "6m";
+
+      const computed = preset === "custom" ? { from: storedFrom, to: storedTo } : getDateRangeFromPreset(preset as any, new Date());
+
+      setAnalysisAppliedFilters({
+        speeds: (nextSpeeds.length > 0 ? nextSpeeds : DEFAULT_SPEEDS) as any,
+        rated: rawRated === "rated" ? "rated" : rawRated === "casual" ? "casual" : "any",
+        datePreset: preset as any,
+        fromDate: computed.from ?? "",
+        toDate: computed.to ?? "",
+      });
+      analysisHasAutoAppliedRef.current = true;
+    } catch {
+      analysisHasAutoAppliedRef.current = true;
+      applyAnalysisFilters();
+    }
+  }, [applyAnalysisFilters, draftFiltersHydrated]);
   const [generateStyleMarkers, setGenerateStyleMarkers] = useState(true);
   const [opponentMode, setOpponentMode] = useState<Strategy>("proportional");
   const [depthRemaining, setDepthRemaining] = useState<number | null>(null);
@@ -767,6 +882,8 @@ export function PlayBoardModes({ initialFen }: Props) {
   const scoutBoardContextRef = useRef<{ fen: string; turn: "w" | "b"; playerSide: "white" | "black" } | null>(null);
   const analysisStyleMarkersRef = useRef<any>(undefined);
 
+  const scoutAutoRefreshTimerRef = useRef<number | null>(null);
+
   
   const tickRef = useRef<{ lastTs: number | null }>({ lastTs: null });
   const simMetaRef = useRef<{ turn: "w" | "b"; isGameOver: boolean }>({ turn: "w", isGameOver: false });
@@ -817,11 +934,15 @@ export function PlayBoardModes({ initialFen }: Props) {
           const nextFen = next.fen();
           const fenParts = nextFen.split(" ");
           const fullmoveNumber = Number(fenParts[5] ?? "1");
+          const nextTurn = (fenParts[1] === "b" ? "b" : "w") as "w" | "b";
+          const opponentColor = ctx.playerSide === "white" ? "b" : "w";
+          const isOpponentTurn = nextTurn === opponentColor;
 
           const replyPrediction = await scoutPredictOnce({
             fen: nextFen,
             opponentUsername: trimmedOpp,
             styleMarkers,
+            isOpponentTurn,
             moveNumber: Number.isFinite(fullmoveNumber) ? fullmoveNumber : 1,
           });
 
@@ -852,6 +973,29 @@ export function PlayBoardModes({ initialFen }: Props) {
     scoutPrediction,
     scoutPredictOnce,
   ]);
+
+  const runScoutPredictForContext = useCallback(
+    async (ctx: { fen: string; turn: "w" | "b"; playerSide: "white" | "black" }) => {
+      const trimmedOpp = opponentUsername.trim();
+      if (!trimmedOpp) return;
+      const fenParts = ctx.fen.split(" ");
+      const fullmoveNumber = Number(fenParts[5] ?? "1");
+      const opponentColor = ctx.playerSide === "white" ? "b" : "w";
+      const isOpponentTurn = ctx.turn === opponentColor;
+      const historyMoves = await fetchScoutHistoryMoves({ fen: ctx.fen, username: trimmedOpp }).catch(() => []);
+      const styleMarkers = analysisStyleMarkersRef.current;
+
+      await scoutPredict({
+        fen: ctx.fen,
+        opponentUsername: trimmedOpp,
+        styleMarkers,
+        historyMoves,
+        isOpponentTurn,
+        moveNumber: Number.isFinite(fullmoveNumber) ? fullmoveNumber : 1,
+      });
+    },
+    [opponentUsername, scoutPredict]
+  );
 
   const selectedTc = useMemo(() => {
     return timeControls.find((t) => t.key === timeControlKey) ?? timeControls[0];
@@ -994,6 +1138,8 @@ export function PlayBoardModes({ initialFen }: Props) {
   const [analysisStatsBusy, setAnalysisStatsBusy] = useState(false);
   const [analysisRightTab, setAnalysisRightTab] = useState<AnalysisRightTab>("stats");
 
+  const [analysisStatsReadyKey, setAnalysisStatsReadyKey] = useState<string | null>(null);
+
   const [lichessMoves, setLichessMoves] = useState<LichessExplorerMove[] | null>(null);
   const [lichessBusy, setLichessBusy] = useState(false);
   const [lichessError, setLichessError] = useState<string | null>(null);
@@ -1049,6 +1195,7 @@ export function PlayBoardModes({ initialFen }: Props) {
         const rows = Array.isArray((json as any)?.markers) ? ((json as any).markers as StoredStyleMarker[]) : [];
         const cleaned = rows.filter(Boolean);
         setSessionAxisMarkers(cleaned);
+        setSessionAxisMarkersReadyKey(sessionKey ?? null);
         return cleaned;
       } catch {
         setSessionAxisMarkers([]);
@@ -1061,7 +1208,41 @@ export function PlayBoardModes({ initialFen }: Props) {
     []
   );
 
-  const styleSessionKey = `${opponentUsername.trim().toLowerCase()}|${filtersKey}`;
+  const styleSessionKey = `${opponentUsername.trim().toLowerCase()}|${analysisAppliedFiltersKey}`;
+
+  const [sessionAxisMarkersReadyKey, setSessionAxisMarkersReadyKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (analysisStatsBusy) return;
+    if (!analysisStats) return;
+    setAnalysisStatsReadyKey(analysisAppliedFiltersKey);
+  }, [analysisAppliedFiltersKey, analysisStats, analysisStatsBusy]);
+
+  useEffect(() => {
+    if (analysisDraftDirty) return;
+    if (analysisFilterApply.status !== "applying") return;
+    const key = analysisFilterApply.key;
+    if (!key) return;
+    if (analysisAppliedFiltersKey !== key) return;
+    if (analysisStatsBusy) return;
+    if (analysisStatsReadyKey !== key) return;
+    if (generateStyleMarkers) {
+      if (sessionAxisMarkersBusy) return;
+      if (sessionAxisMarkersReadyKey !== styleSessionKey) return;
+    }
+    setAnalysisFilterApply({ status: "applied", key: null });
+  }, [
+    analysisAppliedFiltersKey,
+    analysisDraftDirty,
+    analysisFilterApply.key,
+    analysisFilterApply.status,
+    analysisStatsBusy,
+    analysisStatsReadyKey,
+    generateStyleMarkers,
+    sessionAxisMarkersBusy,
+    sessionAxisMarkersReadyKey,
+    styleSessionKey,
+  ]);
 
   // Convert session markers to style markers format for Scout predictions
   // Uses context-specific values based on detected opening category and opponent color
@@ -1125,8 +1306,9 @@ export function PlayBoardModes({ initialFen }: Props) {
   }, [analysisStyleMarkers]);
 
   useEffect(() => {
+    if (!generateStyleMarkers) return;
     void fetchSessionAxisMarkers(opponentUsername, styleSessionKey, String(Date.now()));
-  }, [fetchSessionAxisMarkers, opponentUsername, filtersKey, styleSessionKey]);
+  }, [fetchSessionAxisMarkers, opponentUsername, analysisAppliedFiltersKey, styleSessionKey, generateStyleMarkers]);
 
   const axisQueen = sessionAxisMarkers.find((m) => m.marker_key === "axis_queen_trades") ?? null;
   const axisCastle = sessionAxisMarkers.find((m) => m.marker_key === "axis_castling_timing") ?? null;
@@ -1190,10 +1372,10 @@ export function PlayBoardModes({ initialFen }: Props) {
             body: JSON.stringify({
               platform: "lichess",
               username: trimmed,
-              speeds: filterSpeeds,
-              rated: filterRated,
-              from: filterFromDate || null,
-              to: filterToDate || null,
+              speeds: analysisAppliedFilters.speeds,
+              rated: analysisAppliedFilters.rated,
+              from: analysisAppliedFilters.fromDate || null,
+              to: analysisAppliedFilters.toDate || null,
               enableStyleMarkers: true,
               session_key: styleSessionKey,
             }),
@@ -1263,10 +1445,10 @@ export function PlayBoardModes({ initialFen }: Props) {
     };
   }, [
     fetchSessionAxisMarkers,
-    filterFromDate,
-    filterRated,
-    filterSpeeds,
-    filterToDate,
+    analysisAppliedFilters.fromDate,
+    analysisAppliedFilters.rated,
+    analysisAppliedFilters.speeds,
+    analysisAppliedFilters.toDate,
     generateStyleMarkers,
     opponentUsername,
     styleSessionKey,
@@ -1339,10 +1521,10 @@ export function PlayBoardModes({ initialFen }: Props) {
         fen: params.fen,
         mode: params.mode,
         max_depth: 16,
-        speeds: filterSpeeds,
-        rated: filterRated,
-        from: filterFromDate || null,
-        to: filterToDate || null,
+        speeds: analysisAppliedFilters.speeds,
+        rated: analysisAppliedFilters.rated,
+        from: analysisAppliedFilters.fromDate || null,
+        to: analysisAppliedFilters.toDate || null,
         prefetch: params.prefetch ?? false,
         force_rpc: params.force_rpc ?? false,
       }),
@@ -1369,6 +1551,17 @@ export function PlayBoardModes({ initialFen }: Props) {
     }
 
     return (json ?? {}) as any;
+  }
+
+  async function fetchScoutHistoryMoves(params: { fen: string; username: string }) {
+    const json = await requestOpponentMove({ fen: params.fen, username: params.username, mode: opponentMode, force_rpc: false });
+    const rows = Array.isArray(json?.moves) ? (json.moves as any[]) : [];
+    return rows
+      .map((m) => ({
+        move_san: m?.san != null ? String(m.san) : "",
+        frequency: Number(m?.played_count ?? 0),
+      }))
+      .filter((m) => m.move_san && Number.isFinite(m.frequency) && m.frequency > 0);
   }
 
   useEffect(() => {
@@ -1404,7 +1597,7 @@ export function PlayBoardModes({ initialFen }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [opponentUsername, opponentMode, filtersKey]);
+  }, [opponentUsername, opponentMode, analysisAppliedFiltersKey]);
 
   async function playOpponentNow(state: ChessBoardCoreState, fenOverride?: string) {
     const trimmed = opponentUsername.trim();
@@ -1637,35 +1830,48 @@ export function PlayBoardModes({ initialFen }: Props) {
   const analysisFiltersPanel = (
     <div className="grid gap-3">
       <OpponentFiltersPanel
-        headerLeft="Opponent"
-        headerRight={
-          <select
-            className="h-8 w-full min-w-0 rounded-xl border border-zinc-200 bg-white px-3 text-[10px] font-medium text-zinc-900 outline-none focus:border-zinc-400 disabled:opacity-60"
-            value={opponentUsername}
-            onChange={(e) => setOpponentUsername(e.target.value)}
-            disabled={availableOpponents.length === 0}
-          >
-            {availableOpponents.length === 0 ? <option value="">No imported opponents</option> : null}
-            {availableOpponents.map((o) => (
-              <option key={`${o.platform}:${o.username}`} value={o.username}>
-                {o.username}
-              </option>
-            ))}
-          </select>
-        }
-        speeds={filterSpeeds}
-        setSpeeds={setFilterSpeeds}
-        rated={filterRated}
-        setRated={setFilterRated}
-        datePreset={filterDatePreset}
-        setDatePreset={setFilterDatePreset}
-        fromDate={filterFromDate}
-        setFromDate={setFilterFromDate}
-        toDate={filterToDate}
-        setToDate={setFilterToDate}
+        headerLeft="Filters"
+        speeds={draftSpeeds}
+        setSpeeds={setDraftSpeeds}
+        rated={draftRated}
+        setRated={setDraftRated}
+        datePreset={draftDatePreset as any}
+        setDatePreset={setDraftDatePreset as any}
+        fromDate={draftFromDate}
+        setFromDate={setDraftFromDate}
+        toDate={draftToDate}
+        setToDate={setDraftToDate}
         generateStyleMarkers={generateStyleMarkers}
         setGenerateStyleMarkers={setGenerateStyleMarkers}
         footerNote={archivingNote ? <span>{archivingNote}</span> : null}
+        actions={
+          <div className="flex items-center justify-between gap-3">
+            {analysisDraftDirty ? (
+              <div className="flex items-center gap-2 text-[10px] text-amber-600">
+                <span className="inline-flex h-2 w-2 rounded-full bg-amber-500"></span>
+                <span className="font-medium">Changes pending</span>
+              </div>
+            ) : analysisFilterApply.status === "applying" ? (
+              <div className="flex items-center gap-2 text-[10px] text-sky-600">
+                <span className="inline-flex h-2 w-2 rounded-full bg-sky-500"></span>
+                <span className="font-medium">Filters being applied…</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 text-[10px] text-emerald-600">
+                <span className="inline-flex h-2 w-2 rounded-full bg-emerald-500"></span>
+                <span className="font-medium">Filters applied</span>
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={applyAnalysisFilters}
+              disabled={!analysisDraftDirty || analysisFilterApply.status === "applying"}
+              className="inline-flex h-9 items-center justify-center rounded-xl bg-zinc-900 px-4 text-[11px] font-semibold text-white transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-200 disabled:text-zinc-400"
+            >
+              {analysisFilterApply.status === "applying" ? "Applying…" : "Apply Filters"}
+            </button>
+          </div>
+        }
       />
 
       {generateStyleMarkers && (
@@ -1746,7 +1952,7 @@ export function PlayBoardModes({ initialFen }: Props) {
 
           <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-[10px] text-zinc-500">
             <div className="truncate" title={styleSessionKey}>
-              key: {filtersKey}
+              key: {analysisAppliedFiltersKey}
             </div>
             <div className="shrink-0">{sessionMarkersUpdatedAt ? `updated ${sessionMarkersUpdatedAt}` : ""}</div>
           </div>
@@ -1877,6 +2083,11 @@ export function PlayBoardModes({ initialFen }: Props) {
                 engine accuracy takes over (80%).
               </p>
 
+              <p className="text-zinc-600 mt-2">
+                When it's <strong>not</strong> the opponent's turn, Scout switches into a planning mode:
+                style is disabled (γ=0). Opening: α=0.8, β=0.2. Middlegame/Endgame: α=0.3, β=0.7.
+              </p>
+
               <h4 className="text-sm font-semibold text-zinc-800 mt-4">Reading the Spectrum Bars</h4>
               <ul className="text-zinc-600 text-[12px] space-y-1 mt-2">
                 <li><strong>Yellow dot:</strong> Opponent's actual value on an absolute 0–100% scale</li>
@@ -1928,6 +2139,26 @@ export function PlayBoardModes({ initialFen }: Props) {
   return (
     <ChessBoardCore
       initialFen={initialFen}
+      onFenChange={() => {
+        const trimmedOpp = opponentUsername.trim();
+        if (!trimmedOpp) return;
+
+        const shouldAutoRefresh =
+          scoutOverlayOpen || (mode === "analysis" ? analysisRightTab === "scout" : simRightTab === "scout");
+        if (!shouldAutoRefresh) return;
+
+        const ctx = scoutBoardContextRef.current;
+        if (!ctx) return;
+
+        if (scoutAutoRefreshTimerRef.current != null) {
+          window.clearTimeout(scoutAutoRefreshTimerRef.current);
+        }
+        scoutAutoRefreshTimerRef.current = window.setTimeout(() => {
+          const latest = scoutBoardContextRef.current;
+          if (!latest) return;
+          void runScoutPredictForContext(latest);
+        }, 200);
+      }}
       soundEnabled={soundEnabled}
       leftPanel={(state) => <MovesSoFarPanel state={state} opponentUsername={opponentUsername} />}
       aboveBoard={(state) => {
@@ -2160,274 +2391,140 @@ export function PlayBoardModes({ initialFen }: Props) {
 
         if (mode === "analysis") {
           return (
-            <>
-              <AnalysisRightSidebar
-                state={state}
-                savedLineId={savedLineId}
-                shouldHydrateSavedLine={shouldHydrateSavedLine}
-                showSavedLinePopup={showSavedLinePopup}
-                analysisFiltersPanel={analysisFiltersPanel}
-                opponentPlaysColor={opponentPlaysColor}
-                setOpponentPlaysColor={(c) => {
-                  setOpponentPlaysColor(c);
-                  // Sync player side: if opponent plays white, player plays black
-                  state.setPlayerSide(c === "white" ? "black" : "white");
-                }}
-                analysisRightTab={analysisRightTab}
-                setAnalysisRightTab={setAnalysisRightTab}
-                analysisShowArrow={analysisShowArrow}
-                setAnalysisShowArrow={setAnalysisShowArrow}
-                analysisShowEval={analysisShowEval}
-                setAnalysisShowEval={setAnalysisShowEval}
-                analysisShowEngineBest={analysisShowEngineBest}
-                setAnalysisShowEngineBest={setAnalysisShowEngineBest}
-                analysisShowEngineColumn={analysisShowEngineColumn}
-                setAnalysisShowEngineColumn={setAnalysisShowEngineColumn}
-                soundEnabled={soundEnabled}
-                setSoundEnabled={setSoundEnabled}
-                setAnalysisEval={setAnalysisEval}
-                opponentUsername={opponentUsername}
-                opponentImportedCount={opponentImportedCount}
-                analysisIsSyncingOpponent={analysisIsSyncingOpponent}
-                filtersKey={filtersKey}
-                requestOpponentMove={requestOpponentMove}
-                analysisEngineBestUci={analysisEngineBestUci}
-                analysisEngineBestSan={analysisEngineBestSan}
-                handleSetEngineBestMove={handleSetEngineBestMove}
-                analysisStatsBusy={analysisStatsBusy}
-                analysisStats={analysisStats}
-                setAnalysisStats={setAnalysisStats}
-                setAnalysisStatsBusy={setAnalysisStatsBusy}
-                lichessMoves={lichessMoves}
-                setLichessMoves={setLichessMoves}
-                lichessBusy={lichessBusy}
-                setLichessBusy={setLichessBusy}
-                lichessError={lichessError}
-                setLichessError={setLichessError}
-                lichessReqIdRef={lichessReqIdRef}
-                lichessDebounceRef={lichessDebounceRef}
-                lichessSource={lichessSource}
-                setLichessSource={setLichessSource}
-                lichessShowArrows={lichessShowArrows}
-                setLichessShowArrows={setLichessShowArrows}
-                analysisStyleMarkers={analysisStyleMarkers}
-                scoutEnabled={Boolean(opponentUsername.trim())}
-                scoutPrediction={scoutPrediction}
-                scoutLoading={scoutLoading}
-                scoutError={scoutError}
-                scoutMode={scoutMode}
-                onScoutModeChange={setScoutMode}
-                onScoutPredict={() => {
-                  if (opponentUsername.trim()) {
-                    void scoutPredict({
-                      fen: state.fen,
-                      opponentUsername: opponentUsername.trim(),
-                      styleMarkers: analysisStyleMarkers,
-                      moveNumber: Math.ceil(state.game.history().length / 2) + 1,
-                    });
-                  }
-                }}
-                scoutOpponentReplyByMove={scoutOpponentReplyByMove}
-                scoutOpponentReplyLoading={scoutOpponentReplyLoading}
-              />
-              <ScoutOverlay
-                isOpen={scoutOverlayOpen}
-                onClose={() => {
-                  setScoutOverlayOpen(false);
-                  clearScoutPrediction();
-                  setScoutOpponentReplyByMove(null);
-                  setScoutOpponentReplyLoading(false);
-                }}
-                prediction={scoutPrediction}
-                loading={scoutLoading}
-                mode={scoutMode}
-                onModeChange={setScoutMode}
-                opponentUsername={opponentUsername.trim()}
-                opponentReplyByMove={scoutOpponentReplyByMove}
-                opponentReplyLoading={scoutOpponentReplyLoading}
-                error={scoutError}
-              />
-            </>
+            <AnalysisRightSidebar
+              state={state}
+              savedLineId={savedLineId}
+              shouldHydrateSavedLine={shouldHydrateSavedLine}
+              showSavedLinePopup={showSavedLinePopup}
+              analysisFiltersPanel={analysisFiltersPanel}
+              opponentPlaysColor={opponentPlaysColor}
+              setOpponentPlaysColor={(c) => {
+                setOpponentPlaysColor(c);
+                state.setPlayerSide(c === "white" ? "black" : "white");
+              }}
+              analysisRightTab={analysisRightTab}
+              setAnalysisRightTab={setAnalysisRightTab}
+              analysisFilterApplyStatus={analysisFilterApply.status}
+              analysisShowArrow={analysisShowArrow}
+              setAnalysisShowArrow={setAnalysisShowArrow}
+              analysisShowEval={analysisShowEval}
+              setAnalysisShowEval={setAnalysisShowEval}
+              analysisShowEngineBest={analysisShowEngineBest}
+              setAnalysisShowEngineBest={setAnalysisShowEngineBest}
+              analysisShowEngineColumn={analysisShowEngineColumn}
+              setAnalysisShowEngineColumn={setAnalysisShowEngineColumn}
+              soundEnabled={soundEnabled}
+              setSoundEnabled={setSoundEnabled}
+              setAnalysisEval={setAnalysisEval}
+              opponentUsername={opponentUsername}
+              opponentImportedCount={opponentImportedCount}
+              analysisIsSyncingOpponent={analysisIsSyncingOpponent}
+              filtersKey={analysisAppliedFiltersKey}
+              requestOpponentMove={requestOpponentMove}
+              analysisEngineBestUci={analysisEngineBestUci}
+              analysisEngineBestSan={analysisEngineBestSan}
+              handleSetEngineBestMove={handleSetEngineBestMove}
+              analysisStatsBusy={analysisStatsBusy}
+              analysisStats={analysisStats}
+              setAnalysisStats={setAnalysisStats}
+              setAnalysisStatsBusy={setAnalysisStatsBusy}
+              lichessMoves={lichessMoves}
+              setLichessMoves={setLichessMoves}
+              lichessBusy={lichessBusy}
+              setLichessBusy={setLichessBusy}
+              lichessError={lichessError}
+              setLichessError={setLichessError}
+              lichessReqIdRef={lichessReqIdRef}
+              lichessDebounceRef={lichessDebounceRef}
+              lichessSource={lichessSource}
+              setLichessSource={setLichessSource}
+              lichessShowArrows={lichessShowArrows}
+              setLichessShowArrows={setLichessShowArrows}
+              analysisStyleMarkers={analysisStyleMarkers}
+              scoutEnabled={Boolean(opponentUsername.trim())}
+              scoutPrediction={scoutPrediction}
+              scoutLoading={scoutLoading}
+              scoutError={scoutError}
+              scoutMode={scoutMode}
+              onScoutModeChange={setScoutMode}
+              onScoutPredict={() => {
+                const ctx = scoutBoardContextRef.current;
+                if (!ctx) return;
+                void runScoutPredictForContext(ctx);
+              }}
+              scoutOpponentReplyByMove={scoutOpponentReplyByMove}
+              scoutOpponentReplyLoading={scoutOpponentReplyLoading}
+            />
           );
         }
 
         return (
-          <SimulationStartGate
+          <SimulationAutoTrigger
             state={state}
+            opponentUsername={opponentUsername}
+            opponentMode={opponentMode}
+            filtersKey={analysisAppliedFiltersKey}
+            simBusy={simBusy}
             clocksEnabled={clocksEnabled}
-            resetClocksToSelected={resetClocksToSelected}
-            setClockRunning={setClockRunning}
-            setClockPaused={setClockPaused}
-            setGameStarted={setGameStarted}
-            setFirstMoveMade={setFirstMoveMade}
-            tickRef={tickRef}
+            clockPaused={clockPaused}
+            clockExpired={clockExpired}
+            gameStarted={gameStarted}
+            onOpponentMoveNow={() => {
+              void playOpponentNow(state);
+            }}
           >
-            <SimulationAutoTrigger
+            <SimulationRightSidebar
               state={state}
-              opponentUsername={opponentUsername}
-              opponentMode={opponentMode}
-              filtersKey={filtersKey}
-              simBusy={simBusy}
+              activeTab={simRightTab}
+              setActiveTab={setSimRightTab}
+              filtersPanel={analysisFiltersPanel}
+              opponentPlaysColor={opponentPlaysColor}
+              setOpponentPlaysColor={(c) => {
+                setOpponentPlaysColor(c);
+                state.setPlayerSide(c === "white" ? "black" : "white");
+              }}
+              mode={opponentMode}
+              setMode={setOpponentMode}
               clocksEnabled={clocksEnabled}
+              setClocksEnabled={setClocksEnabled}
+              timeControls={timeControls}
+              timeControlKey={timeControlKey}
+              setTimeControlKey={setTimeControlKey}
+              clockRunning={clockRunning}
               clockPaused={clockPaused}
               clockExpired={clockExpired}
               gameStarted={gameStarted}
-              onOpponentMoveNow={() => void playOpponentNow(state)}
-            >
-              <SimulationRightSidebar
-                state={state}
-                activeTab={simRightTab}
-                setActiveTab={setSimRightTab}
-                filtersPanel={analysisFiltersPanel}
-                opponentPlaysColor={opponentPlaysColor}
-                setOpponentPlaysColor={(c) => {
-                  setOpponentPlaysColor(c);
-                  // Sync player side: if opponent plays white, player plays black
-                  state.setPlayerSide(c === "white" ? "black" : "white");
-                }}
-                mode={opponentMode}
-                setMode={setOpponentMode}
-                clocksEnabled={clocksEnabled}
-                setClocksEnabled={setClocksEnabled}
-                timeControls={timeControls}
-                timeControlKey={timeControlKey}
-                setTimeControlKey={setTimeControlKey}
-                clockRunning={clockRunning}
-                clockPaused={clockPaused}
-                clockExpired={clockExpired}
-                gameStarted={gameStarted}
-                onStartGame={() => {
-                  startGame();
-
-                  // If opponent is White and it's White to move at the start position,
-                  // clicking Play should immediately make White play.
-                  const opponentIsWhite = state.playerSide === "black";
-                  const isStartPosition = state.game.history().length === 0;
-                  const isWhitesTurn = state.game.turn() === "w";
-                  if (opponentIsWhite && isStartPosition && isWhitesTurn) {
-                    void playOpponentNow(state);
-                  }
-                }}
-                onClockPause={pauseClocks}
-                onClockResume={resumeClocks}
-                onClockStop={stopClocks}
-                engineTakeover={engineTakeover}
-                simWarmStatus={simWarmStatus}
-                simWarmMeta={simWarmMeta}
-                depthRemaining={depthRemaining}
-                lastOpponentMove={lastOpponentMove}
-                opponentCommentary={opponentCommentary}
-                simBusy={simBusy}
-                scoutEnabled={Boolean(opponentUsername.trim())}
-                opponentUsername={opponentUsername.trim()}
-                scoutPrediction={scoutPrediction}
-                scoutLoading={scoutLoading}
-                scoutError={scoutError}
-                scoutMode={scoutMode}
-                onScoutModeChange={setScoutMode}
-                onScoutPredict={() => {
-                  if (opponentUsername.trim()) {
-                    void scoutPredict({
-                      fen: state.fen,
-                      opponentUsername: opponentUsername.trim(),
-                      styleMarkers: analysisStyleMarkers,
-                      moveNumber: Math.ceil(state.game.history().length / 2) + 1,
-                    });
-                  }
-                }}
-                scoutOpponentReplyByMove={scoutOpponentReplyByMove}
-                scoutOpponentReplyLoading={scoutOpponentReplyLoading}
-              />
-              {/* Scout Overlay */}
-              <ScoutOverlay
-                isOpen={scoutOverlayOpen}
-                onClose={() => {
-                  setScoutOverlayOpen(false);
-                  clearScoutPrediction();
-                  setScoutOpponentReplyByMove(null);
-                  setScoutOpponentReplyLoading(false);
-                }}
-                prediction={scoutPrediction}
-                loading={scoutLoading}
-                mode={scoutMode}
-                onModeChange={setScoutMode}
-                opponentUsername={opponentUsername.trim()}
-                opponentReplyByMove={scoutOpponentReplyByMove}
-                opponentReplyLoading={scoutOpponentReplyLoading}
-                error={scoutError}
-              />
-            </SimulationAutoTrigger>
-          </SimulationStartGate>
+              onStartGame={startGame}
+              onClockPause={pauseClocks}
+              onClockResume={resumeClocks}
+              onClockStop={stopClocks}
+              engineTakeover={engineTakeover}
+              simWarmStatus={simWarmStatus}
+              simWarmMeta={simWarmMeta}
+              depthRemaining={depthRemaining}
+              lastOpponentMove={lastOpponentMove}
+              opponentCommentary={opponentCommentary}
+              simBusy={simBusy}
+              scoutEnabled={Boolean(opponentUsername.trim())}
+              opponentUsername={opponentUsername}
+              scoutPrediction={scoutPrediction}
+              scoutLoading={scoutLoading}
+              scoutError={scoutError}
+              scoutMode={scoutMode}
+              onScoutModeChange={setScoutMode}
+              onScoutPredict={() => {
+                const ctx = scoutBoardContextRef.current;
+                if (!ctx) return;
+                void runScoutPredictForContext(ctx);
+              }}
+              scoutOpponentReplyByMove={scoutOpponentReplyByMove}
+              scoutOpponentReplyLoading={scoutOpponentReplyLoading}
+            />
+          </SimulationAutoTrigger>
         );
       }}
     </ChessBoardCore>
   );
-}
-
-function SimulationStartGate(props: {
-  state: ChessBoardCoreState;
-  clocksEnabled: boolean;
-  resetClocksToSelected: () => void;
-  setClockRunning: (v: boolean) => void;
-  setClockPaused: (v: boolean) => void;
-  setGameStarted: (v: boolean) => void;
-  setFirstMoveMade: (v: boolean) => void;
-  tickRef: React.MutableRefObject<{ lastTs: number | null }>;
-  children: React.ReactNode;
-}) {
-  const {
-    state,
-    clocksEnabled,
-    resetClocksToSelected,
-    setClockRunning,
-    setClockPaused,
-    setGameStarted,
-    setFirstMoveMade,
-    tickRef,
-    children,
-  } = props;
-
-  const opponentIsWhite = state.playerSide === "black";
-  const isStartPosition = state.game.history().length === 0;
-  const isWhitesTurn = state.game.turn() === "w";
-
-  const prevWasStartRef = useRef(false);
-
-  useEffect(() => {
-    // If we're back at the start position and opponent is White, we must require Play again
-    // and ensure nothing auto-triggers.
-    if (!opponentIsWhite) return;
-    if (!isStartPosition) return;
-    if (!isWhitesTurn) return;
-
-    // Only act when we *arrive* at the start position (reset/undo), not continuously.
-    // This avoids interfering right after clicking Play (still at start while move request is in flight).
-    if (prevWasStartRef.current) return;
-
-    setGameStarted(false);
-    setFirstMoveMade(false);
-    setClockRunning(false);
-    setClockPaused(false);
-    tickRef.current.lastTs = null;
-    if (clocksEnabled) resetClocksToSelected();
-  }, [
-    opponentIsWhite,
-    isStartPosition,
-    isWhitesTurn,
-    clocksEnabled,
-    resetClocksToSelected,
-    setClockRunning,
-    setClockPaused,
-    setGameStarted,
-    setFirstMoveMade,
-    tickRef,
-  ]);
-
-  useEffect(() => {
-    prevWasStartRef.current = opponentIsWhite && isStartPosition && isWhitesTurn;
-  }, [opponentIsWhite, isStartPosition, isWhitesTurn]);
-
-  return <>{children}</>;
 }
 
 function AnalysisRightSidebar(props: {
@@ -2440,6 +2537,7 @@ function AnalysisRightSidebar(props: {
   setOpponentPlaysColor: (c: "white" | "black") => void;
   analysisRightTab: AnalysisRightTab;
   setAnalysisRightTab: (t: AnalysisRightTab) => void;
+  analysisFilterApplyStatus: "applied" | "applying";
   analysisShowArrow: boolean;
   setAnalysisShowArrow: (v: boolean) => void;
   analysisShowEval: boolean;
@@ -2496,6 +2594,7 @@ function AnalysisRightSidebar(props: {
     setOpponentPlaysColor,
     analysisRightTab,
     setAnalysisRightTab,
+    analysisFilterApplyStatus,
     analysisShowArrow,
     setAnalysisShowArrow,
     analysisShowEval,
@@ -2792,7 +2891,7 @@ function AnalysisRightSidebar(props: {
               opponentStats={analysisStats}
               setOpponentStats={setAnalysisStats}
               setOpponentStatsBusy={setAnalysisStatsBusy}
-              enabled={active === "stats"}
+              enabled={active === "stats" || analysisFilterApplyStatus === "applying"}
               showEngineColumn={analysisShowEngineColumn}
               styleMarkers={analysisStyleMarkers}
             />

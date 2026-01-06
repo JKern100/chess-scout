@@ -75,6 +75,7 @@ async def predict_move(request: PredictionRequest) -> PredictionResponse:
             fen=request.fen,
             mode=request.mode,
             opponent_username=request.opponent_username,
+            is_opponent_turn=request.is_opponent_turn,
             style_markers=request.style_markers,
             history_moves=request.history_moves,
             recent_eval_deltas=request.recent_eval_deltas,

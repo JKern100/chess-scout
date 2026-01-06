@@ -104,6 +104,7 @@ type Props = {
   setGenerateStyleMarkers?: (v: boolean) => void;
   headerLeft?: string;
   headerRight?: ReactNode;
+  actions?: ReactNode;
   footerNote?: ReactNode;
 };
 
@@ -123,6 +124,7 @@ export function OpponentFiltersPanel(props: Props) {
     setGenerateStyleMarkers: setGenerateStyleMarkersProp,
     headerLeft,
     headerRight,
+    actions,
     footerNote,
   } = props;
 
@@ -133,23 +135,30 @@ export function OpponentFiltersPanel(props: Props) {
     typeof setGenerateStyleMarkersProp === "function" ? setGenerateStyleMarkersProp : setGenerateStyleMarkersLocal;
 
   return (
-    <div className="min-w-0 rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm">
-      <div className="grid gap-2">
-        {headerLeft || headerRight ? (
-          <div className="flex min-w-0 items-center justify-between gap-2">
-            <div className="shrink-0 text-[10px] font-medium text-zinc-900">{headerLeft}</div>
-            {headerRight ? <div className="min-w-0 flex-1">{headerRight}</div> : null}
+    <div className="min-w-0 overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm">
+      <div className="border-b border-zinc-200 bg-zinc-50 px-3 py-2">
+        <div className="flex min-w-0 items-center justify-between gap-2">
+          <div className="min-w-0">
+            <div className="text-[11px] font-semibold text-zinc-900">{headerLeft ?? "Filters"}</div>
+            <div className="text-[10px] text-zinc-500">Tune the dataset used across Analysis & Scout.</div>
           </div>
-        ) : null}
+          {headerRight ? <div className="min-w-0 flex-1">{headerRight}</div> : null}
+        </div>
+      </div>
 
+      <div className="grid gap-3 p-3">
         <div className="grid gap-2">
           <div className="text-[10px] font-medium text-zinc-900">Time Control</div>
-
-          <div className="flex flex-wrap items-center gap-2 text-[10px] text-zinc-700">
+          <div className="flex flex-wrap items-center gap-2">
             {(["bullet", "blitz", "rapid", "classical", "correspondence"] as const).map((s) => {
               const checked = speeds.includes(s);
               return (
-                <label key={s} className="inline-flex items-center gap-1.5">
+                <label
+                  key={s}
+                  className={`inline-flex cursor-pointer select-none items-center gap-2 rounded-xl border px-2.5 py-1 text-[10px] font-medium transition-colors ${
+                    checked ? "border-zinc-900 bg-zinc-900 text-white" : "border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
+                  }`}
+                >
                   <input
                     type="checkbox"
                     checked={checked}
@@ -160,90 +169,97 @@ export function OpponentFiltersPanel(props: Props) {
                         return prev.filter((x) => x !== s);
                       });
                     }}
+                    className="hidden"
                   />
                   {s}
                 </label>
               );
             })}
           </div>
+        </div>
 
-          <div className="grid min-w-0 gap-2">
-            <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <div className="text-[10px] font-medium text-zinc-900">Mode</div>
-              <select
-                id="opp-filter-rated"
-                className="h-8 min-w-0 flex-1 rounded-xl border border-zinc-200 bg-white px-3 text-[10px] text-zinc-900 outline-none focus:border-zinc-400"
-                value={rated}
-                onChange={(e) => setRated(e.target.value as any)}
-              >
-                <option value="any">All</option>
-                <option value="rated">Rated</option>
-                <option value="casual">Casual</option>
-              </select>
-            </div>
-
-            <div className="text-[10px] font-medium text-zinc-900">Date Range</div>
-            <DateRangePresetSelect value={datePreset} onChange={setDatePreset} />
-            <div className="grid gap-2 md:grid-cols-2">
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-medium text-zinc-900" htmlFor="opp-filter-from">
-                  From
-                </label>
-                <input
-                  id="opp-filter-from"
-                  type="date"
-                  className="h-8 rounded-xl border border-zinc-200 bg-white px-3 text-[10px] text-zinc-900 outline-none focus:border-zinc-400"
-                  value={fromDate}
-                  onChange={(e) => setFromDate(e.target.value)}
-                />
-              </div>
-
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-medium text-zinc-900" htmlFor="opp-filter-to">
-                  To
-                </label>
-                <input
-                  id="opp-filter-to"
-                  type="date"
-                  className="h-8 rounded-xl border border-zinc-200 bg-white px-3 text-[10px] text-zinc-900 outline-none focus:border-zinc-400"
-                  value={toDate}
-                  onChange={(e) => setToDate(e.target.value)}
-                />
-              </div>
-            </div>
-
-            <div
-              className="flex items-center gap-1.5 text-[10px] text-zinc-500"
-              title="For performance reasons, analysis is limited to the 5,000 most recent games matching your filters. If you have more games in the selected range, older games will be excluded."
+        <div className="grid gap-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <div className="text-[10px] font-medium text-zinc-900">Mode</div>
+            <select
+              id="opp-filter-rated"
+              className="h-9 min-w-0 flex-1 rounded-xl border border-zinc-200 bg-white px-3 text-[11px] text-zinc-900 outline-none focus:border-zinc-400"
+              value={rated}
+              onChange={(e) => setRated(e.target.value as any)}
             >
-              <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-zinc-300 text-[8px] font-semibold text-zinc-400">i</span>
-              <span>Analysis limited to 5,000 most recent games</span>
-            </div>
-
-            <div className="mt-1 flex select-none items-center justify-between gap-3 rounded-xl border border-zinc-200 bg-white px-3 py-2">
-              <label className="flex min-w-0 items-center gap-2 cursor-pointer" htmlFor="opp-filter-style-markers">
-                <input
-                  id="opp-filter-style-markers"
-                  type="checkbox"
-                  checked={generateStyleMarkers}
-                  onChange={(e) => setGenerateStyleMarkers(e.target.checked)}
-                  className="h-4 w-4 accent-[#FFFF00]"
-                />
-                <span className="truncate text-[10px] font-medium text-zinc-900">Generate ChessScout Style Markers</span>
-              </label>
-
-              <button
-                type="button"
-                onClick={() => setStyleMarkersHelpOpen(true)}
-                className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-zinc-200 bg-white text-[10px] font-semibold text-zinc-600 hover:bg-zinc-50"
-              >
-                i
-              </button>
-            </div>
+              <option value="any">All</option>
+              <option value="rated">Rated</option>
+              <option value="casual">Casual</option>
+            </select>
           </div>
 
-          {footerNote ? <div className="text-[10px] text-zinc-600">{footerNote}</div> : null}
+          <div className="text-[10px] font-medium text-zinc-900">Date Range</div>
+          <DateRangePresetSelect value={datePreset} onChange={setDatePreset} />
+
+          <div className="grid gap-2 md:grid-cols-2">
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-medium text-zinc-900" htmlFor="opp-filter-from">
+                From
+              </label>
+              <input
+                id="opp-filter-from"
+                type="date"
+                className="h-9 rounded-xl border border-zinc-200 bg-white px-3 text-[11px] text-zinc-900 outline-none focus:border-zinc-400"
+                value={fromDate}
+                onChange={(e) => setFromDate(e.target.value)}
+              />
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-medium text-zinc-900" htmlFor="opp-filter-to">
+                To
+              </label>
+              <input
+                id="opp-filter-to"
+                type="date"
+                className="h-9 rounded-xl border border-zinc-200 bg-white px-3 text-[11px] text-zinc-900 outline-none focus:border-zinc-400"
+                value={toDate}
+                onChange={(e) => setToDate(e.target.value)}
+              />
+            </div>
+          </div>
         </div>
+
+        <div
+          className="flex items-center gap-2 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-[10px] text-zinc-600"
+          title="For performance reasons, analysis is limited to the 5,000 most recent games matching your filters. If you have more games in the selected range, older games will be excluded."
+        >
+          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-zinc-300 bg-white text-[9px] font-semibold text-zinc-500">
+            i
+          </span>
+          <span>Analysis limited to 5,000 most recent games</span>
+        </div>
+
+        <div className="flex select-none items-center justify-between gap-3 rounded-xl border border-zinc-200 bg-white px-3 py-2">
+          <label className="flex min-w-0 cursor-pointer items-center gap-2" htmlFor="opp-filter-style-markers">
+            <input
+              id="opp-filter-style-markers"
+              type="checkbox"
+              checked={generateStyleMarkers}
+              onChange={(e) => setGenerateStyleMarkers(e.target.checked)}
+              className="h-4 w-4 accent-[#FFFF00]"
+            />
+            <span className="truncate text-[10px] font-medium text-zinc-900">Generate ChessScout Style Markers</span>
+          </label>
+
+          <button
+            type="button"
+            onClick={() => setStyleMarkersHelpOpen(true)}
+            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-zinc-200 bg-white text-[11px] font-semibold text-zinc-600 hover:bg-zinc-50"
+            aria-label="Style markers help"
+          >
+            ?
+          </button>
+        </div>
+
+        {actions ? <div className="pt-1">{actions}</div> : null}
+
+        {footerNote ? <div className="text-[10px] text-zinc-600">{footerNote}</div> : null}
       </div>
 
       {styleMarkersHelpOpen && <StyleMarkersHelpModal onClose={() => setStyleMarkersHelpOpen(false)} />}

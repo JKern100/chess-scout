@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useCallback, useEffect, useState } from "react";
-import { Brain, X, AlertTriangle, Zap, Target, TrendingUp } from "lucide-react";
+import { Brain, X, AlertTriangle, Zap, Target, TrendingUp, HelpCircle } from "lucide-react";
 
 export type PredictionMode = "pure_history" | "hybrid";
 
@@ -42,6 +42,23 @@ export type PhaseWeights = {
   history: number;
   engine: number;
   style: number;
+  predictability_index?: number;
+  sample_size?: number;
+  weight_mode?: string;
+};
+
+export type HabitDetection = {
+  detected: boolean;
+  move?: string;
+  frequency?: number;
+  sample_size?: number;
+};
+
+export type MoveSourceAttribution = {
+  primary_source: "history" | "style" | "engine";
+  history_contribution: number;
+  style_contribution: number;
+  engine_contribution: number;
 };
 
 export type TraceLogEntry = {
@@ -58,6 +75,9 @@ export type ScoutPrediction = {
   trace_log: TraceLogEntry[];
   tilt_active: boolean;
   blunder_applied: boolean;
+  habit_detection?: HabitDetection;
+  move_source?: MoveSourceAttribution;
+  suggested_delay_ms?: number;
 };
 
 export type OpponentReplyForecast = {
@@ -156,6 +176,195 @@ const AttributionPieChart = memo(function AttributionPieChart({
   );
 });
 
+// Prediction Triad - 3-vertex radar chart showing weight distribution
+const PredictionTriad = memo(function PredictionTriad({
+  weights,
+  pulseColor,
+}: {
+  weights: PhaseWeights;
+  pulseColor?: "blue" | "purple" | "green";
+}) {
+  const total = weights.history + weights.engine + weights.style;
+  const historyNorm = weights.history / total;
+  const engineNorm = weights.engine / total;
+  const styleNorm = weights.style / total;
+  
+  // Triangle vertices (equilateral, pointing up)
+  const cx = 50, cy = 50, r = 35;
+  const vertices = [
+    { x: cx, y: cy - r, label: "Habit", value: historyNorm }, // Top
+    { x: cx + r * Math.cos(Math.PI / 6), y: cy + r * Math.sin(Math.PI / 6), label: "Engine", value: engineNorm }, // Bottom right
+    { x: cx - r * Math.cos(Math.PI / 6), y: cy + r * Math.sin(Math.PI / 6), label: "Style", value: styleNorm }, // Bottom left
+  ];
+  
+  // Calculate center point based on weights
+  const centerX = cx + (engineNorm - styleNorm) * r * 0.8;
+  const centerY = cy + (1 - historyNorm) * r * 0.6 - r * 0.2;
+  
+  const pulseClass = pulseColor === "blue" ? "fill-blue-500" : 
+                     pulseColor === "purple" ? "fill-purple-500" : 
+                     pulseColor === "green" ? "fill-emerald-500" : "fill-amber-500";
+
+  return (
+    <div className="flex items-center gap-2">
+      <svg width="80" height="80" viewBox="0 0 100 100">
+        {/* Triangle outline */}
+        <polygon
+          points={vertices.map(v => `${v.x},${v.y}`).join(" ")}
+          fill="none"
+          stroke="#e4e4e7"
+          strokeWidth="1"
+        />
+        {/* Vertex labels */}
+        {vertices.map((v, i) => (
+          <text
+            key={i}
+            x={v.x}
+            y={i === 0 ? v.y - 6 : v.y + 12}
+            textAnchor="middle"
+            className="fill-zinc-500 text-[8px]"
+          >
+            {v.label}
+          </text>
+        ))}
+        {/* Center point */}
+        <circle
+          cx={centerX}
+          cy={centerY}
+          r="6"
+          className={`${pulseClass} ${pulseColor ? "animate-pulse" : ""}`}
+        />
+      </svg>
+    </div>
+  );
+});
+
+// Help Modal with comprehensive documentation
+const ScoutHelpModal = memo(function ScoutHelpModal({
+  isOpen,
+  onClose,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+}) {
+  if (!isOpen) return null;
+  
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="max-h-[80vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-xl">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-lg font-bold text-zinc-900">Scout Move Prediction System</h2>
+          <button onClick={onClose} className="rounded-lg p-1 hover:bg-zinc-100">
+            <X className="h-5 w-5 text-zinc-500" />
+          </button>
+        </div>
+        
+        <div className="prose prose-sm max-w-none text-zinc-700">
+          <h3 className="text-base font-semibold text-zinc-800">How Move Prediction Works</h3>
+          <p>
+            ChessScout predicts your opponent&apos;s most likely moves using a sophisticated algorithm that combines
+            three key factors: <strong>Historical Habits</strong>, <strong>Style Alignment</strong>, and <strong>Engine Strength</strong>.
+          </p>
+
+          <p className="text-xs">
+            When it&apos;s <strong>not</strong> the opponent&apos;s turn, Scout switches into a planning mode: <strong>Style is disabled</strong>
+            (W<sub>s</sub>=0) and only History vs Engine are used.
+          </p>
+          
+          <h4 className="mt-4 text-sm font-semibold text-zinc-800">The Probability Formula</h4>
+          <div className="my-2 rounded-lg bg-zinc-100 p-3 font-mono text-xs">
+            P(m) = (W<sub>h</sub> × H<sub>m</sub>) + (W<sub>s</sub> × S<sub>m</sub>) + (W<sub>e</sub> × E<sub>m</sub>)
+          </div>
+          <ul className="mt-2 text-xs">
+            <li><strong>H<sub>m</sub> (Historical Frequency)</strong>: How often the player chose this move in this exact position</li>
+            <li><strong>S<sub>m</sub> (Style Alignment)</strong>: How well the move fits the player&apos;s style markers (aggression, complexity preference, etc.)</li>
+            <li><strong>E<sub>m</sub> (Engine Strength)</strong>: The move&apos;s quality based on Stockfish evaluation</li>
+          </ul>
+          
+          <h4 className="mt-4 text-sm font-semibold text-zinc-800">Dynamic Weight Modes</h4>
+          <p className="text-xs">
+            The weights (W<sub>h</sub>, W<sub>s</sub>, W<sub>e</sub>) automatically adjust based on how predictable the player is:
+          </p>
+
+          <div className="mt-2 grid gap-2">
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-2">
+              <div className="flex items-center gap-2">
+                <span className="rounded-full bg-emerald-600 px-2 py-0.5 text-[10px] font-bold text-white">Planning</span>
+                <span className="text-xs text-emerald-800">Not opponent&apos;s turn</span>
+              </div>
+              <p className="mt-1 text-xs text-emerald-700">
+                Style disabled. Opening: W<sub>h</sub>=0.8, W<sub>e</sub>=0.2. Middlegame/Endgame: W<sub>h</sub>=0.3, W<sub>e</sub>=0.7.
+              </p>
+            </div>
+          </div>
+          
+          <div className="mt-2 grid gap-2">
+            <div className="rounded-lg border border-blue-200 bg-blue-50 p-2">
+              <div className="flex items-center gap-2">
+                <span className="rounded-full bg-blue-500 px-2 py-0.5 text-[10px] font-bold text-white">95% Move</span>
+                <span className="text-xs text-blue-800">PI &gt; 0.85</span>
+              </div>
+              <p className="mt-1 text-xs text-blue-700">
+                High predictability. History dominates (90%). The AI plays the habit even if it&apos;s an engine blunder.
+              </p>
+            </div>
+            
+            <div className="rounded-lg border border-purple-200 bg-purple-50 p-2">
+              <div className="flex items-center gap-2">
+                <span className="rounded-full bg-purple-500 px-2 py-0.5 text-[10px] font-bold text-white">Chameleon</span>
+                <span className="text-xs text-purple-800">PI &lt; 0.40</span>
+              </div>
+              <p className="mt-1 text-xs text-purple-700">
+                Low predictability. Style dominates (60%). The AI predicts based on what this type of player usually likes.
+              </p>
+            </div>
+            
+            <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-2">
+              <div className="flex items-center gap-2">
+                <span className="rounded-full bg-zinc-500 px-2 py-0.5 text-[10px] font-bold text-white">Low Sample</span>
+                <span className="text-xs text-zinc-600">N &lt; 5 games</span>
+              </div>
+              <p className="mt-1 text-xs text-zinc-600">
+                Not enough data. History is ignored. Style (70%) and Engine (30%) are used instead.
+              </p>
+            </div>
+          </div>
+          
+          <h4 className="mt-4 text-sm font-semibold text-zinc-800">Predictability Index (PI)</h4>
+          <div className="my-2 rounded-lg bg-zinc-100 p-3 font-mono text-xs">
+            PI = Σ(p<sub>i</sub>²)
+          </div>
+          <p className="text-xs">
+            PI measures how concentrated the player&apos;s choices are. A PI of 1.0 means they always play the same move.
+            A PI close to 0 means they vary their play significantly.
+          </p>
+          
+          <h4 className="mt-4 text-sm font-semibold text-zinc-800">Visual Indicators</h4>
+          <ul className="text-xs">
+            <li><strong className="text-orange-600">HABIT DETECTED Banner</strong>: Appears when a player plays one move 90%+ of the time (with N&gt;10 games)</li>
+            <li><strong className="text-blue-600">Blue Aura</strong>: Move predicted primarily by History</li>
+            <li><strong className="text-purple-600">Purple Aura</strong>: Move predicted primarily by Style</li>
+            <li><strong className="text-emerald-600">Green Aura</strong>: Move predicted primarily by Engine</li>
+          </ul>
+          
+          <h4 className="mt-4 text-sm font-semibold text-zinc-800">Simulation Behavior</h4>
+          <p className="text-xs">
+            In Shadow Boxer mode, habit moves (W<sub>h</sub> &gt; 0.8) are played instantly (0.5s) to mimic &quot;opening book&quot; speed.
+            If the 95% move is a blunder, the AI will still play it—allowing you to practice the refutation.
+          </p>
+        </div>
+        
+        <button
+          onClick={onClose}
+          className="mt-4 w-full rounded-lg bg-zinc-900 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+        >
+          Got it
+        </button>
+      </div>
+    </div>
+  );
+});
+
 const CandidateRow = memo(function CandidateRow({
   candidate,
   isSelected,
@@ -246,12 +455,27 @@ export const ScoutPanelContent = memo(function ScoutPanelContent({
   opponentReplyLoading?: boolean;
   onRefresh?: () => void;
 }) {
+  const [helpOpen, setHelpOpen] = useState(false);
+  
   return (
     <div className="grid gap-3">
+      {/* Help Modal */}
+      <ScoutHelpModal isOpen={helpOpen} onClose={() => setHelpOpen(false)} />
+      
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div className="text-[10px] font-medium text-zinc-900">
-          Scout Insights: {opponentUsername}
+        <div className="flex items-center gap-1">
+          <span className="text-[10px] font-medium text-zinc-900">
+            Scout Insights: {opponentUsername}
+          </span>
+          <button
+            type="button"
+            onClick={() => setHelpOpen(true)}
+            className="inline-flex h-4 w-4 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600"
+            title="How prediction works"
+          >
+            <HelpCircle className="h-3 w-3" />
+          </button>
         </div>
         {onRefresh && (
           <button
@@ -305,6 +529,23 @@ export const ScoutPanelContent = memo(function ScoutPanelContent({
         </div>
       ) : prediction ? (
         <div className="grid gap-3">
+          {/* Habit Detection Banner */}
+          {prediction.habit_detection?.detected && (
+            <div className="flex items-center gap-2 rounded-lg border border-orange-300 bg-orange-50 px-3 py-2">
+              <div className="flex h-6 w-6 items-center justify-center rounded-full bg-orange-500 text-white">
+                <Brain className="h-3.5 w-3.5" />
+              </div>
+              <div className="flex-1">
+                <div className="text-[10px] font-semibold text-orange-800">
+                  HABIT DETECTED
+                </div>
+                <div className="text-[9px] text-orange-700">
+                  Player plays <span className="font-bold">{prediction.habit_detection.move}</span> {prediction.habit_detection.frequency?.toFixed(0)}% of the time (N={prediction.habit_detection.sample_size})
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Status Indicators */}
           <div className="flex flex-wrap items-center gap-2">
             {prediction.tilt_active && (
@@ -317,6 +558,18 @@ export const ScoutPanelContent = memo(function ScoutPanelContent({
               <div className="flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-medium text-amber-700">
                 <AlertTriangle className="h-2.5 w-2.5" />
                 Blunder
+              </div>
+            )}
+            {/* Weight Mode Indicator */}
+            {prediction.weights.weight_mode && prediction.weights.weight_mode !== "phase" && (
+              <div className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-medium ${
+                prediction.weights.weight_mode === "habit" ? "bg-blue-100 text-blue-700" :
+                prediction.weights.weight_mode === "chameleon" ? "bg-purple-100 text-purple-700" :
+                "bg-zinc-100 text-zinc-700"
+              }`}>
+                {prediction.weights.weight_mode === "habit" ? "95% Move" :
+                 prediction.weights.weight_mode === "chameleon" ? "Chameleon" :
+                 prediction.weights.weight_mode === "low_sample" ? "Low Sample" : prediction.weights.weight_mode}
               </div>
             )}
             <div className="flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[9px] font-medium text-zinc-700">

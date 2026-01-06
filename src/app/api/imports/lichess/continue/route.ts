@@ -7,7 +7,7 @@ import { buildOpponentMoveEventsFromGame, upsertOpponentMoveEvents } from "@/ser
 const STAGE1_BATCH_MAX = 200;
 const STAGE2_BATCH_MAX = 500;
 const READY_THRESHOLD_GAMES = 1000;
-const STAGE1_INDEX_MAX = 50;
+const STAGE1_INDEX_MAX = 200;
 const STAGE1_MAX_PLIES = 16;
 
 const continueLocks = new Map<string, number>();
@@ -372,8 +372,18 @@ export async function POST(request: Request) {
 
         await upsertOpponentMoveEvents({ supabase, rows: events });
         indexedGameCount = rows.length;
-      } catch {
-        // best-effort
+      } catch (indexErr) {
+        const errMsg = indexErr instanceof Error ? indexErr.message : "Indexing failed";
+        console.error(
+          JSON.stringify({
+            tag: "import_continue",
+            phase: "index_error",
+            importId: imp.id,
+            username: imp.username,
+            error: errMsg,
+            context: "catch-up indexing",
+          })
+        );
       }
     }
 
@@ -418,8 +428,19 @@ export async function POST(request: Request) {
             ms_events_upsert: tUpsert1 - tUpsert0,
           })
         );
-      } catch {
-        // best-effort
+      } catch (indexErr) {
+        const errMsg = indexErr instanceof Error ? indexErr.message : "Indexing failed";
+        console.error(
+          JSON.stringify({
+            tag: "import_continue",
+            phase: "index_error",
+            importId: imp.id,
+            username: imp.username,
+            error: errMsg,
+            context: "new games indexing",
+          })
+        );
+        indexedGameCount = 0;
       }
     }
 

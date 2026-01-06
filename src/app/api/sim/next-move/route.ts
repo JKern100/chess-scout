@@ -64,6 +64,12 @@ export async function POST(request: Request) {
   const from = fromRaw && fromRaw.trim() ? (isDateOnly(fromRaw) ? `${fromRaw}T00:00:00.000Z` : new Date(fromRaw).toISOString()) : null;
   const to = toRaw && toRaw.trim() ? (isDateOnly(toRaw) ? `${toRaw}T23:59:59.999Z` : new Date(toRaw).toISOString()) : null;
 
+  const shouldAllowGraphFallback =
+    !from &&
+    !to &&
+    !(Array.isArray(speedsFilter) && speedsFilter.length > 1) &&
+    !(speedsProvided && speeds.length === 0);
+
   if (!username) {
     return NextResponse.json({ error: "username is required" }, { status: 400 });
   }
@@ -185,7 +191,7 @@ export async function POST(request: Request) {
 
     if (out.length > 0) return out;
 
-    if (params.fallbackKey) {
+    if (shouldAllowGraphFallback && params.fallbackKey) {
       const fromFallback = await fetchMovesFromOpeningGraph({
         fenKey: params.fenKey,
         side: params.isOpponentMove ? "opponent" : "against",

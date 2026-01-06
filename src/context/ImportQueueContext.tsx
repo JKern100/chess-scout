@@ -134,8 +134,8 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
   const lastActivityAtRef = useRef(0);
   const activityTimeoutRef = useRef<number | null>(null);
 
-  // Activity timeout - if no progress for 90 seconds, consider import stalled
-  const ACTIVITY_TIMEOUT_MS = 90_000; // 90 seconds with no progress = stalled
+  // Activity timeout - if no progress for 5 minutes, consider import stalled
+  const ACTIVITY_TIMEOUT_MS = 300_000; // 5 minutes with no progress = stalled
   const SCOUT_BASE_YEARS = 3; // Only sync games from the past 3 years
 
   const pollSyncedCount = useCallback(async (opponentId: string) => {
@@ -387,6 +387,31 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
     setCurrentOpponent(nextKey);
     lastActivityAtRef.current = Date.now();
     console.log("[ImportQueue] Starting import for:", nextKey);
+
+    // Ensure this opponent exists in the `opponents` table so it appears immediately
+    // in the global opponent dropdown (which is backed by /api/opponents).
+    try {
+      const client = createSupabaseBrowserClient();
+      const {
+        data: { user },
+      } = await client.auth.getUser();
+      if (user?.id) {
+        await client
+          .from("opponents")
+          .upsert(
+            {
+              user_id: user.id,
+              platform: parsed.platform,
+              username: parsed.username,
+              last_refreshed_at: null,
+              archived_at: null,
+            },
+            { onConflict: "user_id,platform,username" }
+          );
+      }
+    } catch {
+      // best-effort
+    }
     
     // Query the ACTUAL database count - localStorage might be stale from failed syncs
     let actualDbCount = 0;
