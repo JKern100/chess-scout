@@ -55,6 +55,7 @@ type WorkerProgress = {
   gamesProcessed: number;
   bytesRead: number;
   status: "running" | "done" | "stopped";
+  phase: "streaming" | "flushing" | "done";
   lastError?: string | null;
   newestGameTimestamp?: number | null;
 };
@@ -260,7 +261,7 @@ async function runImport(params: ImportStartMessage) {
 
   const user = params.username.trim();
   if (!user) {
-    (self as any).postMessage({ type: "progress", gamesProcessed: 0, bytesRead: 0, status: "stopped", lastError: "username is required" } satisfies WorkerProgress);
+    (self as any).postMessage({ type: "progress", gamesProcessed: 0, bytesRead: 0, status: "stopped", phase: "done", lastError: "username is required" } satisfies WorkerProgress);
     return;
   }
 
@@ -290,14 +291,21 @@ async function runImport(params: ImportStartMessage) {
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Fetch failed";
-    (self as any).postMessage({ type: "progress", gamesProcessed, bytesRead, status: "stopped", lastError: msg } satisfies WorkerProgress);
+    (self as any).postMessage({ type: "progress", gamesProcessed, bytesRead, status: "stopped", phase: "done", lastError: msg } satisfies WorkerProgress);
     return;
   }
 
   if (!res.ok || !res.body) {
     const text = await res.text().catch(() => "");
-    const msg = `Lichess API error (${res.status}): ${text || res.statusText}`;
-    (self as any).postMessage({ type: "progress", gamesProcessed, bytesRead, status: "stopped", lastError: msg } satisfies WorkerProgress);
+    let msg: string;
+    if (res.status === 404) {
+      msg = `User "${user}" not found on Lichess. Please check the username and try again.`;
+    } else if (res.status === 429) {
+      msg = "Lichess rate limit reached. Please wait a moment and try again.";
+    } else {
+      msg = `Lichess API error (${res.status}): ${text || res.statusText}`;
+    }
+    (self as any).postMessage({ type: "progress", gamesProcessed, bytesRead, status: "stopped", phase: "done", lastError: msg } satisfies WorkerProgress);
     return;
   }
 
@@ -305,7 +313,7 @@ async function runImport(params: ImportStartMessage) {
   const decoder = new TextDecoder();
   let buf = "";
 
-  const flushEveryGames = 50;
+  const flushEveryGames = 200; // Flush less frequently to reduce write operations
   let lastFlushAt = 0;
 
   while (!stopRequested) {
@@ -320,7 +328,7 @@ async function runImport(params: ImportStartMessage) {
     const now = Date.now();
     if (now - lastHeartbeatAt >= HEARTBEAT_INTERVAL_MS) {
       lastHeartbeatAt = now;
-      (self as any).postMessage({ type: "progress", gamesProcessed, bytesRead, status: "running", newestGameTimestamp } satisfies WorkerProgress);
+      (self as any).postMessage({ type: "progress", gamesProcessed, bytesRead, status: "running", phase: "streaming", newestGameTimestamp } satisfies WorkerProgress);
     }
 
     let idx: number;
@@ -460,7 +468,7 @@ async function runImport(params: ImportStartMessage) {
       }
 
       if (gamesProcessed % 25 === 0) {
-        (self as any).postMessage({ type: "progress", gamesProcessed, bytesRead, status: "running", newestGameTimestamp } satisfies WorkerProgress);
+        (self as any).postMessage({ type: "progress", gamesProcessed, bytesRead, status: "running", phase: "streaming", newestGameTimestamp } satisfies WorkerProgress);
       }
     }
   }
@@ -471,8 +479,9 @@ async function runImport(params: ImportStartMessage) {
     // ignore
   }
 
-  // Final flush of remaining data
+  // Signal that streaming is complete, now flushing remaining data
   console.log("[Worker] Stream ended, flushing remaining data. Games processed:", gamesProcessed);
+  (self as any).postMessage({ type: "progress", gamesProcessed, bytesRead, status: "running", phase: "flushing", newestGameTimestamp } satisfies WorkerProgress);
   emitFlush({ maxNodes: 500, maxGames: 200 });
   const hasDirty = () => {
     for (const [, g] of graphs) {

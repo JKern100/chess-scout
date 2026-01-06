@@ -21,6 +21,8 @@ type LichessUserData = {
   perfs: Record<string, { rating: number; games: number; rd: number }>;
 };
 
+type ImportPhase = "idle" | "streaming" | "saving" | "done" | "error";
+
 type Props = {
   platform: ChessPlatform;
   username: string;
@@ -29,6 +31,8 @@ type Props = {
   isSyncing: boolean;
   isQueued: boolean;
   hasNewGames: boolean;
+  importPhase?: ImportPhase;
+  syncError?: string | null;
   onSyncGames: () => void;
   onStopSync: () => void;
   onRemoveFromQueue: () => void;
@@ -81,6 +85,8 @@ export function OpponentCard({
   isSyncing,
   isQueued,
   hasNewGames,
+  importPhase = "idle",
+  syncError,
   onSyncGames,
   onStopSync,
   onRemoveFromQueue,
@@ -115,7 +121,8 @@ export function OpponentCard({
     };
   }, [platform, username]);
 
-  const isSynced = importedCount > 0 && importedCount >= totalGames && !isSyncing;
+  const isSynced = importedCount > 0 && !isSyncing;
+  const isPartial = importedCount > 0 && importedCount < totalGames && !isSyncing;
   const title = lichessData?.title ?? null;
   const country = lichessData?.country ?? null;
   const flag = getCountryFlag(country);
@@ -226,36 +233,57 @@ export function OpponentCard({
       </div>
 
       {/* Zone C: Sync Status & Odometer */}
-      <div className="mt-4 flex items-center justify-between gap-3 rounded-lg bg-neutral-50 px-3 py-2">
-        <div className="flex items-center gap-2 text-sm">
-          <span className="text-neutral-500">Imported:</span>
-          <AnimatedNumber value={importedCount} className="font-semibold text-neutral-900" />
-          <span className="text-neutral-400">/</span>
-          <span className="text-neutral-500">Total:</span>
-          <span className="font-medium text-neutral-700">{totalGames > 0 ? totalGames.toLocaleString() : "—"}</span>
-        </div>
+      <div className="mt-4 flex flex-col gap-2 rounded-lg bg-neutral-50 px-3 py-2">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-neutral-500">Synced:</span>
+            <AnimatedNumber value={importedCount} className="font-semibold text-neutral-900" />
+            {isPartial && (
+              <span className="text-xs text-amber-600">(partial)</span>
+            )}
+          </div>
 
-        <div className="flex items-center gap-2">
-          {isSyncing ? (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-700">
-              <RefreshCw className="h-3 w-3 animate-spin" />
-              Importing
-            </span>
-          ) : isQueued ? (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-neutral-200 px-2.5 py-1 text-xs font-medium text-neutral-600">
-              Queued
-            </span>
-          ) : hasNewGames ? (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-700">
-              New Games
-            </span>
-          ) : isSynced ? (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-green-100 px-2.5 py-1 text-xs font-medium text-green-700">
-              <Check className="h-3 w-3" />
-              Synced
-            </span>
-          ) : null}
+          <div className="flex items-center gap-2">
+            {isSyncing ? (
+              <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${
+                importPhase === "streaming" ? "bg-blue-100 text-blue-700" :
+                importPhase === "saving" ? "bg-amber-100 text-amber-700" :
+                importPhase === "error" ? "bg-red-100 text-red-700" :
+                "bg-blue-100 text-blue-700"
+              }`}>
+                <RefreshCw className={`h-3 w-3 ${importPhase !== "error" ? "animate-spin" : ""}`} />
+                {importPhase === "streaming" ? "Downloading" :
+                 importPhase === "saving" ? "Saving" :
+                 importPhase === "error" ? "Error" : "Syncing"}
+              </span>
+            ) : isQueued ? (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-neutral-200 px-2.5 py-1 text-xs font-medium text-neutral-600">
+                Queued
+              </span>
+            ) : hasNewGames ? (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-700">
+                New Games
+              </span>
+            ) : isSynced ? (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-green-100 px-2.5 py-1 text-xs font-medium text-green-700">
+                <Check className="h-3 w-3" />
+                Synced
+              </span>
+            ) : null}
+          </div>
         </div>
+        
+        {/* 3-year scope note */}
+        <div className="text-[10px] text-neutral-400">
+          Games from past 3 years
+        </div>
+        
+        {/* Error message */}
+        {syncError && (
+          <div className="text-xs text-red-600">
+            {syncError}
+          </div>
+        )}
       </div>
 
       {/* Zone D: Career Performance */}

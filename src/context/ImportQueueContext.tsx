@@ -4,12 +4,17 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import { createOpeningGraphImporter } from "@/lib/openingGraphImport/openingGraphImportService";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
+type ImportPhase = "idle" | "streaming" | "saving" | "done" | "error";
+
 type ImportQueueContextValue = {
   isImporting: boolean;
   progress: number;
   currentOpponent: string | null;
   progressByOpponent: Record<string, number>;
   queue: string[];
+  importPhase: ImportPhase;
+  pendingWrites: number;
+  lastError: string | null;
   addToQueue: (opponentId: string) => void;
   removeFromQueue: (opponentId: string) => void;
   startImport: () => void;
@@ -68,6 +73,10 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
   const [currentOpponent, setCurrentOpponent] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [syncedCount, setSyncedCount] = useState(0);
+  const [importPhase, setImportPhase] = useState<ImportPhase>("idle");
+  const [pendingWrites, setPendingWrites] = useState(0);
+  const [lastError, setLastError] = useState<string | null>(null);
+
   const [progressByOpponent, setProgressByOpponent] = useState<Record<string, number>>(() => {
     try {
       if (typeof window === "undefined") return {};
@@ -109,7 +118,9 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
   const baseCountRef = useRef<number>(0);
 
   const importerRef = useRef<ReturnType<typeof createOpeningGraphImporter> | null>(null);
+  const importPhaseRef = useRef<ImportPhase>("idle");
   const finishingRef = useRef(false);
+  const importSessionRef = useRef(0); // Incremented each import to ignore stale updates
   const queueRef = useRef<string[]>([]);
   const importingRef = useRef(false);
   const currentOpponentRef = useRef<string | null>(null);
@@ -124,7 +135,8 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
   const activityTimeoutRef = useRef<number | null>(null);
 
   // Activity timeout - if no progress for 90 seconds, consider import stalled
-  const ACTIVITY_TIMEOUT_MS = 90000;
+  const ACTIVITY_TIMEOUT_MS = 90_000; // 90 seconds with no progress = stalled
+  const SCOUT_BASE_YEARS = 3; // Only sync games from the past 3 years
 
   const pollSyncedCount = useCallback(async (opponentId: string) => {
     const parsed = parseOpponentId(opponentId);
@@ -249,28 +261,64 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
     console.log("[ImportQueue] finishCurrent called, currentOpponent:", currentOpponentRef.current);
 
     importingRef.current = false;
+    importPhaseRef.current = "idle";
+    
+    // Invalidate the current session to ignore any stale updates
+    importSessionRef.current++;
 
+    // IMPORTANT: Stop and destroy the importer completely
     const imp = importerRef.current;
     importerRef.current = null;
     if (imp) {
+      // Stop the worker and wait for cleanup
       void imp.stop().catch(() => null);
     }
 
     setIsImporting(false);
     setCurrentOpponent(null);
     setProgress(0);
+    setImportPhase("idle");
+    setPendingWrites(0);
+    setLastError(null); // Clear error on finish
     setQueue((prev) => prev.slice(1));
 
     finishingRef.current = false;
   }, []);
 
-  const ensureImporter = useCallback(() => {
-    if (importerRef.current) return importerRef.current;
+  const createNewImporter = useCallback(() => {
+    // ALWAYS create a new importer - never reuse to avoid state mixing
+    if (importerRef.current) {
+      // Stop any existing importer first
+      void importerRef.current.stop().catch(() => null);
+      importerRef.current = null;
+    }
+    
+    // Increment session ID to track this import
+    importSessionRef.current++;
+    const sessionId = importSessionRef.current;
 
     importerRef.current = createOpeningGraphImporter({
       onStatus: (s) => {
+        // Ignore stale updates from previous sessions
+        if (sessionId !== importSessionRef.current) {
+          console.log("[ImportQueue] Ignoring stale update from session", sessionId, "current is", importSessionRef.current);
+          return;
+        }
+        
         // Update activity timestamp on any status update
         lastActivityAtRef.current = Date.now();
+
+        // Update phase tracking
+        if (s.phase !== importPhaseRef.current) {
+          importPhaseRef.current = s.phase;
+          setImportPhase(s.phase);
+        }
+        setPendingWrites(s.pendingWrites ?? 0);
+        
+        // Capture error messages
+        if (s.lastError) {
+          setLastError(s.lastError);
+        }
 
         // gp is games processed in THIS session
         const gp = Math.max(0, Number(s.gamesProcessed ?? 0));
@@ -297,9 +345,18 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
             });
           }
         }
-        if (s.phase === "done" || s.phase === "error") {
-          console.log("[ImportQueue] Import completed with phase:", s.phase, "games:", s.gamesProcessed);
-          finishCurrent();
+        if (s.phase === "done") {
+          console.log("[ImportQueue] Import completed successfully, games:", s.gamesProcessed);
+          // Show "Complete!" briefly before dismissing
+          setTimeout(() => {
+            finishCurrent();
+          }, 2000);
+        } else if (s.phase === "error") {
+          console.log("[ImportQueue] Import failed with error:", s.lastError);
+          // Show error briefly before dismissing
+          setTimeout(() => {
+            finishCurrent();
+          }, 3000);
         }
       },
     });
@@ -325,31 +382,68 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
 
     importingRef.current = true;
     setIsImporting(true);
+    setLastError(null); // Clear any previous error
     const nextKey = normalizeOpponentId(next);
     setCurrentOpponent(nextKey);
     lastActivityAtRef.current = Date.now();
     console.log("[ImportQueue] Starting import for:", nextKey);
     
-    // Set base count to previous synced count (for cumulative display)
-    // Also get the last sync timestamp for incremental sync
-    let sinceMs: number | undefined;
-    setProgressByOpponent((prev) => {
-      baseCountRef.current = Math.max(0, Number(prev[nextKey] ?? 0));
-      return prev; // Don't modify, just read
-    });
-    setLastSyncTimestamp((prev) => {
-      const ts = prev[nextKey];
-      if (typeof ts === "number" && ts > 0) {
-        // Add 1ms to avoid re-fetching the same game
-        sinceMs = ts + 1;
+    // Query the ACTUAL database count - localStorage might be stale from failed syncs
+    let actualDbCount = 0;
+    try {
+      const client = createSupabaseBrowserClient();
+      const { data: { user } } = await client.auth.getUser();
+      if (user?.id) {
+        const { count } = await client
+          .from("games")
+          .select("id", { count: "exact", head: true })
+          .eq("profile_id", user.id)
+          .eq("platform", parsed.platform)
+          .ilike("username", parsed.username.toLowerCase());
+        actualDbCount = typeof count === "number" ? count : 0;
       }
-      return prev; // Don't modify, just read
-    });
-    setProgress(baseCountRef.current);
-    setSyncedCount(baseCountRef.current);
-    void pollSyncedCount(nextKey);
+    } catch (e) {
+      console.warn("[ImportQueue] Failed to query actual DB count:", e);
+    }
+    
+    console.log("[ImportQueue] Actual DB count for", nextKey, ":", actualDbCount);
+    baseCountRef.current = actualDbCount;
+    
+    // Apply 3-year filter as the minimum date
+    const threeYearsAgoMs = new Date().setFullYear(new Date().getFullYear() - SCOUT_BASE_YEARS);
+    let sinceMs: number = threeYearsAgoMs; // Default to 3 years ago
+    
+    // Only use lastSyncTimestamp for incremental sync if we actually have games in the DB
+    // Otherwise the timestamp is stale from a failed/stopped sync
+    const lastTs = lastSyncTimestampRef.current[nextKey];
+    if (actualDbCount > 0 && typeof lastTs === "number" && lastTs > 0) {
+      // Use the later of: last sync timestamp or 3 years ago
+      sinceMs = Math.max(lastTs + 1, threeYearsAgoMs);
+      console.log("[ImportQueue] Using incremental sync from", new Date(sinceMs).toISOString());
+    } else if (lastTs) {
+      // Clear stale timestamp if no games are in the database
+      console.log("[ImportQueue] Clearing stale lastSyncTimestamp for", nextKey, "(DB has 0 games)");
+      delete lastSyncTimestampRef.current[nextKey];
+      setLastSyncTimestamp((prev) => {
+        const next = { ...prev };
+        delete next[nextKey];
+        return next;
+      });
+      // Also clear stale progress from localStorage
+      delete progressByOpponentRef.current[nextKey];
+      setProgressByOpponent((prev) => {
+        const next = { ...prev };
+        delete next[nextKey];
+        return next;
+      });
+    }
+    
+    console.log("[ImportQueue] sinceMs for", nextKey, ":", new Date(sinceMs).toISOString(), "(3yr ago:", new Date(threeYearsAgoMs).toISOString(), ")");
+    
+    setProgress(actualDbCount);
+    setSyncedCount(actualDbCount);
 
-    const importer = ensureImporter();
+    const importer = createNewImporter();
     try {
       await importer.start({
         platform: "lichess",
@@ -361,7 +455,7 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
     } catch {
       finishCurrent();
     }
-  }, [ensureImporter, pollSyncedCount]);
+  }, [createNewImporter, pollSyncedCount, finishCurrent]);
 
   useEffect(() => {
     if (!isImporting || !currentOpponent) return;
@@ -438,36 +532,72 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
       currentOpponent,
       progressByOpponent,
       queue,
+      importPhase,
+      pendingWrites,
+      lastError,
       addToQueue,
       removeFromQueue,
       startImport,
       stopSync,
     }),
-    [addToQueue, currentOpponent, isImporting, progress, progressByOpponent, queue, removeFromQueue, startImport, stopSync]
+    [addToQueue, currentOpponent, importPhase, isImporting, lastError, pendingWrites, progress, progressByOpponent, queue, removeFromQueue, startImport, stopSync]
   );
 
   const pill = useMemo(() => {
     if (!isImporting || !currentOpponent) return null;
     const parsed = parseOpponentId(currentOpponent);
     const opponentLabel = parsed?.username ? parsed.username : currentOpponent;
+    
+    // Determine status message and indicator color based on phase
+    let statusMessage = "Syncing…";
+    let indicatorColor = "bg-emerald-500";
+    let statusDetail = `${syncedCount} synced`;
+    
+    if (importPhase === "streaming") {
+      statusMessage = "Downloading…";
+      indicatorColor = "bg-blue-500";
+      statusDetail = `${syncedCount} games`;
+    } else if (importPhase === "saving") {
+      statusMessage = "Saving…";
+      indicatorColor = "bg-amber-500";
+      statusDetail = pendingWrites > 0 ? `${pendingWrites} pending` : `${syncedCount} saved`;
+    } else if (importPhase === "done") {
+      statusMessage = "Complete!";
+      indicatorColor = "bg-emerald-500";
+      statusDetail = `${syncedCount} synced`;
+    } else if (importPhase === "error") {
+      statusMessage = "Error";
+      indicatorColor = "bg-red-500";
+      statusDetail = lastError ? lastError.slice(0, 50) : "Failed";
+    }
+    
     return (
       <div className="pointer-events-none fixed bottom-4 right-4 z-50">
-        <div className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-900 shadow-sm">
-          <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
-          <span className="truncate">Syncing games…</span>
-          <span className="tabular-nums text-zinc-600">({syncedCount} synced)</span>
-          <span className="max-w-[140px] truncate text-zinc-500">{opponentLabel}</span>
-          <button
-            type="button"
-            className="ml-1 inline-flex h-6 items-center justify-center rounded-full border border-zinc-200 bg-white px-2 text-[10px] font-semibold text-zinc-700 hover:bg-zinc-50"
-            onClick={() => stopSync()}
-          >
-            Stop
-          </button>
+        <div className="pointer-events-auto flex max-w-md flex-col gap-1 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-900 shadow-sm">
+          <div className="flex items-center gap-2">
+            <span className={`h-2 w-2 shrink-0 ${importPhase === "done" || importPhase === "error" ? "" : "animate-pulse"} rounded-full ${indicatorColor}`} />
+            <span className="truncate">{statusMessage}</span>
+            {importPhase !== "error" && (
+              <span className="tabular-nums text-zinc-600">({statusDetail})</span>
+            )}
+            <span className="max-w-[140px] truncate text-zinc-500">{opponentLabel}</span>
+            <button
+              type="button"
+              className="ml-1 inline-flex h-6 shrink-0 items-center justify-center rounded-full border border-zinc-200 bg-white px-2 text-[10px] font-semibold text-zinc-700 hover:bg-zinc-50"
+              onClick={() => stopSync()}
+            >
+              {importPhase === "error" ? "Dismiss" : "Stop"}
+            </button>
+          </div>
+          {importPhase === "error" && lastError && (
+            <div className="text-[10px] font-normal text-red-600 line-clamp-2">
+              {lastError}
+            </div>
+          )}
         </div>
       </div>
     );
-  }, [currentOpponent, isImporting, stopSync, syncedCount]);
+  }, [currentOpponent, importPhase, isImporting, lastError, pendingWrites, stopSync, syncedCount]);
 
   return (
     <ImportQueueContext.Provider value={value}>

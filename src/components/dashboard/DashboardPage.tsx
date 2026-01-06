@@ -118,7 +118,7 @@ export function DashboardPage({ initialOpponents }: Props) {
   const [displayIndexedCount, setDisplayIndexedCount] = useState(0);
   const [indeterminateArmed, setIndeterminateArmed] = useState(false);
 
-  const { addToQueue, removeFromQueue, startImport, stopSync, isImporting, progress, currentOpponent, progressByOpponent, queue } = useImportQueue();
+  const { addToQueue, removeFromQueue, startImport, stopSync, isImporting, progress, currentOpponent, progressByOpponent, queue, importPhase } = useImportQueue();
 
   const { imports } = useImportsRealtime();
 
@@ -980,8 +980,15 @@ export function DashboardPage({ initialOpponents }: Props) {
                               </span>
                             )}
                             {isFastRunning ? (
-                              <span className="inline-flex items-center rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-zinc-700">
-                                Syncing…
+                              <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+                                importPhase === "streaming" ? "border-blue-200 bg-blue-50 text-blue-700" :
+                                importPhase === "saving" ? "border-amber-200 bg-amber-50 text-amber-700" :
+                                importPhase === "error" ? "border-red-200 bg-red-50 text-red-700" :
+                                "border-zinc-200 bg-white text-zinc-700"
+                              }`}>
+                                {importPhase === "streaming" ? "Downloading" :
+                                 importPhase === "saving" ? "Saving" :
+                                 importPhase === "error" ? "Error" : "Syncing"}
                               </span>
                             ) : isFastQueued ? (
                               <span className="inline-flex items-center rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-zinc-700">
@@ -1011,9 +1018,16 @@ export function DashboardPage({ initialOpponents }: Props) {
 
                       <div className="mt-3 flex flex-wrap items-center gap-2">
                         {isFastRunning ? (
-                          <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-100 px-2.5 py-1 text-[10px] font-medium text-blue-700">
-                            <RefreshCw className="h-3 w-3 animate-spin" />
-                            Syncing
+                          <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-medium ${
+                            importPhase === "streaming" ? "bg-blue-100 text-blue-700" :
+                            importPhase === "saving" ? "bg-amber-100 text-amber-700" :
+                            importPhase === "error" ? "bg-red-100 text-red-700" :
+                            "bg-blue-100 text-blue-700"
+                          }`}>
+                            <RefreshCw className={`h-3 w-3 ${importPhase !== "error" ? "animate-spin" : ""}`} />
+                            {importPhase === "streaming" ? "Downloading" :
+                             importPhase === "saving" ? "Saving" :
+                             importPhase === "error" ? "Error" : "Syncing"}
                           </span>
                         ) : isFastQueued ? (
                           <span className="inline-flex items-center rounded-full bg-neutral-200 px-2.5 py-1 text-[10px] font-medium text-neutral-600">
@@ -1032,13 +1046,20 @@ export function DashboardPage({ initialOpponents }: Props) {
 
                         {activityLevel ? (
                           <span
-                            className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-medium ${
+                            className={`inline-flex cursor-help items-center rounded-full px-2.5 py-1 text-[10px] font-medium ${
                               activityLevel === "very_active"
                                 ? "bg-amber-100 text-amber-700"
                                 : activityLevel === "active"
                                   ? "bg-zinc-100 text-zinc-700"
                                   : "bg-zinc-50 text-zinc-400"
                             }`}
+                            title={
+                              activityLevel === "very_active"
+                                ? "Played multiple games in the past week"
+                                : activityLevel === "active"
+                                  ? "Played at least one game in the past month"
+                                  : "No games played in the past month"
+                            }
                           >
                             {activityLevel === "very_active" ? "Very Active" : activityLevel === "active" ? "Active" : "Inactive"}
                           </span>

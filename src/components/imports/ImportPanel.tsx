@@ -275,7 +275,15 @@ export function ImportPanel({ selfUsername, selfPlatform }: Props) {
 
             <div className="text-sm text-zinc-600">
               Status:{" "}
-              <span className="font-medium text-zinc-900">{selfImport?.status ?? "idle"}</span>
+              <span className={`font-medium ${
+                selfImport?.status === "running" ? "text-blue-600" :
+                selfImport?.status === "complete" ? "text-emerald-600" :
+                selfImport?.status === "error" ? "text-red-600" : "text-zinc-900"
+              }`}>
+                {selfImport?.status === "running" ? "Syncing…" :
+                 selfImport?.status === "complete" ? "Complete" :
+                 selfImport?.status ?? "idle"}
+              </span>
             </div>
           </div>
 
@@ -341,7 +349,7 @@ export function ImportPanel({ selfUsername, selfPlatform }: Props) {
             <button
               type="button"
               className="inline-flex h-11 items-center justify-center rounded-xl border border-zinc-200 bg-white px-4 text-sm font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
-              disabled={loading || fastStatus.phase === "running"}
+              disabled={loading || fastStatus.phase === "streaming" || fastStatus.phase === "saving"}
               onClick={startFastOpponentImport}
               title="Fast Import (beta): streams from Lichess and writes aggregated opening graph"
             >

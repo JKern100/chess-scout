@@ -19,16 +19,17 @@ type WorkerFlushGame = {
 };
 
 type WorkerMessage =
-  | { type: "progress"; gamesProcessed: number; bytesRead: number; status: "running" | "done" | "stopped"; lastError?: string | null; newestGameTimestamp?: number | null }
+  | { type: "progress"; gamesProcessed: number; bytesRead: number; status: "running" | "done" | "stopped"; phase: "streaming" | "flushing" | "done"; lastError?: string | null; newestGameTimestamp?: number | null }
   | { type: "flush"; nodes: WorkerFlushNode[]; games: WorkerFlushGame[]; gamesProcessed: number }
   | { type: "done"; gamesProcessed: number; newestGameTimestamp?: number | null };
 
 export type OpeningGraphImportStatus = {
-  phase: "idle" | "running" | "done" | "error";
+  phase: "idle" | "streaming" | "saving" | "done" | "error";
   gamesProcessed: number;
   bytesRead: number;
   lastError: string | null;
   newestGameTimestamp?: number | null;
+  pendingWrites?: number;
 };
 
 export type OpeningGraphImportParams = {
@@ -50,7 +51,8 @@ export function createOpeningGraphImporter(params: {
 
   let worker: Worker | null = null;
   let stopped = false;
-  let status: OpeningGraphImportStatus = { phase: "idle", gamesProcessed: 0, bytesRead: 0, lastError: null };
+  let status: OpeningGraphImportStatus = { phase: "idle", gamesProcessed: 0, bytesRead: 0, lastError: null, pendingWrites: 0 };
+  let pendingWriteCount = 0;
 
   let profileId: string | null = null;
   let writeDisabled = false;
@@ -74,19 +76,33 @@ export function createOpeningGraphImporter(params: {
       updated_at: new Date().toISOString(),
     }));
 
-    const chunkSize = 200;
+    // Use larger chunks and parallel writes for better performance
+    const chunkSize = 500;
+    const chunks: typeof rows[] = [];
     for (let i = 0; i < rows.length; i += chunkSize) {
-      const chunk = rows.slice(i, i + chunkSize);
-      const { error } = await supabase.from("opening_graph_nodes").upsert(chunk, {
-        onConflict: "profile_id,platform,username,filter_key,fen",
-      });
-      if (error) {
-        // If we hit RLS/permission issues, stop spamming and surface a clear error.
-        const statusCode = (error as any)?.status;
-        if (statusCode === 401 || statusCode === 403) {
-          writeDisabled = true;
+      chunks.push(rows.slice(i, i + chunkSize));
+    }
+    
+    // Write chunks in parallel (up to 3 at a time to avoid overwhelming the DB)
+    const batchSize = 3;
+    for (let i = 0; i < chunks.length; i += batchSize) {
+      const batch = chunks.slice(i, i + batchSize);
+      const results = await Promise.all(
+        batch.map(chunk => 
+          supabase.from("opening_graph_nodes").upsert(chunk, {
+            onConflict: "profile_id,platform,username,filter_key,fen",
+          })
+        )
+      );
+      
+      for (const { error } of results) {
+        if (error) {
+          const statusCode = (error as any)?.status;
+          if (statusCode === 401 || statusCode === 403) {
+            writeDisabled = true;
+          }
+          throw error;
         }
-        throw error;
       }
     }
   }
@@ -109,19 +125,34 @@ export function createOpeningGraphImporter(params: {
       }))
       .filter((r) => r.platform_game_id && r.pgn);
 
-    const chunkSize = 100;
+    // Use larger chunks and parallel writes for better performance
+    const chunkSize = 200;
+    const chunks: typeof rows[] = [];
     for (let i = 0; i < rows.length; i += chunkSize) {
-      const chunk = rows.slice(i, i + chunkSize);
-      const { error } = await supabase.from("games").upsert(chunk, {
-        onConflict: "platform,platform_game_id",
-        ignoreDuplicates: true,
-      });
-      if (error) {
-        const statusCode = (error as any)?.status;
-        if (statusCode === 401 || statusCode === 403) {
-          writeDisabled = true;
+      chunks.push(rows.slice(i, i + chunkSize));
+    }
+    
+    // Write chunks in parallel (up to 3 at a time)
+    const batchSize = 3;
+    for (let i = 0; i < chunks.length; i += batchSize) {
+      const batch = chunks.slice(i, i + batchSize);
+      const results = await Promise.all(
+        batch.map(chunk => 
+          supabase.from("games").upsert(chunk, {
+            onConflict: "platform,platform_game_id",
+            ignoreDuplicates: true,
+          })
+        )
+      );
+      
+      for (const { error } of results) {
+        if (error) {
+          const statusCode = (error as any)?.status;
+          if (statusCode === 401 || statusCode === 403) {
+            writeDisabled = true;
+          }
+          throw error;
         }
-        throw error;
       }
     }
   }
@@ -144,7 +175,8 @@ export function createOpeningGraphImporter(params: {
   async function start(p: OpeningGraphImportParams) {
     stopped = false;
     writeDisabled = false;
-    setStatus({ phase: "running", gamesProcessed: 0, bytesRead: 0, lastError: null });
+    pendingWriteCount = 0;
+    setStatus({ phase: "streaming", gamesProcessed: 0, bytesRead: 0, lastError: null, pendingWrites: 0 });
 
     const {
       data: { user },
@@ -163,7 +195,19 @@ export function createOpeningGraphImporter(params: {
       if (!msg || typeof msg !== "object") return;
 
       if (msg.type === "progress") {
-        setStatus({ gamesProcessed: msg.gamesProcessed, bytesRead: msg.bytesRead, lastError: msg.lastError ?? null, newestGameTimestamp: msg.newestGameTimestamp ?? null });
+        // Map worker phase to service phase
+        let servicePhase: OpeningGraphImportStatus["phase"] = status.phase;
+        if (msg.phase === "streaming") servicePhase = "streaming";
+        else if (msg.phase === "flushing") servicePhase = "saving";
+        
+        setStatus({ 
+          phase: servicePhase,
+          gamesProcessed: msg.gamesProcessed, 
+          bytesRead: msg.bytesRead, 
+          lastError: msg.lastError ?? null, 
+          newestGameTimestamp: msg.newestGameTimestamp ?? null,
+          pendingWrites: pendingWriteCount,
+        });
         if (msg.status === "stopped" && msg.lastError) {
           setStatus({ phase: "error", lastError: msg.lastError });
         }
@@ -176,12 +220,22 @@ export function createOpeningGraphImporter(params: {
         const nodes = Array.isArray(msg.nodes) ? msg.nodes : [];
         const games = Array.isArray(msg.games) ? msg.games : [];
 
+        pendingWriteCount++;
+        setStatus({ pendingWrites: pendingWriteCount });
+        
         writeQueue = writeQueue
-          .then(() => upsertNodes(platform, username, nodes))
-          .then(() => upsertGames(platform, username, games))
+          .then(() => Promise.all([
+            upsertNodes(platform, username, nodes),
+            upsertGames(platform, username, games),
+          ]))
+          .then(() => {
+            pendingWriteCount = Math.max(0, pendingWriteCount - 1);
+            setStatus({ pendingWrites: pendingWriteCount });
+          })
           .catch((e) => {
+            pendingWriteCount = Math.max(0, pendingWriteCount - 1);
             const m = e instanceof Error ? e.message : "Failed to write opening graph";
-            setStatus({ phase: "error", lastError: m });
+            setStatus({ phase: "error", lastError: m, pendingWrites: pendingWriteCount });
             if (writeDisabled) {
               postStop();
             }
@@ -228,7 +282,7 @@ export function createOpeningGraphImporter(params: {
       worker = null;
     }
 
-    if (status.phase === "running") {
+    if (status.phase === "streaming" || status.phase === "saving") {
       setStatus({ phase: "done" });
     }
   }
