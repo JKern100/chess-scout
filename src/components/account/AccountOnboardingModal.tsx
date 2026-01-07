@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { X, RefreshCw, Check, ChevronRight } from "lucide-react";
+import { X, RefreshCw, Check, ChevronRight, BookOpen, Clock } from "lucide-react";
+import Link from "next/link";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { useImportQueue } from "@/context/ImportQueueContext";
 import { OpponentFiltersPanel } from "@/components/chess/OpponentFiltersPanel";
@@ -397,16 +398,32 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
                   <RefreshCw className={`h-8 w-8 text-blue-600 ${isUserSyncing ? "animate-spin" : ""}`} />
                 </div>
                 <h2 className="text-lg font-semibold text-zinc-900">
-                  {isUserSyncing ? "Syncing Your Games..." : syncedGamesCount > 0 ? "Sync Complete!" : "Starting Sync..."}
+                  {isUserSyncing ? "Building Your Chess Profile..." : syncedGamesCount > 0 ? "Sync Complete!" : "Starting Sync..."}
                 </h2>
-                <p className="mt-2 text-sm text-zinc-600">
+                <p className="mt-2 text-sm text-zinc-600 max-w-md mx-auto">
                   {isUserSyncing
-                    ? "This may take a few minutes depending on your game history."
+                    ? "We're importing your last 3 years of games to build a comprehensive picture of your playing style."
                     : syncedGamesCount > 0
                     ? "Your games have been imported successfully."
                     : "Preparing to import your games..."}
                 </p>
               </div>
+
+              {/* 3-Year Explanation */}
+              {isUserSyncing && (
+                <div className="mb-4 rounded-xl border border-blue-100 bg-blue-50 p-4 text-left">
+                  <div className="flex items-start gap-3">
+                    <Clock className="h-5 w-5 text-blue-600 mt-0.5 shrink-0" />
+                    <div>
+                      <div className="text-sm font-medium text-blue-900">Why 3 years of games?</div>
+                      <p className="mt-1 text-xs text-blue-700">
+                        This timeframe captures your current playing style while filtering out outdated patterns.
+                        The result? More accurate insights and better opponent preparation.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div className="mb-6 rounded-xl bg-zinc-50 p-6">
                 <div className="text-4xl font-bold text-zinc-900">{syncedGamesCount.toLocaleString()}</div>
@@ -414,45 +431,60 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
 
                 {isUserSyncing && (
                   <div className="mt-4">
-                    <div className="h-2 w-full overflow-hidden rounded-full bg-zinc-200">
+                    <div className="h-2.5 w-full overflow-hidden rounded-full bg-zinc-200">
                       <div
-                        className="h-2 rounded-full bg-blue-500 transition-all"
-                        style={{ width: `${Math.min(100, (userSyncProgress / 1000) * 100)}%` }}
+                        className="h-2.5 rounded-full bg-gradient-to-r from-blue-500 to-blue-600 transition-all duration-500"
+                        style={{ width: `${Math.min(100, Math.max(5, (syncedGamesCount / Math.max(syncedGamesCount + 500, 1000)) * 100))}%` }}
                       />
                     </div>
-                    <div className="mt-2 text-xs text-zinc-500">
-                      Sync runs in the background. You can continue when ready.
+                    <div className="mt-3 text-xs text-zinc-500">
+                      {syncedGamesCount < 100 
+                        ? "Getting started... this usually takes 1-5 minutes."
+                        : syncedGamesCount < 500
+                        ? "Making great progress! Your profile is taking shape."
+                        : syncedGamesCount < 2000
+                        ? "Impressive game history! Almost there."
+                        : "Wow, you've played a lot! Hang tight, we're processing everything."}
                     </div>
                   </div>
                 )}
               </div>
 
-              <div className="flex flex-col items-center justify-center gap-3">
-                {isUserSyncing && syncedGamesCount >= MIN_GAMES_FOR_PROFILE && (
-                  <button
-                    type="button"
-                    onClick={handleSkipToFilters}
-                    className="inline-flex h-11 items-center justify-center rounded-xl border border-zinc-200 bg-white px-6 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
-                  >
-                    Continue (sync in background)
-                  </button>
-                )}
-                {isUserSyncing && syncedGamesCount < MIN_GAMES_FOR_PROFILE && (
-                  <div className="text-xs text-zinc-500">
-                    Waiting for at least {MIN_GAMES_FOR_PROFILE} games to generate a meaningful profile...
+              {/* User Guide invitation */}
+              {isUserSyncing && (
+                <div className="mb-6 rounded-xl border border-zinc-200 bg-white p-4">
+                  <div className="flex items-center justify-center gap-3">
+                    <BookOpen className="h-5 w-5 text-zinc-500" />
+                    <span className="text-sm text-zinc-600">While you wait, explore the</span>
+                    <Link
+                      href="/guide"
+                      target="_blank"
+                      className="text-sm font-medium text-blue-600 hover:text-blue-700 hover:underline"
+                    >
+                      User Guide →
+                    </Link>
                   </div>
-                )}
-                {!isUserSyncing && syncedGamesCount > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setStep("filters")}
-                    className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-zinc-900 px-6 text-sm font-medium text-white hover:bg-zinc-800"
-                  >
-                    Continue
-                    <ChevronRight className="h-4 w-4" />
-                  </button>
-                )}
-              </div>
+                </div>
+              )}
+
+              {/* Only show continue when sync is complete */}
+              {!isUserSyncing && syncedGamesCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setStep("filters")}
+                  className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-zinc-900 px-6 text-sm font-medium text-white hover:bg-zinc-800"
+                >
+                  Continue
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              )}
+
+              {/* Encouraging message while syncing */}
+              {isUserSyncing && (
+                <p className="text-xs text-zinc-400 mt-4">
+                  Please keep this window open. The sync will complete automatically.
+                </p>
+              )}
             </div>
           )}
 

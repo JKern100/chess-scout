@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronDown, LayoutDashboard, LineChart, FileText, RefreshCw, Menu, X, Check, UserCircle, LogOut, History, Settings, Shield } from "lucide-react";
+import { ChevronDown, LayoutDashboard, LineChart, FileText, RefreshCw, Menu, X, Check, UserCircle, LogOut, History, Settings, Shield, BookOpen } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { useActiveOpponent } from "@/context/ActiveOpponentContext";
 import { useImportQueue } from "@/context/ImportQueueContext";
@@ -317,6 +317,14 @@ export function GlobalNavBar() {
                       <History className="h-4 w-4 text-zinc-400" />
                       Scout History
                     </button>
+                    <Link
+                      href="/guide"
+                      className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-zinc-700 transition-colors hover:bg-zinc-50"
+                      onClick={() => setProfileDropdownOpen(false)}
+                    >
+                      <BookOpen className="h-4 w-4 text-zinc-400" />
+                      User Guide
+                    </Link>
                   </div>
 
                   {/* Sign Out */}
