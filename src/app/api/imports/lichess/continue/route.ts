@@ -87,7 +87,7 @@ export async function POST(request: Request) {
 
     if (imp.target_type === "opponent" && scoutBaseSinceIso == null) {
       const SCOUT_BASE_YEARS = 3;
-      const FALLBACK_MOST_RECENT_LIMIT = 100;
+      const FALLBACK_MOST_RECENT_LIMIT = 5000; // Increased to allow complete imports for most opponents
       const nowMs = Date.now();
       const sinceMs3y = new Date(nowMs).setFullYear(new Date(nowMs).getFullYear() - SCOUT_BASE_YEARS);
       scoutBaseSinceIso = new Date(sinceMs3y).toISOString();
@@ -125,7 +125,12 @@ export async function POST(request: Request) {
     let batchMax = ready || stage === "archiving" ? STAGE2_BATCH_MAX : STAGE1_BATCH_MAX;
     if (imp.target_type === "opponent" && scoutBaseFallback) {
       const remaining = scoutBaseFallbackLimit - importedCountBefore;
+      // Ensure we don't fetch more than the remaining limit
       batchMax = Math.max(0, Math.min(batchMax, remaining));
+      // If we're close to the limit, stop fetching to avoid overshooting
+      if (remaining <= 0) {
+        batchMax = 0;
+      }
     }
 
     const tFetch0 = Date.now();
@@ -157,7 +162,11 @@ export async function POST(request: Request) {
     );
 
     if (batch.games.length === 0 || batchMax <= 0) {
-      // No more games to fetch. If this is an opponent import and we still haven't indexed
+      // No more games to fetch from Lichess.
+      // Mark as complete if we've reached the end of available games.
+      const shouldMarkCompleteNoMoreGames = batch.games.length === 0 && importedCountBefore > 0;
+      
+      // If this is an opponent import and we still haven't indexed
       // the already-synced games into opponent_move_events, keep working through them.
       if (imp.target_type === "opponent" && indexedCountBefore < importedCountBefore) {
         let indexedGameCount = 0;
@@ -246,6 +255,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ import: updated, batchCount: 0, indexedGames: indexedGameCount });
       }
 
+      // No more games to fetch and no indexing needed - mark as complete
       const { data: updated, error: updateErr } = await supabase
         .from("imports")
         .update({
@@ -254,6 +264,7 @@ export async function POST(request: Request) {
           ready: imp.target_type === "opponent" ? true : (imp as any)?.ready,
           last_success_at: new Date().toISOString(),
           last_error: null,
+          cursor_until: null,
         })
         .eq("id", imp.id)
         .select(
@@ -341,7 +352,11 @@ export async function POST(request: Request) {
 
     let indexedGameCount = 0;
 
-    if (insertedCount === 0 && (shouldIndexMovesStage1 || shouldIndexMovesStage2)) {
+    // Index moves if: (1) no new games inserted, OR (2) fallback limit reached and we need to index what we have
+    const shouldIndexNow = (shouldIndexMovesStage1 || shouldIndexMovesStage2) && 
+                          (insertedCount === 0 || (fallbackReached && indexedCountBefore < importedCountAfter));
+
+    if (shouldIndexNow) {
       try {
         const start = Math.max(0, indexedCountBefore);
         const end = start + (shouldIndexMovesStage2 ? STAGE2_BATCH_MAX : STAGE1_INDEX_MAX) - 1;
@@ -468,6 +483,11 @@ export async function POST(request: Request) {
       updatePayload.stage = "complete";
       updatePayload.ready = true;
       updatePayload.cursor_until = null;
+      
+      // Ensure archived_count is set when completing
+      if (imp.target_type === "opponent" && indexedGameCount > 0) {
+        updatePayload.archived_count = indexedCountBefore + indexedGameCount;
+      }
     }
 
     if (imp.target_type === "opponent" && indexedGameCount > 0) {

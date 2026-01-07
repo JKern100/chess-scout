@@ -5,25 +5,12 @@ import { useEffect, useRef } from "react";
 type ImportRow = {
   id: string;
   platform: "lichess" | "chesscom";
+  username: string;
   status: "idle" | "running" | "stopped" | "complete" | "error";
   target_type?: "self" | "opponent";
+  imported_count?: number | null;
+  archived_count?: number | null;
 };
-
-async function fetchImportStatus(): Promise<ImportRow[]> {
-  const res = await fetch("/api/imports/status", { cache: "no-store" });
-  if (!res.ok) return [];
-  const json = await res.json().catch(() => ({}));
-  const imports = Array.isArray((json as any)?.imports) ? ((json as any).imports as ImportRow[]) : [];
-  return imports;
-}
-
-async function continueLichessImport(importId: string) {
-  await fetch("/api/imports/lichess/continue", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ import_id: importId }),
-  }).catch(() => null);
-}
 
 export function ImportSupervisor() {
   const inflight = useRef<Map<string, number>>(new Map());
@@ -107,8 +94,26 @@ export function ImportSupervisor() {
       })();
       if (stopped.current) return;
 
-      // Only handle "self" imports here - opponent imports are handled by ImportQueueContext
-      const running = imports.filter((i) => i?.status === "running" && i?.platform === "lichess" && i?.id && i?.target_type === "self");
+      // Handle "self" imports that are running
+      const runningSelf = imports.filter((i) => i?.status === "running" && i?.platform === "lichess" && i?.id && i?.target_type === "self");
+      
+      // Also handle opponent imports that need indexing (archived_count < imported_count)
+      const needsIndexing = imports.filter((i) => {
+        if (i?.platform !== "lichess" || !i?.id || i?.target_type !== "opponent") return false;
+        const imported = typeof (i as any)?.imported_count === "number" ? (i as any).imported_count : 0;
+        const indexed = typeof (i as any)?.archived_count === "number" ? (i as any).archived_count : 0;
+        const needs = imported > 0 && indexed < imported;
+        if (needs) {
+          const now = Date.now();
+          if (now - lastLogAt.current > 10000) {
+            lastLogAt.current = now;
+            console.log("[ImportSupervisor] Opponent needs indexing:", (i as any)?.username, "imported:", imported, "indexed:", indexed);
+          }
+        }
+        return needs;
+      });
+      
+      const running = [...runningSelf, ...needsIndexing];
 
       if (running.length === 0) {
         const now = Date.now();
@@ -126,12 +131,18 @@ export function ImportSupervisor() {
         if (globalContinueInFlight.current) break;
         inflight.current.set(imp.id, Date.now());
         globalContinueInFlight.current = true;
+        const isOpponent = imp.target_type === "opponent";
+        const endpoint = isOpponent ? "/api/imports/reindex" : "/api/imports/lichess/continue";
+        const body = isOpponent
+          ? JSON.stringify({ platform: imp.platform, username: imp.username, batch_size: 500 })
+          : JSON.stringify({ import_id: imp.id });
+
         void fetchWithTimeout(
-          "/api/imports/lichess/continue",
+          endpoint,
           {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ import_id: imp.id }),
+            body,
           },
           30_000
         )

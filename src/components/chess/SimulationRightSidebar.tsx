@@ -42,12 +42,16 @@ type Props = {
   onClockStop: () => void;
   // Simulation status
   engineTakeover: boolean;
+  scoutInsightTakeover: boolean;
   simWarmStatus: "idle" | "warming" | "warm" | "error";
   simWarmMeta: { status: string; buildMs: number; maxGames: number } | null;
   depthRemaining: number | null;
   lastOpponentMove: { uci: string; san: string | null } | null;
   opponentCommentary: string | null;
   simBusy: boolean;
+  // Out of History options
+  useScoutInsightsForOutOfHistory: boolean;
+  setUseScoutInsightsForOutOfHistory: (v: boolean) => void;
   // Scout tab props
   scoutEnabled?: boolean;
   opponentUsername?: string;
@@ -85,12 +89,15 @@ export function SimulationRightSidebar(props: Props) {
     onClockResume,
     onClockStop,
     engineTakeover,
+    scoutInsightTakeover,
     simWarmStatus,
     simWarmMeta,
     depthRemaining,
     lastOpponentMove,
     opponentCommentary,
     simBusy,
+    useScoutInsightsForOutOfHistory,
+    setUseScoutInsightsForOutOfHistory,
     scoutEnabled = false,
     opponentUsername = "",
     scoutPrediction,
@@ -331,7 +338,10 @@ export function SimulationRightSidebar(props: Props) {
             {/* Move Selection Logic Section */}
             <div className="grid gap-2">
               <div className="text-[10px] font-medium text-zinc-900">Move Selection Logic</div>
+              
+              {/* History-based moves */}
               <div className="grid gap-1">
+                <div className="text-[9px] font-medium text-zinc-600 uppercase tracking-wide">From History</div>
                 <label className="inline-flex items-center gap-2 text-[10px] text-zinc-700">
                   <input
                     type="radio"
@@ -361,13 +371,42 @@ export function SimulationRightSidebar(props: Props) {
                   </span>
                 </label>
               </div>
+
+              {/* Out of History fallback */}
+              <div className="grid gap-1 pt-2 border-t border-zinc-200">
+                <div className="text-[9px] font-medium text-zinc-600 uppercase tracking-wide">When Out of History</div>
+                <label className="inline-flex items-center gap-2 text-[10px] text-zinc-700">
+                  <input
+                    type="checkbox"
+                    checked={useScoutInsightsForOutOfHistory}
+                    onChange={(e) => setUseScoutInsightsForOutOfHistory(e.target.checked)}
+                  />
+                  <span className="flex items-center gap-1">
+                    <Brain className="h-3 w-3 text-purple-600" />
+                    <span>
+                      <span className="font-medium">Scout Insights</span>
+                      <span className="block text-[9px] text-zinc-500">
+                        AI-powered move prediction based on opponent's style
+                      </span>
+                    </span>
+                  </span>
+                </label>
+                <div className="text-[9px] text-zinc-500 pl-5">
+                  Falls back to engine if Scout unavailable
+                </div>
+              </div>
             </div>
 
             {/* Simulation Status Section */}
             <div className="grid gap-2 rounded-xl border border-zinc-200 bg-zinc-50 p-3">
               <div className="text-[10px] font-medium text-zinc-900">Simulation Status</div>
 
-              {engineTakeover ? (
+              {scoutInsightTakeover ? (
+                <div className="flex items-center gap-1 text-[10px] font-medium text-purple-700">
+                  <Brain className="h-3 w-3" />
+                  Out of opponent history — Scout Insights is predicting moves.
+                </div>
+              ) : engineTakeover ? (
                 <div className="text-[10px] font-medium text-amber-700">
                   Out of opponent history — engine is now playing for the opponent.
                 </div>

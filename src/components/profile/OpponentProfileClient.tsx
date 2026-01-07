@@ -531,18 +531,22 @@ export function OpponentProfileClient({ platform, username }: Props) {
   }, [speeds, rated, fromDate, toDate]);
 
   // Fetch SESSION markers (same as Analysis page uses)
-  const fetchSessionMarkers = useCallback(async (sk: string) => {
+  // Returns true if markers were found, false otherwise
+  const fetchSessionMarkers = useCallback(async (sk: string): Promise<boolean> => {
     try {
       const res = await fetch(
         `/api/sim/session/markers?platform=${encodeURIComponent(platform)}&username=${encodeURIComponent(username)}&session_key=${encodeURIComponent(sk)}`,
         { cache: "no-store" }
       );
       const json = await res.json().catch(() => ({}));
-      if (!res.ok) return;
+      if (!res.ok) return false;
       const rows = Array.isArray((json as any)?.markers) ? ((json as any).markers as StoredStyleMarker[]) : [];
-      setStoredStyleMarkers(rows.filter(Boolean));
+      const filtered = rows.filter(Boolean);
+      setStoredStyleMarkers(filtered);
+      return filtered.length > 0;
     } catch {
       // Silent fail - markers will just not display
+      return false;
     }
   }, [platform, username]);
 
@@ -572,10 +576,32 @@ export function OpponentProfileClient({ platform, username }: Props) {
     void fetchProfile();
   }, [fetchProfile]);
 
-  // Also fetch SESSION markers on mount and when filters change (if they exist from Analysis page)
+  // Also fetch SESSION markers on mount and when filters change
+  // If no markers exist, compute them and then re-fetch
   useEffect(() => {
-    void fetchSessionMarkers(sessionKey);
-  }, [fetchSessionMarkers, sessionKey]);
+    let cancelled = false;
+    
+    async function loadOrComputeMarkers() {
+      const hasMarkers = await fetchSessionMarkers(sessionKey);
+      if (cancelled) return;
+      
+      // If no markers were found, compute them and then re-fetch
+      if (!hasMarkers) {
+        await computeSessionMarkers(sessionKey);
+        if (cancelled) return;
+        // Wait a bit for computation to complete, then re-fetch
+        await new Promise((r) => setTimeout(r, 1500));
+        if (cancelled) return;
+        await fetchSessionMarkers(sessionKey);
+      }
+    }
+    
+    void loadOrComputeMarkers();
+    
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchSessionMarkers, computeSessionMarkers, sessionKey]);
 
   const currentFiltersSummary = useMemo(() => {
     return formatFiltersSummary({ speeds, rated, fromDate, toDate });

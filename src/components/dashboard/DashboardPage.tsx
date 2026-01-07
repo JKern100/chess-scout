@@ -1038,9 +1038,13 @@ export function DashboardPage({ initialOpponents }: Props) {
                             <Check className="h-3 w-3" />
                             Complete
                           </span>
-                        ) : syncedGamesCount > 0 ? (
+                        ) : syncedGamesCount > 0 && scoutBaseTotal > 0 ? (
                           <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-1 text-[10px] font-medium text-amber-700">
                             Partial
+                          </span>
+                        ) : syncedGamesCount > 0 ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-zinc-100 px-2.5 py-1 text-[10px] font-medium text-zinc-700">
+                            Synced
                           </span>
                         ) : null}
 

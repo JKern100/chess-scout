@@ -766,9 +766,28 @@ export function PlayBoardModes({ initialFen }: Props) {
   const [engineTakeoverFlash, setEngineTakeoverFlash] = useState(false);
   const prevEngineTakeoverRef = useRef(false);
 
+  // Scout Insights for out-of-history moves
+  const [useScoutInsightsForOutOfHistory, setUseScoutInsightsForOutOfHistory] = useState(true);
+  const [scoutInsightTakeover, setScoutInsightTakeover] = useState(false);
+  const [scoutInsightTakeoverFlash, setScoutInsightTakeoverFlash] = useState(false);
+  const prevScoutInsightTakeoverRef = useRef(false);
+
   // Simulation right sidebar state
   const [simRightTab, setSimRightTab] = useState<SimulationRightTab>("filters");
   const [opponentPlaysColor, setOpponentPlaysColor] = useState<"white" | "black">("black");
+
+  // Sync opponentPlaysColor with stored playerSide on mount to avoid mismatch
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem("chessscout_player_side");
+      if (saved === "white" || saved === "black") {
+        // If playerSide is white, opponent plays black; if playerSide is black, opponent plays white
+        setOpponentPlaysColor(saved === "white" ? "black" : "white");
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
 
   useEffect(() => {
     const prev = prevEngineTakeoverRef.current;
@@ -779,6 +798,16 @@ export function PlayBoardModes({ initialFen }: Props) {
       return () => window.clearTimeout(id);
     }
   }, [engineTakeover]);
+
+  useEffect(() => {
+    const prev = prevScoutInsightTakeoverRef.current;
+    prevScoutInsightTakeoverRef.current = scoutInsightTakeover;
+    if (!prev && scoutInsightTakeover) {
+      setScoutInsightTakeoverFlash(true);
+      const id = window.setTimeout(() => setScoutInsightTakeoverFlash(false), 900);
+      return () => window.clearTimeout(id);
+    }
+  }, [scoutInsightTakeover]);
 
   useEffect(() => {
     if (modeParam === "analysis" || modeParam === "simulation") {
@@ -1161,7 +1190,7 @@ export function PlayBoardModes({ initialFen }: Props) {
     }
   }, [mode, analysisShowEval]);
 
-  const opponentSource = engineTakeover ? "engine" : "history";
+  const opponentSource: "history" | "scout" | "engine" = scoutInsightTakeover ? "scout" : engineTakeover ? "engine" : "history";
 
   const [sessionAxisMarkers, setSessionAxisMarkers] = useState<StoredStyleMarker[]>([]);
   const [sessionAxisMarkersBusy, setSessionAxisMarkersBusy] = useState(false);
@@ -1467,23 +1496,31 @@ export function PlayBoardModes({ initialFen }: Props) {
     if (mode !== "simulation") return null;
     if (!opponentUsername.trim()) return null;
 
-    const flash = opponentSource === "engine" && engineTakeoverFlash;
+    const flash = (opponentSource === "engine" && engineTakeoverFlash) || (opponentSource === "scout" && scoutInsightTakeoverFlash);
     const baseClass = "inline-flex h-6 w-6 items-center justify-center rounded-md";
     const className = flash
-      ? `${baseClass} bg-amber-200 text-amber-900 animate-pulse`
+      ? `${baseClass} ${opponentSource === "scout" ? "bg-purple-200 text-purple-900" : "bg-amber-200 text-amber-900"} animate-pulse`
       : `${baseClass} bg-zinc-200 text-zinc-700`;
+
+    const title = opponentSource === "history" 
+      ? "Opponent history — moves from opponent's game database" 
+      : opponentSource === "scout" 
+        ? "Scout Insights — AI-powered move prediction based on opponent's style" 
+        : "Engine — computer-generated moves when out of history";
 
     return (
       <span className="inline-flex items-center gap-1">
         <span
           className={className}
-          title={opponentSource === "history" ? "Opponent history" : "Engine"}
-          aria-label={opponentSource === "history" ? "Opponent history" : "Engine"}
+          title={title}
+          aria-label={title}
         >
           {opponentSource === "history" ? (
             <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
               <path d="M12 2c-4.97 0-9 1.79-9 4v12c0 2.21 4.03 4 9 4s9-1.79 9-4V6c0-2.21-4.03-4-9-4zm0 2c3.87 0 7 .99 7 2s-3.13 2-7 2-7-.99-7-2 3.13-2 7-2zm0 16c-3.87 0-7-.99-7-2v-2.11C6.45 16.53 9.08 17 12 17s5.55-.47 7-1.11V18c0 1.01-3.13 2-7 2zm0-5c-3.87 0-7-.99-7-2v-2.11C6.45 11.53 9.08 12 12 12s5.55-.47 7-1.11V13c0 1.01-3.13 2-7 2z" />
             </svg>
+          ) : opponentSource === "scout" ? (
+            <Brain className="h-3.5 w-3.5" />
           ) : (
             <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
               <path d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.1 7.1 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 13.9 1h-3.8a.5.5 0 0 0-.49.42l-.36 2.54c-.58.23-1.12.54-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.7 7.48a.5.5 0 0 0-.12.64l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94L2.82 14.52a.5.5 0 0 0 .12.64l1.92 3.32c.13.22.4.31.64.22l2.39-.96c.5.4 1.05.71 1.63.94l.36 2.54c.04.24.25.42.49.42h3.8c.24 0 .45-.18.49-.42l.36-2.54c.58-.23 1.12-.54 1.63-.94l2.39.96c.24.09.51 0 .64-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.5A3.5 3.5 0 1 1 12 8a3.5 3.5 0 0 1 0 7.5z" />
@@ -1498,7 +1535,7 @@ export function PlayBoardModes({ initialFen }: Props) {
         ) : null}
       </span>
     );
-  }, [engineTakeoverFlash, mode, opponentSource, opponentUsername, simGamesLeft]);
+  }, [engineTakeoverFlash, mode, opponentSource, opponentUsername, scoutInsightTakeoverFlash, simGamesLeft]);
 
   const handleSetEngineBestMove = useCallback((next: { uci: string; san: string | null } | null) => {
     setAnalysisEngineBestUci(next?.uci ?? null);
@@ -1638,8 +1675,68 @@ export function PlayBoardModes({ initialFen }: Props) {
       if (!move?.uci) {
         setLastOpponentMove(null);
         setOpponentCommentary(null);
-        setEngineTakeover(true);
         setSimGamesLeft(0);
+
+        // Try Scout Insights first if enabled
+        if (useScoutInsightsForOutOfHistory) {
+          try {
+            const fenParts = fen.split(" ");
+            const fullmoveNumber = Number(fenParts[5] ?? "1");
+            const styleMarkers = analysisStyleMarkersRef.current;
+            
+            const scoutResult = await scoutPredictOnce({
+              fen,
+              opponentUsername: trimmed,
+              isOpponentTurn: true,
+              styleMarkers,
+              moveNumber: Number.isFinite(fullmoveNumber) ? fullmoveNumber : 1,
+            });
+
+            if (scoutResult?.selected_move_uci) {
+              const scoutUci = scoutResult.selected_move_uci;
+              const reply = new Chess(fen);
+              const from = scoutUci.slice(0, 2);
+              const to = scoutUci.slice(2, 4);
+              const promotion = scoutUci.length > 4 ? scoutUci.slice(4) : undefined;
+
+              const played = reply.move({ from, to, promotion: (promotion as any) ?? undefined });
+              if (played) {
+                setScoutInsightTakeover(true);
+                setEngineTakeover(false);
+
+                if (clocksEnabled && clockRunning && !clockPaused && !clockExpired) {
+                  const remaining = state.game.turn() === "w" ? whiteMs : blackMs;
+                  const delayMs = computeOpponentThinkDelayMs(selectedTc.category, remaining);
+                  if (delayMs > 0) await sleep(delayMs);
+                  const inc = incrementMs;
+                  if (inc > 0) {
+                    if (state.game.turn() === "w") setWhiteMs((t) => t + inc);
+                    else setBlackMs((t) => t + inc);
+                  }
+                }
+
+                if (isFirstMoveOfGame) {
+                  setFirstMoveMade(true);
+                  if (clocksEnabled) {
+                    tickRef.current.lastTs = Date.now();
+                  }
+                }
+
+                setLastOpponentMove({ uci: scoutUci, san: played.san ?? null });
+                setOpponentCommentary("Out of opponent history — Scout Insights is now predicting moves based on opponent's style.");
+                state.setStatus(null);
+                state.commitGame(reply, played.san ?? null);
+                return;
+              }
+            }
+          } catch {
+            // Scout failed, fall back to engine
+          }
+        }
+
+        // Fall back to engine
+        setScoutInsightTakeover(false);
+        setEngineTakeover(true);
 
         const bestUci = await getBestMoveForPlay(fen);
         if (!bestUci) {
@@ -1684,6 +1781,7 @@ export function PlayBoardModes({ initialFen }: Props) {
         return;
       }
 
+      setScoutInsightTakeover(false);
       setEngineTakeover(false);
 
       const reply = new Chess(fen);
@@ -2503,12 +2601,15 @@ export function PlayBoardModes({ initialFen }: Props) {
               onClockResume={resumeClocks}
               onClockStop={stopClocks}
               engineTakeover={engineTakeover}
+              scoutInsightTakeover={scoutInsightTakeover}
               simWarmStatus={simWarmStatus}
               simWarmMeta={simWarmMeta}
               depthRemaining={depthRemaining}
               lastOpponentMove={lastOpponentMove}
               opponentCommentary={opponentCommentary}
               simBusy={simBusy}
+              useScoutInsightsForOutOfHistory={useScoutInsightsForOutOfHistory}
+              setUseScoutInsightsForOutOfHistory={setUseScoutInsightsForOutOfHistory}
               scoutEnabled={Boolean(opponentUsername.trim())}
               opponentUsername={opponentUsername}
               scoutPrediction={scoutPrediction}

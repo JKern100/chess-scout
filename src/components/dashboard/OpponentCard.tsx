@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { MoreVertical, Check, RefreshCw, Trophy } from "lucide-react";
+import { MoreVertical, Check, RefreshCw, Trophy, Clock } from "lucide-react";
 import { AnimatedNumber } from "./AnimatedNumber";
 
 type ChessPlatform = "lichess" | "chesscom";
@@ -27,6 +27,7 @@ type Props = {
   platform: ChessPlatform;
   username: string;
   importedCount: number;
+  indexedCount?: number;
   totalGames: number;
   isSyncing: boolean;
   isQueued: boolean;
@@ -81,6 +82,7 @@ export function OpponentCard({
   platform,
   username,
   importedCount,
+  indexedCount,
   totalGames,
   isSyncing,
   isQueued,
@@ -123,6 +125,7 @@ export function OpponentCard({
 
   const isSynced = importedCount > 0 && !isSyncing;
   const isPartial = importedCount > 0 && importedCount < totalGames && !isSyncing;
+  const isIndexing = importedCount > 0 && (indexedCount ?? 0) < importedCount && !isSyncing;
   const title = lichessData?.title ?? null;
   const country = lichessData?.country ?? null;
   const flag = getCountryFlag(country);
@@ -251,23 +254,18 @@ export function OpponentCard({
                 importPhase === "error" ? "bg-red-100 text-red-700" :
                 "bg-blue-100 text-blue-700"
               }`}>
-                <RefreshCw className={`h-3 w-3 ${importPhase !== "error" ? "animate-spin" : ""}`} />
-                {importPhase === "streaming" ? "Downloading" :
-                 importPhase === "saving" ? "Saving" :
-                 importPhase === "error" ? "Error" : "Syncing"}
+                <RefreshCw className="h-3 w-3 animate-spin" />
+                Syncing
               </span>
             ) : isQueued ? (
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-neutral-200 px-2.5 py-1 text-xs font-medium text-neutral-600">
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-medium text-zinc-700">
+                <Clock className="h-3 w-3" />
                 Queued
               </span>
-            ) : hasNewGames ? (
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-700">
-                New Games
-              </span>
-            ) : isSynced ? (
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-green-100 px-2.5 py-1 text-xs font-medium text-green-700">
-                <Check className="h-3 w-3" />
-                Synced
+            ) : isIndexing ? (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-purple-100 px-2.5 py-1 text-xs font-medium text-purple-700">
+                <RefreshCw className="h-3 w-3 animate-spin" />
+                Indexing
               </span>
             ) : null}
           </div>

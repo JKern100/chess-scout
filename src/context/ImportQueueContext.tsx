@@ -347,6 +347,18 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
         }
         if (s.phase === "done") {
           console.log("[ImportQueue] Import completed successfully, games:", s.gamesProcessed);
+          try {
+            const current = currentOpponentRef.current;
+            const parsed = current ? parseOpponentId(current) : null;
+            if (parsed?.platform === "lichess") {
+              void fetch("/api/imports/lichess/opponent/start", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ platform: parsed.platform, username: parsed.username }),
+              });
+            }
+          } catch {
+          }
           // Show "Complete!" briefly before dismissing
           setTimeout(() => {
             finishCurrent();
@@ -387,6 +399,15 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
     setCurrentOpponent(nextKey);
     lastActivityAtRef.current = Date.now();
     console.log("[ImportQueue] Starting import for:", nextKey);
+
+    try {
+      await fetch("/api/imports/lichess/opponent/start", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ platform: parsed.platform, username: parsed.username }),
+      });
+    } catch {
+    }
 
     // Ensure this opponent exists in the `opponents` table so it appears immediately
     // in the global opponent dropdown (which is backed by /api/opponents).
