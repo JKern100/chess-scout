@@ -479,6 +479,7 @@ export function SimulationRightSidebar(props: Props) {
             opponentReplyByMove={scoutOpponentReplyByMove}
             opponentReplyLoading={scoutOpponentReplyLoading}
             onRefresh={onScoutPredict}
+            isOpponentTurn={isOpponentsTurn}
           />
         ) : null}
         </div>

@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useCallback, useEffect, useState } from "react";
-import { Brain, X, AlertTriangle, Zap, Target, TrendingUp, HelpCircle } from "lucide-react";
+import { Brain, X, AlertTriangle, Zap, Target, TrendingUp, HelpCircle, Info } from "lucide-react";
 
 export type PredictionMode = "pure_history" | "hybrid";
 
@@ -444,6 +444,9 @@ export const ScoutPanelContent = memo(function ScoutPanelContent({
   opponentReplyByMove,
   opponentReplyLoading,
   onRefresh,
+  isOpponentTurn = true,
+  totalGamesInFilter,
+  filtersLimited,
 }: {
   prediction: ScoutPrediction | null;
   loading?: boolean;
@@ -454,7 +457,11 @@ export const ScoutPanelContent = memo(function ScoutPanelContent({
   opponentReplyByMove?: Record<string, OpponentReplyForecast> | null;
   opponentReplyLoading?: boolean;
   onRefresh?: () => void;
+  isOpponentTurn?: boolean;
+  totalGamesInFilter?: number;
+  filtersLimited?: boolean;
 }) {
+  const LOW_SAMPLE_THRESHOLD = 100;
   const [helpOpen, setHelpOpen] = useState(false);
   
   return (
@@ -529,8 +536,26 @@ export const ScoutPanelContent = memo(function ScoutPanelContent({
         </div>
       ) : prediction ? (
         <div className="grid gap-3">
-          {/* Habit Detection Banner */}
-          {prediction.habit_detection?.detected && (
+          {/* Low Sample / Filter Warning */}
+          {(totalGamesInFilter != null && totalGamesInFilter < LOW_SAMPLE_THRESHOLD) && (
+            <div className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2">
+              <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+              <div className="text-[9px] text-amber-700">
+                <span className="font-semibold">Low confidence:</span> Only {totalGamesInFilter} games match your filter. Style predictions may be less accurate.
+              </div>
+            </div>
+          )}
+          {filtersLimited && (
+            <div className="flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2">
+              <Info className="h-4 w-4 text-blue-500 shrink-0" />
+              <div className="text-[9px] text-blue-700">
+                Date filters use all available game data. Speed/rated filters are applied.
+              </div>
+            </div>
+          )}
+
+          {/* Habit Detection Banner - Only show for opponent's turn */}
+          {isOpponentTurn && prediction.habit_detection?.detected && (
             <div className="flex items-center gap-2 rounded-lg border border-orange-300 bg-orange-50 px-3 py-2">
               <div className="flex h-6 w-6 items-center justify-center rounded-full bg-orange-500 text-white">
                 <Brain className="h-3.5 w-3.5" />
