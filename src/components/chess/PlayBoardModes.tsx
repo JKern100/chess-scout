@@ -1593,12 +1593,24 @@ export function PlayBoardModes({ initialFen }: Props) {
   async function fetchScoutHistoryMoves(params: { fen: string; username: string }) {
     const json = await requestOpponentMove({ fen: params.fen, username: params.username, mode: opponentMode, force_rpc: false });
     const rows = Array.isArray(json?.moves) ? (json.moves as any[]) : [];
-    return rows
+    const result = rows
       .map((m) => ({
         move_san: m?.san != null ? String(m.san) : "",
         frequency: Number(m?.played_count ?? 0),
       }))
       .filter((m) => m.move_san && Number.isFinite(m.frequency) && m.frequency > 0);
+    
+    // Debug: Log history moves being sent to Scout API
+    const total = result.reduce((sum, m) => sum + m.frequency, 0);
+    console.log("[ScoutHistory] FEN:", params.fen);
+    console.log("[ScoutHistory] Moves:", result.map(m => `${m.move_san}:${m.frequency}`).join(", "));
+    console.log("[ScoutHistory] Total N:", total);
+    if (result.length > 0) {
+      const topMove = result.reduce((a, b) => a.frequency > b.frequency ? a : b);
+      console.log("[ScoutHistory] Top move:", topMove.move_san, "=", ((topMove.frequency / total) * 100).toFixed(1) + "%");
+    }
+    
+    return result;
   }
 
   useEffect(() => {

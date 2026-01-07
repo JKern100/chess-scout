@@ -3,10 +3,11 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronDown, LayoutDashboard, LineChart, FileText, RefreshCw, Menu, X, Check, UserCircle, LogOut, History, Settings } from "lucide-react";
+import { ChevronDown, LayoutDashboard, LineChart, FileText, RefreshCw, Menu, X, Check, UserCircle, LogOut, History, Settings, Shield } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { useActiveOpponent } from "@/context/ActiveOpponentContext";
 import { useImportQueue } from "@/context/ImportQueueContext";
+import { useAdminGuard } from "@/hooks/useAdminGuard";
 
 type NavLink = {
   href: string;
@@ -48,6 +49,7 @@ export function GlobalNavBar() {
   const router = useRouter();
   const { activeOpponent, setActiveOpponent, availableOpponents, isLoading } = useActiveOpponent();
   const { isImporting } = useImportQueue();
+  const { isAdmin } = useAdminGuard();
 
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -286,6 +288,16 @@ export function GlobalNavBar() {
 
                   {/* Menu Items */}
                   <div className="p-1">
+                    {isAdmin && (
+                      <Link
+                        href="/admin"
+                        className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-orange-600 transition-colors hover:bg-orange-50"
+                        onClick={() => setProfileDropdownOpen(false)}
+                      >
+                        <Shield className="h-4 w-4" />
+                        Admin Dashboard
+                      </Link>
+                    )}
                     <Link
                       href="/account"
                       className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-zinc-700 transition-colors hover:bg-zinc-50"
