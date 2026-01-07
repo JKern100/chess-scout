@@ -352,34 +352,91 @@ Comprehensive Report (structured, full)
 Use the correct narrative voice and tone based on subject type.`;
 
 function parseNarrativeResponse(text: string): { quick_summary: string; comprehensive_report: string } {
-  // Try to parse the response which should have Quick Summary and Comprehensive Report sections
-  const quickSummaryMatch = text.match(/(?:Quick Summary|# Quick Summary|## Quick Summary)\s*\n+([\s\S]*?)(?=\n#|\n## |\nComprehensive Report|$)/i);
-  const comprehensiveMatch = text.match(/(?:Comprehensive Report|# Comprehensive Report|## Comprehensive Report)\s*\n+([\s\S]*?)$/i);
-
+  console.log("[GeminiNarrative] Parsing response, total length:", text.length);
+  console.log("[GeminiNarrative] First 500 chars:", text.slice(0, 500));
+  
   let quick_summary = "";
   let comprehensive_report = "";
 
-  if (quickSummaryMatch && quickSummaryMatch[1]) {
-    quick_summary = quickSummaryMatch[1].trim();
-  }
+  // Strategy 1: Look for explicit section markers with various formats
+  // The AI might output: "## Quick Summary", "# Quick Summary", "**Quick Summary**", "Quick Summary:", etc.
+  const quickSummaryPatterns = [
+    /#{1,3}\s*Quick Summary\s*\n+([\s\S]*?)(?=\n#{1,3}\s|$)/i,
+    /\*\*Quick Summary\*\*\s*\n+([\s\S]*?)(?=\n\*\*|$)/i,
+    /Quick Summary:?\s*\n+([\s\S]*?)(?=\n#{1,3}\s|\nComprehensive|\n\*\*Comprehensive|$)/i,
+  ];
 
-  if (comprehensiveMatch && comprehensiveMatch[1]) {
-    comprehensive_report = comprehensiveMatch[1].trim();
-  }
+  const comprehensivePatterns = [
+    /#{1,3}\s*Comprehensive Report\s*\n+([\s\S]*?)$/i,
+    /\*\*Comprehensive Report\*\*\s*\n+([\s\S]*?)$/i,
+    /Comprehensive Report:?\s*\n+([\s\S]*?)$/i,
+  ];
 
-  // If parsing fails, try alternative split
-  if (!quick_summary && !comprehensive_report) {
-    const sections = text.split(/(?=# |## )/);
-    if (sections.length >= 2) {
-      quick_summary = sections[0]?.trim() || "";
-      comprehensive_report = sections.slice(1).join("\n").trim();
-    } else {
-      // Fallback: use first paragraph as summary, rest as comprehensive
-      const paragraphs = text.split(/\n\n+/);
-      quick_summary = paragraphs[0]?.trim() || "";
-      comprehensive_report = paragraphs.slice(1).join("\n\n").trim() || text;
+  // Try to find Quick Summary
+  for (const pattern of quickSummaryPatterns) {
+    const match = text.match(pattern);
+    if (match && match[1]) {
+      quick_summary = match[1].trim();
+      console.log("[GeminiNarrative] Found quick summary with pattern, length:", quick_summary.length);
+      break;
     }
   }
+
+  // Try to find Comprehensive Report
+  for (const pattern of comprehensivePatterns) {
+    const match = text.match(pattern);
+    if (match && match[1]) {
+      comprehensive_report = match[1].trim();
+      console.log("[GeminiNarrative] Found comprehensive report with pattern, length:", comprehensive_report.length);
+      break;
+    }
+  }
+
+  // Strategy 2: If we found comprehensive but not quick, extract quick from before comprehensive header
+  if (!quick_summary && comprehensive_report) {
+    const comprehensiveIndex = text.search(/#{1,3}\s*Comprehensive Report|\*\*Comprehensive Report\*\*|Comprehensive Report:/i);
+    if (comprehensiveIndex > 0) {
+      const beforeComprehensive = text.slice(0, comprehensiveIndex);
+      // Remove any Quick Summary header
+      quick_summary = beforeComprehensive
+        .replace(/^#{1,3}\s*Quick Summary\s*\n*/i, "")
+        .replace(/^\*\*Quick Summary\*\*\s*\n*/i, "")
+        .replace(/^Quick Summary:?\s*\n*/i, "")
+        .trim();
+      console.log("[GeminiNarrative] Extracted quick summary from before comprehensive, length:", quick_summary.length);
+    }
+  }
+
+  // Strategy 3: If still no sections found, try splitting by first major heading after intro
+  if (!quick_summary && !comprehensive_report) {
+    console.log("[GeminiNarrative] No sections found, trying fallback split");
+    // Look for the first ## or # heading that isn't Quick Summary
+    const firstHeadingMatch = text.match(/\n(#{1,2})\s+(?!Quick Summary)([^\n]+)/i);
+    if (firstHeadingMatch && firstHeadingMatch.index !== undefined) {
+      quick_summary = text.slice(0, firstHeadingMatch.index).trim();
+      comprehensive_report = text.slice(firstHeadingMatch.index).trim();
+    } else {
+      // Final fallback: first paragraph is quick, rest is comprehensive
+      const firstDoubleNewline = text.indexOf("\n\n");
+      if (firstDoubleNewline > 0) {
+        quick_summary = text.slice(0, firstDoubleNewline).trim();
+        comprehensive_report = text.slice(firstDoubleNewline + 2).trim();
+      } else {
+        quick_summary = text.trim();
+        comprehensive_report = text.trim();
+      }
+    }
+  }
+
+  // Clean up: remove the header from quick_summary if it starts with one
+  quick_summary = quick_summary
+    .replace(/^#{1,3}\s*Quick Summary\s*\n*/i, "")
+    .replace(/^\*\*Quick Summary\*\*\s*\n*/i, "")
+    .trim();
+
+  console.log("[GeminiNarrative] Final quick_summary length:", quick_summary.length);
+  console.log("[GeminiNarrative] Final comprehensive_report length:", comprehensive_report.length);
+  console.log("[GeminiNarrative] Quick summary preview:", quick_summary.slice(0, 200));
 
   return { quick_summary, comprehensive_report };
 }

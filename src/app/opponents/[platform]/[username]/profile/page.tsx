@@ -30,10 +30,21 @@ export default async function OpponentProfilePage({ params }: { params: Promise<
     redirect("/dashboard");
   }
 
+  // Check if this is the user's own profile (self-analysis)
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("primary_platform, platform_username")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  const isSelfAnalysis =
+    profile?.primary_platform === platform &&
+    profile?.platform_username?.toLowerCase() === username.toLowerCase();
+
   return (
     <div className="min-h-screen">
       <main className="mx-auto flex w-full max-w-5xl flex-col px-6 pt-6">
-        <OpponentProfileClient platform={platform} username={username} />
+        <OpponentProfileClient platform={platform} username={username} isSelfAnalysis={isSelfAnalysis} />
       </main>
     </div>
   );

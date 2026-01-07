@@ -13,6 +13,7 @@ type ChessPlatform = "lichess" | "chesscom";
 type Props = {
   platform: ChessPlatform;
   username: string;
+  isSelfAnalysis?: boolean;
 };
 
 type OpeningSnapshot = {
@@ -481,7 +482,7 @@ function RepertoireTree(params: { nodes: V2BranchNode[]; maxDepth: number; oppon
   return <div className="text-xs text-neutral-700">{renderPrefix([], 0)}</div>;
 }
 
-export function OpponentProfileClient({ platform, username }: Props) {
+export function OpponentProfileClient({ platform, username, isSelfAnalysis = false }: Props) {
   const { speeds, setSpeeds, rated, setRated, datePreset, setDatePreset, fromDate, setFromDate, toDate, setToDate } = useOpponentFilters();
 
   const [profileRow, setProfileRow] = useState<OpponentProfileRow | null>(null);
@@ -498,6 +499,7 @@ export function OpponentProfileClient({ platform, username }: Props) {
   const [progressModalOpen, setProgressModalOpen] = useState(false);
   const [progressStatus, setProgressStatus] = useState<"idle" | "generating" | "completed" | "cancelled" | "error">("idle");
   const [progressError, setProgressError] = useState<string | null>(null);
+  const [progressStep, setProgressStep] = useState<number>(1);
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const fetchProfile = useCallback(async () => {
@@ -652,13 +654,31 @@ export function OpponentProfileClient({ platform, username }: Props) {
 
     setGenerateBusy(true);
     setActionMessage(null);
+    setConfirmOpen(false); // Close confirm dialog when progress modal opens
+    setFiltersOpen(false); // Close filters panel too
     setProgressModalOpen(true);
     setProgressStatus("generating");
     setProgressError(null);
+    setProgressStep(1); // Start at step 1: Loading game data
 
+    let progressInterval: NodeJS.Timeout | null = null;
+    
     try {
       const url = `/api/opponents/${encodeURIComponent(platform)}/${encodeURIComponent(username)}/profile/generate`;
       console.log("[OpponentProfileClient] Sending POST to:", url);
+      
+      // Step 1: Loading game data - starting request
+      setProgressStep(1);
+      
+      // Use a progress simulation that advances while waiting for the backend
+      // The backend does: load games -> parse -> classify openings -> analyze style -> compute patterns -> calc stats -> style markers -> AI narrative
+      progressInterval = setInterval(() => {
+        setProgressStep((prev) => {
+          // Advance through steps 1-7, then stay at 8 (Finalizing) until complete
+          if (prev < 8) return prev + 1;
+          return 8;
+        });
+      }, 2500); // Advance every 2.5 seconds
       
       const res = await fetch(url, {
         method: "POST",
@@ -670,10 +690,15 @@ export function OpponentProfileClient({ platform, username }: Props) {
           to: toDate || null,
           enable_style_markers: generateStyleMarkers,
           enable_ai_narrative: true,
-          subject_type: "opponent", // TODO: detect self-analysis from context
+          subject_type: isSelfAnalysis ? "self" : "opponent",
         }),
         signal: controller.signal,
       });
+      
+      clearInterval(progressInterval);
+      
+      // Step 8: Finalizing report - processing response
+      setProgressStep(8);
       
       console.log("[OpponentProfileClient] Response status:", res.status);
       const json = await res.json().catch(() => ({}));
@@ -729,10 +754,11 @@ export function OpponentProfileClient({ platform, username }: Props) {
         setProgressError(errorMsg);
       }
     } finally {
+      if (progressInterval) clearInterval(progressInterval);
       setGenerateBusy(false);
       abortControllerRef.current = null;
     }
-  }, [computeSessionMarkers, fetchSessionMarkers, fromDate, generateBusy, generateStyleMarkers, platform, rated, sessionKey, speeds, toDate, username]);
+  }, [computeSessionMarkers, fetchSessionMarkers, fromDate, generateBusy, generateStyleMarkers, isSelfAnalysis, platform, rated, sessionKey, speeds, toDate, username]);
 
   const handleCancelGeneration = useCallback(() => {
     if (abortControllerRef.current) {
@@ -1865,6 +1891,7 @@ export function OpponentProfileClient({ platform, username }: Props) {
           onDismiss={handleDismissProgressModal}
           status={progressStatus}
           errorMessage={progressError}
+          currentStepOverride={progressStep}
         />
       </div>
     </div>
