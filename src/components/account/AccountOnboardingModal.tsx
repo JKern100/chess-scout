@@ -7,6 +7,7 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { useImportQueue } from "@/context/ImportQueueContext";
 import { OpponentFiltersPanel } from "@/components/chess/OpponentFiltersPanel";
 import { useOpponentFilters } from "@/components/chess/useOpponentFilters";
+import { GenerationProgressModal } from "@/components/profile/GenerationProgressModal";
 
 type Platform = "lichess" | "chesscom";
 
@@ -39,9 +40,11 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
   const [isGenerating, setIsGenerating] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
   const [profileGenerated, setProfileGenerated] = useState(!!initialProfile?.user_profile_generated_at);
+  const [generationStatus, setGenerationStatus] = useState<"idle" | "generating" | "completed" | "cancelled" | "error">("idle");
+  const [generationStep, setGenerationStep] = useState<number | null>(null);
 
   const { speeds, setSpeeds, rated, setRated, datePreset, setDatePreset, fromDate, setFromDate, toDate, setToDate } = useOpponentFilters();
-  const { addToQueue, isImporting, currentOpponent, progress, progressByOpponent } = useImportQueue();
+  const { addToQueue, isImporting, currentOpponent, progress, progressByOpponent, importPhase, pendingWrites } = useImportQueue();
 
   const pollIntervalRef = useRef<number | null>(null);
 
@@ -152,8 +155,18 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
 
     setIsGenerating(true);
     setGenerateError(null);
+    setGenerationStatus("generating");
+    setGenerationStep(1);
 
     try {
+      // Simulate progress steps while API call is running
+      const progressInterval = setInterval(() => {
+        setGenerationStep((prev) => {
+          if (prev === null || prev >= 7) return prev;
+          return prev + 1;
+        });
+      }, 800);
+
       const res = await fetch(
         `/api/opponents/${encodeURIComponent(primaryPlatform)}/${encodeURIComponent(platformUsername.trim())}/profile/generate`,
         {
@@ -169,10 +182,14 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
         }
       );
 
+      clearInterval(progressInterval);
+
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(String((json as any)?.error ?? "Failed to generate profile"));
       }
+
+      setGenerationStep(8);
 
       // Update profile to mark as generated
       const supabase = createSupabaseBrowserClient();
@@ -184,14 +201,42 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
         }).eq("id", user.id);
       }
 
+      setGenerationStatus("completed");
       setProfileGenerated(true);
-      setStep("complete");
+      
+      // Auto-advance to complete step after a brief delay
+      setTimeout(() => {
+        setGenerationStatus("idle");
+        setGenerationStep(null);
+        setStep("complete");
+      }, 1500);
     } catch (err) {
+      setGenerationStatus("error");
       setGenerateError(err instanceof Error ? err.message : "Failed to generate profile");
     } finally {
       setIsGenerating(false);
     }
   }, [platformUsername, primaryPlatform, speeds, rated, fromDate, toDate, userSyncProgress]);
+
+  const handleCancelGeneration = useCallback(() => {
+    setGenerationStatus("cancelled");
+    setIsGenerating(false);
+    setTimeout(() => {
+      setGenerationStatus("idle");
+      setGenerationStep(null);
+    }, 1000);
+  }, []);
+
+  const handleDismissGeneration = useCallback(() => {
+    if (generationStatus === "completed") {
+      setGenerationStatus("idle");
+      setGenerationStep(null);
+      setStep("complete");
+    } else if (generationStatus === "error" || generationStatus === "cancelled") {
+      setGenerationStatus("idle");
+      setGenerationStep(null);
+    }
+  }, [generationStatus]);
 
   const handleComplete = useCallback(async () => {
     try {
@@ -433,18 +478,28 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
                   <div className="mt-4">
                     <div className="h-2.5 w-full overflow-hidden rounded-full bg-zinc-200">
                       <div
-                        className="h-2.5 rounded-full bg-gradient-to-r from-blue-500 to-blue-600 transition-all duration-500"
-                        style={{ width: `${Math.min(100, Math.max(5, (userSyncProgress / Math.max(userSyncProgress + 500, 1000)) * 100))}%` }}
+                        className={`h-2.5 rounded-full transition-all duration-500 ${
+                          importPhase === "saving" 
+                            ? "bg-gradient-to-r from-amber-500 to-amber-600" 
+                            : "bg-gradient-to-r from-blue-500 to-blue-600"
+                        }`}
+                        style={{ 
+                          width: importPhase === "saving" 
+                            ? `${Math.min(100, Math.max(50, 100 - (pendingWrites / 10)))}%`
+                            : `${Math.min(50, Math.max(5, (userSyncProgress / 1000) * 50))}%` 
+                        }}
                       />
                     </div>
                     <div className="mt-3 text-xs text-zinc-500">
-                      {userSyncProgress < 100 
-                        ? "Getting started... this usually takes 1-5 minutes."
-                        : userSyncProgress < 500
-                        ? "Making great progress! Your profile is taking shape."
-                        : userSyncProgress < 2000
-                        ? "Impressive game history! Almost there."
-                        : "Wow, you've played a lot! Hang tight, we're processing everything."}
+                      {importPhase === "saving" 
+                        ? pendingWrites > 0 
+                          ? `Saving to database... (${pendingWrites} batches remaining)`
+                          : "Finishing up..."
+                        : userSyncProgress < 100 
+                          ? "Downloading games... this usually takes 1-2 minutes."
+                          : userSyncProgress < 500
+                            ? "Making great progress! Your profile is taking shape."
+                            : "Impressive game history! Almost there."}
                     </div>
                   </div>
                 )}
@@ -605,6 +660,16 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
           )}
         </div>
       </div>
+
+      {/* Generation Progress Modal */}
+      <GenerationProgressModal
+        isOpen={generationStatus !== "idle"}
+        onCancel={handleCancelGeneration}
+        onDismiss={handleDismissGeneration}
+        status={generationStatus}
+        errorMessage={generateError}
+        currentStepOverride={generationStep}
+      />
     </div>
   );
 }

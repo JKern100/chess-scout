@@ -1682,6 +1682,51 @@ export function PlayBoardModes({ initialFen }: Props) {
     setSimBusy(true);
     setSimError(null);
     try {
+      // If Scout Insights panel is open and has a prediction for the current FEN,
+      // use that prediction's selected move to ensure consistency between display and play
+      const currentFenNormalized = fen.split(" ").slice(0, 4).join(" ");
+      const scoutFenNormalized = scoutBoardContextRef.current?.fen?.split(" ").slice(0, 4).join(" ");
+      const scoutPredictionMatchesFen = scoutOverlayOpen && scoutPrediction?.selected_move_uci && scoutFenNormalized === currentFenNormalized;
+      
+      if (scoutPredictionMatchesFen) {
+        const scoutUci = scoutPrediction.selected_move_uci;
+        const reply = new Chess(fen);
+        const from = scoutUci.slice(0, 2);
+        const to = scoutUci.slice(2, 4);
+        const promotion = scoutUci.length > 4 ? scoutUci.slice(4) : undefined;
+
+        const played = reply.move({ from, to, promotion: (promotion as any) ?? undefined });
+        if (played) {
+          setScoutInsightTakeover(true);
+          setEngineTakeover(false);
+
+          if (clocksEnabled && clockRunning && !clockPaused && !clockExpired) {
+            const remaining = state.game.turn() === "w" ? whiteMs : blackMs;
+            const delayMs = computeOpponentThinkDelayMs(selectedTc.category, remaining);
+            if (delayMs > 0) await sleep(delayMs);
+            const inc = incrementMs;
+            if (inc > 0) {
+              if (state.game.turn() === "w") setWhiteMs((t) => t + inc);
+              else setBlackMs((t) => t + inc);
+            }
+          }
+
+          if (isFirstMoveOfGame) {
+            setFirstMoveMade(true);
+            if (clocksEnabled) {
+              tickRef.current.lastTs = Date.now();
+            }
+          }
+
+          setLastOpponentMove({ uci: scoutUci, san: played.san ?? null });
+          setOpponentCommentary(`Scout Insights: ${trimmed} plays ${played.san ?? scoutUci}`);
+          state.setStatus(null);
+          state.commitGame(reply, played.san ?? null);
+          setSimBusy(false);
+          return;
+        }
+      }
+
       const json = await requestOpponentMove({ fen, username: trimmed, mode: opponentMode });
       setSimGamesLeft(Number.isFinite(Number(json?.available_total_count)) ? Number(json.available_total_count) : null);
       setDepthRemaining(typeof json?.depth_remaining === "number" ? (json.depth_remaining as number) : null);

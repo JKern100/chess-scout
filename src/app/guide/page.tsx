@@ -208,20 +208,16 @@ export default function GuidePage() {
             <div className="rounded-xl border border-zinc-200 bg-white p-5">
               <h3 className="font-semibold text-zinc-900 mb-2">Import Speed</h3>
               <p className="text-sm text-zinc-600 mb-3">
-                Import times vary based on your game count:
+                Import times for 1,000 games are typically:
               </p>
-              <div className="grid grid-cols-3 gap-3 text-center">
+              <div className="grid grid-cols-2 gap-3 text-center">
                 <div className="rounded-lg bg-zinc-50 p-3">
-                  <div className="text-lg font-bold text-zinc-900">~1 min</div>
-                  <div className="text-xs text-zinc-500">&lt; 1,000 games</div>
+                  <div className="text-lg font-bold text-zinc-900">~1-2 min</div>
+                  <div className="text-xs text-zinc-500">Downloading games</div>
                 </div>
                 <div className="rounded-lg bg-zinc-50 p-3">
-                  <div className="text-lg font-bold text-zinc-900">~3 min</div>
-                  <div className="text-xs text-zinc-500">1,000 - 5,000</div>
-                </div>
-                <div className="rounded-lg bg-zinc-50 p-3">
-                  <div className="text-lg font-bold text-zinc-900">~10 min</div>
-                  <div className="text-xs text-zinc-500">5,000+ games</div>
+                  <div className="text-lg font-bold text-zinc-900">~1-2 min</div>
+                  <div className="text-xs text-zinc-500">Saving to database</div>
                 </div>
               </div>
             </div>

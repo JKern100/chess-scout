@@ -27,6 +27,8 @@ type OnboardingContextValue = {
 
 const OnboardingContext = createContext<OnboardingContextValue | null>(null);
 
+const ONBOARDING_STARTED_KEY = "chess_scout_onboarding_started";
+
 export function OnboardingProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<ProfileData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -34,6 +36,9 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
   const [hasCheckedOnboarding, setHasCheckedOnboarding] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
+
+  // Check if onboarding was already started in this session (persists across navigation)
+  const isOnboardingStarted = typeof window !== "undefined" && window.localStorage.getItem(ONBOARDING_STARTED_KEY) === "true";
 
   const fetchProfile = useCallback(async () => {
     try {
@@ -100,15 +105,26 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
       return;
     }
 
+    // If onboarding was already started in this session, don't show again
+    // (user navigated away during import - let them browse freely)
+    if (isOnboardingStarted) {
+      setHasCheckedOnboarding(true);
+      return;
+    }
+
     // Check if user needs onboarding
     const needsOnboarding = !profile || !profile.onboarding_completed || !profile.platform_username;
     
     if (needsOnboarding) {
       setModalOpen(true);
+      // Mark onboarding as started so it doesn't pop up again during navigation
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(ONBOARDING_STARTED_KEY, "true");
+      }
     }
     
     setHasCheckedOnboarding(true);
-  }, [isLoading, profile, pathname, hasCheckedOnboarding]);
+  }, [isLoading, profile, pathname, hasCheckedOnboarding, isOnboardingStarted]);
 
   const showOnboardingModal = useCallback(() => {
     setModalOpen(true);
@@ -121,6 +137,11 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
   const handleOnboardingComplete = useCallback(() => {
     setModalOpen(false);
     void fetchProfile();
+    
+    // Clear the "onboarding started" flag since it's now complete
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(ONBOARDING_STARTED_KEY);
+    }
     
     // Navigate to user's own profile page
     if (profile?.platform_username) {
