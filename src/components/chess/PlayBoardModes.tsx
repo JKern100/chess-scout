@@ -3088,7 +3088,14 @@ function AnalysisRightSidebar(props: {
               opponentReplyLoading={scoutOpponentReplyLoading}
               onRefresh={onScoutPredict}
               isOpponentTurn={state.game.turn() === (opponentPlaysColor === "white" ? "w" : "b")}
-              totalGamesInFilter={analysisStats?.totalGames}
+              totalGamesInFilter={
+                analysisStats
+                  ? Math.max(
+                      Number(analysisStats.totalCountOpponent ?? 0),
+                      Number(analysisStats.totalCountAgainst ?? 0)
+                    )
+                  : undefined
+              }
               filtersLimited={Boolean(filterFrom || filterTo)}
             />
           </div>
