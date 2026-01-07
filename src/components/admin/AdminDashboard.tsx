@@ -152,7 +152,7 @@ function ProgressBar({
   );
 }
 
-function StatusBadge({ status }: { status: MockUser["status"] }) {
+function StatusBadge({ status }: { status: AdminUser["status"] }) {
   const statusConfig = {
     online: { label: "Online", className: "bg-green-100 text-green-700" },
     idle: { label: "Idle", className: "bg-yellow-100 text-yellow-700" },
