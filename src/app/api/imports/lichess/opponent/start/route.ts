@@ -46,13 +46,23 @@ export async function POST(request: Request) {
   const scoutBaseSinceMs = new Date().setFullYear(new Date().getFullYear() - SCOUT_BASE_YEARS);
   const scoutBaseSinceIso = new Date(scoutBaseSinceMs).toISOString();
 
+  // Quick check with a small cap and timeout to avoid blocking the response.
+  // The client-side importer does the actual heavy lifting.
+  const QUICK_COUNT_CAP = 100; // Just check if there are ANY games in the last 3 years
+  const QUICK_COUNT_TIMEOUT_MS = 5000; // 5 second timeout to avoid 504s
+  
   let scoutBaseCount: number | null = null;
   let scoutBaseFallback = false;
   try {
-    scoutBaseCount = await countLichessGamesSince({ username, sinceMs: scoutBaseSinceMs, cap: 50000 });
+    const countPromise = countLichessGamesSince({ username, sinceMs: scoutBaseSinceMs, cap: QUICK_COUNT_CAP });
+    const timeoutPromise = new Promise<number>((_, reject) => 
+      setTimeout(() => reject(new Error("Count timeout")), QUICK_COUNT_TIMEOUT_MS)
+    );
+    scoutBaseCount = await Promise.race([countPromise, timeoutPromise]);
     scoutBaseFallback = (scoutBaseCount ?? 0) === 0;
   } catch {
-    // best-effort. If this fails, we still allow import to run.
+    // Timeout or error - let the import proceed without count info.
+    // The client-side worker will handle discovery.
     scoutBaseCount = null;
     scoutBaseFallback = false;
   }

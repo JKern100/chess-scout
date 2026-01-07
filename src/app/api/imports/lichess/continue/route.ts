@@ -88,15 +88,22 @@ export async function POST(request: Request) {
     if (imp.target_type === "opponent" && scoutBaseSinceIso == null) {
       const SCOUT_BASE_YEARS = 3;
       const FALLBACK_MOST_RECENT_LIMIT = 5000; // Increased to allow complete imports for most opponents
+      const QUICK_COUNT_CAP = 100; // Quick check only - client does the heavy lifting
+      const QUICK_COUNT_TIMEOUT_MS = 5000; // 5 second timeout to avoid 504s
       const nowMs = Date.now();
       const sinceMs3y = new Date(nowMs).setFullYear(new Date(nowMs).getFullYear() - SCOUT_BASE_YEARS);
       scoutBaseSinceIso = new Date(sinceMs3y).toISOString();
 
       try {
         const { countLichessGamesSince } = await import("@/server/services/lichess");
-        scoutBaseCount = await countLichessGamesSince({ username: imp.username, sinceMs: sinceMs3y, cap: 50000 });
+        const countPromise = countLichessGamesSince({ username: imp.username, sinceMs: sinceMs3y, cap: QUICK_COUNT_CAP });
+        const timeoutPromise = new Promise<number>((_, reject) => 
+          setTimeout(() => reject(new Error("Count timeout")), QUICK_COUNT_TIMEOUT_MS)
+        );
+        scoutBaseCount = await Promise.race([countPromise, timeoutPromise]);
         scoutBaseFallback = (scoutBaseCount ?? 0) === 0;
       } catch {
+        // Timeout or error - proceed without count info
         scoutBaseCount = null;
         scoutBaseFallback = false;
       }
