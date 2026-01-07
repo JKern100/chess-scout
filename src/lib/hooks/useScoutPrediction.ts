@@ -6,6 +6,11 @@ import type {
   ScoutPrediction,
   StyleMarkers,
 } from "@/components/chess/ScoutOverlay";
+import {
+  getScoutCacheKey,
+  getCachedScoutPrediction,
+  cacheScoutPrediction,
+} from "@/lib/analysis/scoutCache";
 
 type HistoryMove = {
   move_san: string;
@@ -48,6 +53,19 @@ export function useScoutPrediction() {
 
   const predictOnce = useCallback(
     async (params: PredictParams): Promise<ScoutPrediction> => {
+      // Check cache first
+      const cacheKey = getScoutCacheKey({
+        fen: params.fen,
+        opponentUsername: params.opponentUsername,
+        mode,
+        isOpponentTurn: params.isOpponentTurn,
+      });
+      
+      const cached = await getCachedScoutPrediction(cacheKey);
+      if (cached) {
+        return cached as ScoutPrediction;
+      }
+      
       const body = {
         fen: params.fen,
         mode,
@@ -80,6 +98,10 @@ export function useScoutPrediction() {
       }
 
       const data = await res.json();
+      
+      // Cache the result
+      void cacheScoutPrediction(cacheKey, data);
+      
       return data as ScoutPrediction;
     },
     [mode]
@@ -97,6 +119,20 @@ export function useScoutPrediction() {
       setError(null);
 
       try {
+        // Check cache first
+        const cacheKey = getScoutCacheKey({
+          fen: params.fen,
+          opponentUsername: params.opponentUsername,
+          mode,
+          isOpponentTurn: params.isOpponentTurn,
+        });
+        
+        const cached = await getCachedScoutPrediction(cacheKey);
+        if (cached) {
+          setPrediction(cached as ScoutPrediction);
+          return cached as ScoutPrediction;
+        }
+        
         const body = {
           fen: params.fen,
           mode,
@@ -130,6 +166,10 @@ export function useScoutPrediction() {
         }
 
         const data = await res.json();
+        
+        // Cache the result
+        void cacheScoutPrediction(cacheKey, data);
+        
         setPrediction(data as ScoutPrediction);
         return data as ScoutPrediction;
       } catch (err) {

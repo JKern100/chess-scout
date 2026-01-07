@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { normalizeFen, type MoveSelectionStrategy } from "@/server/opponentModel";
+import { isFeatureEnabled } from "@/lib/featureFlags";
 
 type Mode = MoveSelectionStrategy;
 
@@ -82,6 +83,8 @@ export async function POST(request: Request) {
 
   const cache = { status: "db", max_games: 0, age_ms: 0, build_ms: 0 };
 
+  // Phase 1a: When analysis_v2_client_tree is enabled, always use opening_graph_nodes
+  const useClientTree = isFeatureEnabled('analysis_v2_client_tree');
   const canUseOpeningGraphPresets = !forceRpc && !from && !to && platform === "lichess";
 
   const openingGraphKeyExact = (() => {
@@ -153,13 +156,48 @@ export async function POST(request: Request) {
   }): Promise<
     Array<{ uci: string; san: string | null; played_count: number; win: number; loss: number; draw: number }>
   > {
+    // Phase 1a: When useClientTree is enabled, only use opening_graph_nodes (no RPC)
+    if (useClientTree) {
+      // Try exact filter key first
+      if (openingGraphKeyExact) {
+        const fromGraph = await fetchMovesFromOpeningGraph({
+          fenKey: params.fenKey,
+          side: params.isOpponentMove ? "opponent" : "against",
+          filterKey: openingGraphKeyExact,
+        });
+        if (fromGraph.length > 0) return fromGraph;
+      }
+      
+      // Fall back to best available graph (handles date filters gracefully)
+      if (params.fallbackKey) {
+        const fromFallback = await fetchMovesFromOpeningGraph({
+          fenKey: params.fenKey,
+          side: params.isOpponentMove ? "opponent" : "against",
+          filterKey: params.fallbackKey,
+        });
+        if (fromFallback.length > 0) return fromFallback;
+        
+        // Last-resort: try 'all' if specific filter returned nothing
+        if (params.fallbackKey !== "all") {
+          return await fetchMovesFromOpeningGraph({
+            fenKey: params.fenKey,
+            side: params.isOpponentMove ? "opponent" : "against",
+            filterKey: "all",
+          });
+        }
+      }
+      
+      return [];
+    }
+    
+    // Legacy path: use RPC when feature flag is disabled
     if (openingGraphKeyExact) {
       const fromGraph = await fetchMovesFromOpeningGraph({
         fenKey: params.fenKey,
         side: params.isOpponentMove ? "opponent" : "against",
         filterKey: openingGraphKeyExact,
       });
-
+      
       // If the preset graph isn't materialized for this opponent yet, fall back to exact RPC.
       if (fromGraph.length > 0) return fromGraph;
     }
@@ -190,6 +228,17 @@ export async function POST(request: Request) {
     })).filter((m) => m.uci);
 
     if (out.length > 0) return out;
+
+    // If RPC returned empty but we have date filters, fall back to opening_graph
+    // and let the client know the data is approximate (not filtered by date)
+    if ((from || to) && params.fallbackKey) {
+      const fromFallback = await fetchMovesFromOpeningGraph({
+        fenKey: params.fenKey,
+        side: params.isOpponentMove ? "opponent" : "against",
+        filterKey: params.fallbackKey,
+      });
+      if (fromFallback.length > 0) return fromFallback;
+    }
 
     if (shouldAllowGraphFallback && params.fallbackKey) {
       const fromFallback = await fetchMovesFromOpeningGraph({
@@ -256,6 +305,7 @@ export async function POST(request: Request) {
   }
 
   const usedFallback = !openingGraphKeyExact && Boolean(openingGraphKeyFallback);
+  const hasDateFilter = Boolean(from || to);
 
   const [movesOpponent, movesAgainst] = await Promise.all([
     fetchMoves({ fenKey: startFenKey, isOpponentMove: true, fallbackKey: openingGraphKeyFallback }),
@@ -266,17 +316,36 @@ export async function POST(request: Request) {
   const availableAgainstTotalCount = movesAgainst.reduce((s, m) => s + m.played_count, 0);
   const picked = pickMove(movesOpponent);
 
+  const isApproximate = Boolean(
+    !openingGraphKeyExact &&
+      usedFallback &&
+      (from || to || (Array.isArray(speedsFilter) && speedsFilter.length > 1))
+  );
+  
+  // Phase 1a: When useClientTree is enabled, date filters show "All-time" data with refinement available
+  const dateFilterAppliedButIgnored = Boolean(
+    hasDateFilter && 
+    (movesOpponent.length > 0 || movesAgainst.length > 0) &&
+    (useClientTree || usedFallback)
+  );
+  
+  // New metadata for Phase 1a UX: indicates data source and refinement status
+  const dataSource = useClientTree 
+    ? (openingGraphKeyExact ? "opening_graph_exact" : "opening_graph_fallback")
+    : (openingGraphKeyExact ? "opening_graph" : usedFallback ? "opening_graph_fallback" : "rpc");
+
   return NextResponse.json({
     cache,
     filter_meta: {
       ...filterMetaBase,
-      source: openingGraphKeyExact ? "opening_graph" : usedFallback ? "opening_graph_fallback" : "rpc",
+      source: dataSource,
       opening_graph_key_used: openingGraphKeyExact ?? (usedFallback ? openingGraphKeyFallback : null),
-      approximate: Boolean(
-        !openingGraphKeyExact &&
-          usedFallback &&
-          (from || to || (Array.isArray(speedsFilter) && speedsFilter.length > 1))
-      ),
+      approximate: isApproximate,
+      date_filter_ignored: dateFilterAppliedButIgnored,
+      // Phase 1a: New fields for improved UX
+      client_tree_enabled: useClientTree,
+      showing_all_time: hasDateFilter && dateFilterAppliedButIgnored,
+      date_refine_available: hasDateFilter && dateFilterAppliedButIgnored && isFeatureEnabled('analysis_v2_date_refine'),
     },
     position: startFenKey,
     mode,

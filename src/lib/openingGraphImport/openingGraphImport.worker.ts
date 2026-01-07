@@ -42,12 +42,25 @@ type FlushPayload = {
   played_by: FenAgg;
 };
 
+// Opening trace entry for fast date filtering (no chess.js replay needed)
+type OpeningTraceEntry = {
+  ply: number;
+  positionKey: string;
+  moveUci: string;
+  isOpponentMove: boolean;
+};
+
+const MAX_OPENING_TRACE_PLIES = 20; // Store first 20 plies per game
+
 type FlushGame = {
   platform_game_id: string;
   played_at: string | null;
   speed: string | null;
   rated: boolean | null;
   pgn: string;
+  opponent_color: "w" | "b";
+  result: string;
+  opening_trace: OpeningTraceEntry[];
 };
 
 type WorkerProgress = {
@@ -381,6 +394,7 @@ async function runImport(params: ImportStartMessage) {
       const replay = new Chess();
 
       let ply = 0;
+      const openingTrace: OpeningTraceEntry[] = [];
 
       for (const mv of verbose) {
         const fenKey = normalizeFen(replay.fen());
@@ -389,6 +403,16 @@ async function runImport(params: ImportStartMessage) {
         const uci = `${mv.from}${mv.to}${mv.promotion ? mv.promotion : ""}`;
 
         const isOpponentMove = Boolean(moveColor && moveColor === oppColor);
+        
+        // Capture opening trace for first N plies (for fast date filtering)
+        if (ply < MAX_OPENING_TRACE_PLIES) {
+          openingTrace.push({
+            ply,
+            positionKey: fenKey,
+            moveUci: uci,
+            isOpponentMove,
+          });
+        }
 
         let played: any = null;
         try {
@@ -454,6 +478,9 @@ async function runImport(params: ImportStartMessage) {
         speed: speed ?? null,
         rated: ratedFlag ?? null,
         pgn,
+        opponent_color: oppColor,
+        result,
+        opening_trace: openingTrace,
       });
 
       gamesProcessed += 1;

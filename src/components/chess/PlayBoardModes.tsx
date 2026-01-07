@@ -2454,6 +2454,10 @@ export function PlayBoardModes({ initialFen }: Props) {
               }}
               scoutOpponentReplyByMove={scoutOpponentReplyByMove}
               scoutOpponentReplyLoading={scoutOpponentReplyLoading}
+              filterFrom={analysisAppliedFilters.fromDate || null}
+              filterTo={analysisAppliedFilters.toDate || null}
+              filterSpeeds={analysisAppliedFilters.speeds}
+              filterRated={analysisAppliedFilters.rated}
             />
           );
         }
@@ -2583,6 +2587,11 @@ function AnalysisRightSidebar(props: {
   onScoutPredict?: () => void;
   scoutOpponentReplyByMove?: Record<string, any> | null;
   scoutOpponentReplyLoading?: boolean;
+  // Date filter refinement props (Phase 1b)
+  filterFrom?: string | null;
+  filterTo?: string | null;
+  filterSpeeds?: string[] | null;
+  filterRated?: 'any' | 'rated' | 'casual';
 }) {
   const {
     state,
@@ -2640,6 +2649,10 @@ function AnalysisRightSidebar(props: {
     onScoutPredict,
     scoutOpponentReplyByMove,
     scoutOpponentReplyLoading,
+    filterFrom,
+    filterTo,
+    filterSpeeds,
+    filterRated,
   } = props;
 
   const active = analysisRightTab;
@@ -2894,6 +2907,11 @@ function AnalysisRightSidebar(props: {
               enabled={active === "stats" || analysisFilterApplyStatus === "applying"}
               showEngineColumn={analysisShowEngineColumn}
               styleMarkers={analysisStyleMarkers}
+              platform="lichess"
+              filterFrom={filterFrom}
+              filterTo={filterTo}
+              filterSpeeds={filterSpeeds}
+              filterRated={filterRated}
             />
           </div>
 

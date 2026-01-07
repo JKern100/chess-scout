@@ -1,0 +1,207 @@
+/**
+ * React hook for progressive date filter refinement.
+ * 
+ * Shows "All-time" data instantly, then refines to exact date range
+ * using cached opening traces from IndexedDB (no chess.js replay).
+ */
+
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { isFeatureEnabled } from '@/lib/featureFlags';
+import { createSupabaseBrowserClient } from '@/lib/supabase/client';
+import {
+  getDateFilteredMoves,
+  hasDateFilterCache,
+  type MoveStats,
+  type RefinementProgress,
+} from '@/lib/analysis/dateFilterService';
+
+export interface RefinementState {
+  status: 'idle' | 'checking' | 'refining' | 'complete' | 'unavailable' | 'cancelled' | 'error';
+  progress: RefinementProgress | null;
+  refinedMoves: MoveStats[] | null;
+  totalGames: number;
+  filteredGames: number;
+  error: string | null;
+}
+
+export interface UseDateFilterRefinementParams {
+  platform: string;
+  opponent: string;
+  positionKey: string;
+  side: 'opponent' | 'against';
+  from: string | null;
+  to: string | null;
+  speeds: string[] | null;
+  rated: 'any' | 'rated' | 'casual';
+  enabled: boolean; // Only refine when Analysis is enabled
+}
+
+export interface UseDateFilterRefinementResult {
+  state: RefinementState;
+  startRefinement: () => void;
+  cancelRefinement: () => void;
+  isRefining: boolean;
+  hasRefinedData: boolean;
+}
+
+const initialState: RefinementState = {
+  status: 'idle',
+  progress: null,
+  refinedMoves: null,
+  totalGames: 0,
+  filteredGames: 0,
+  error: null,
+};
+
+export function useDateFilterRefinement(
+  params: UseDateFilterRefinementParams
+): UseDateFilterRefinementResult {
+  const [state, setState] = useState<RefinementState>(initialState);
+  const [visitorId, setVisitorId] = useState<string | null>(null);
+  const abortRef = useRef(false);
+  const lastParamsRef = useRef<string>('');
+  
+  const {
+    platform,
+    opponent,
+    positionKey,
+    side,
+    from,
+    to,
+    speeds,
+    rated,
+    enabled,
+  } = params;
+  
+  // Fetch user ID on mount
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const supabase = createSupabaseBrowserClient();
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!cancelled && user?.id) {
+          setVisitorId(user.id);
+        }
+      } catch {
+        // Ignore auth errors
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  
+  const hasDateFilter = Boolean(from || to);
+  const featureEnabled = isFeatureEnabled('analysis_v2_date_refine');
+  
+  // Generate a key for the current params to detect changes
+  const paramsKey = `${visitorId}_${platform}_${opponent}_${positionKey}_${side}_${from}_${to}_${speeds?.join(',')}_${rated}`;
+  
+  // Reset state when params change
+  useEffect(() => {
+    if (paramsKey !== lastParamsRef.current) {
+      lastParamsRef.current = paramsKey;
+      abortRef.current = true; // Cancel any in-progress refinement
+      setState(initialState);
+    }
+  }, [paramsKey]);
+  
+  const startRefinement: () => Promise<void> = useCallback(async () => {
+    if (!visitorId || !opponent || !hasDateFilter || !featureEnabled || !enabled) {
+      setState(prev => ({ ...prev, status: 'unavailable' }));
+      return;
+    }
+    
+    abortRef.current = false;
+    setState(prev => ({ ...prev, status: 'checking', error: null }));
+    
+    // Check if we have cached data
+    const cacheInfo = await hasDateFilterCache({
+      visitorId,
+      platform,
+      opponent,
+    });
+    
+    if (abortRef.current) {
+      setState(prev => ({ ...prev, status: 'cancelled' }));
+      return;
+    }
+    
+    if (!cacheInfo.hasCachedData) {
+      setState(prev => ({
+        ...prev,
+        status: 'unavailable',
+        error: 'No cached data available. Re-import opponent to enable date filtering.',
+      }));
+      return;
+    }
+    
+    setState(prev => ({ ...prev, status: 'refining' }));
+    
+    try {
+      const result = await getDateFilteredMoves({
+        filterParams: {
+          visitorId,
+          platform,
+          opponent,
+          from,
+          to,
+          speeds,
+          rated,
+        },
+        positionKey,
+        side,
+        onProgress: (progress) => {
+          if (abortRef.current) return;
+          setState(prev => ({ ...prev, progress }));
+        },
+      });
+      
+      if (abortRef.current) {
+        setState(prev => ({ ...prev, status: 'cancelled' }));
+        return;
+      }
+      
+      setState({
+        status: 'complete',
+        progress: { phase: 'complete', gamesLoaded: result.filteredGames, gamesTotal: result.totalGames },
+        refinedMoves: result.moves,
+        totalGames: result.totalGames,
+        filteredGames: result.filteredGames,
+        error: null,
+      });
+    } catch (e) {
+      if (abortRef.current) {
+        setState(prev => ({ ...prev, status: 'cancelled' }));
+        return;
+      }
+      setState(prev => ({
+        ...prev,
+        status: 'error',
+        error: e instanceof Error ? e.message : 'Refinement failed',
+      }));
+    }
+  }, [visitorId, platform, opponent, positionKey, side, from, to, speeds, rated, hasDateFilter, featureEnabled, enabled]);
+  
+  const cancelRefinement = useCallback(() => {
+    abortRef.current = true;
+    setState(prev => ({
+      ...prev,
+      status: prev.status === 'refining' || prev.status === 'checking' ? 'cancelled' : prev.status,
+    }));
+  }, []);
+  
+  // Auto-start refinement when date filter is active and feature is enabled
+  useEffect(() => {
+    if (hasDateFilter && featureEnabled && enabled && visitorId && opponent && state.status === 'idle') {
+      startRefinement();
+    }
+  }, [hasDateFilter, featureEnabled, enabled, visitorId, opponent, state.status, startRefinement]);
+  
+  return {
+    state,
+    startRefinement,
+    cancelRefinement,
+    isRefining: state.status === 'checking' || state.status === 'refining',
+    hasRefinedData: state.status === 'complete' && state.refinedMoves !== null,
+  };
+}

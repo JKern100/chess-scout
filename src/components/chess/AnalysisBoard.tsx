@@ -6,7 +6,9 @@ import type { ChessBoardCoreState } from "./ChessBoardCore";
 import { evaluateBestMove, evaluatePositionShallow, type EngineScore } from "@/lib/engine/engineService";
 import { sanToFigurine } from "@/components/chess/FigurineIcon";
 import { useStyleAnalysis } from "@/lib/hooks/useStyleAnalysis";
-import { Zap, AlertTriangle, TrendingUp, Target, Braces } from "lucide-react";
+import { useDateFilterRefinement } from "@/lib/hooks/useDateFilterRefinement";
+import { normalizeFen } from "@/server/opponentModel";
+import { Zap, AlertTriangle, TrendingUp, Target, Braces, X, Loader2 } from "lucide-react";
 
 type Strategy = "proportional" | "random";
 
@@ -46,6 +48,12 @@ type Props = {
     blunder_rate: number;
     time_pressure_weakness: number;
   };
+  // Date filter refinement props (Phase 1b)
+  platform?: string;
+  filterFrom?: string | null;
+  filterTo?: string | null;
+  filterSpeeds?: string[] | null;
+  filterRated?: 'any' | 'rated' | 'casual';
 };
 
 type MoveRow = {
@@ -193,7 +201,39 @@ export function AnalysisBoard(props: Props) {
     opponentStatsBusy,
     setOpponentStatsBusy,
     styleMarkers,
+    // Date filter refinement props
+    platform = 'lichess',
+    filterFrom,
+    filterTo,
+    filterSpeeds,
+    filterRated = 'any',
   } = props;
+  
+  // Compute position key for refinement
+  const positionKey = useMemo(() => normalizeFen(state.fen), [state.fen]);
+  
+  // Compute which side's moves to show based on whose turn it is
+  const currentTurn = state.game.turn();
+  const playerColor = state.playerSide === "white" ? "w" : "b";
+  const refinementSide = currentTurn !== playerColor ? 'opponent' : 'against';
+  
+  // Date filter refinement hook
+  const {
+    state: refinementState,
+    cancelRefinement,
+    isRefining,
+    hasRefinedData,
+  } = useDateFilterRefinement({
+    platform,
+    opponent: opponentUsername,
+    positionKey,
+    side: refinementSide,
+    from: filterFrom ?? null,
+    to: filterTo ?? null,
+    speeds: filterSpeeds ?? null,
+    rated: filterRated,
+    enabled,
+  });
 
   const engineReqIdRef = useRef(0);
   const evalReqIdRef = useRef(0);
@@ -206,6 +246,9 @@ export function AnalysisBoard(props: Props) {
   const lastAnimatedImportedCountRef = useRef<number>(0);
   const [displayTotalInPos, setDisplayTotalInPos] = useState(0);
   const [displayMoveCounts, setDisplayMoveCounts] = useState<Record<string, number>>({});
+  const fetchInFlightRef = useRef(false);
+  const lastFetchKeyRef = useRef<string>("");
+  const fetchDebounceTimerRef = useRef<number | null>(null);
   
   // Style analysis state
   const {
@@ -287,43 +330,57 @@ export function AnalysisBoard(props: Props) {
     [playTableMove]
   );
 
-  async function fetchOpponentStats(params: { fen: string; username: string }) {
-    const json = await requestOpponentMove({
-      fen: params.fen,
-      username: params.username,
-      mode: "proportional",
-      prefetch: false,
-      force_rpc: isSyncing,
-    });
+  async function fetchOpponentStats(params: { fen: string; username: string; skipIfInFlight?: boolean }) {
+    const fetchKey = `${params.username}|${params.fen}|${filtersKey}`;
+    
+    // Deduplicate: if a fetch is already in flight for this exact key, skip
+    if (params.skipIfInFlight && fetchInFlightRef.current && lastFetchKeyRef.current === fetchKey) {
+      return null;
+    }
+    
+    fetchInFlightRef.current = true;
+    lastFetchKeyRef.current = fetchKey;
+    
+    try {
+      const json = await requestOpponentMove({
+        fen: params.fen,
+        username: params.username,
+        mode: "proportional",
+        prefetch: false,
+        force_rpc: isSyncing,
+      });
 
-    const moves = Array.isArray(json?.moves) ? (json.moves as any[]) : [];
-    const movesAgainst = Array.isArray(json?.moves_against) ? (json.moves_against as any[]) : [];
+      const moves = Array.isArray(json?.moves) ? (json.moves as any[]) : [];
+      const movesAgainst = Array.isArray(json?.moves_against) ? (json.moves_against as any[]) : [];
 
-    const normalized = moves.map((m) => ({
-      uci: String(m.uci),
-      san: (m.san as string | null) ?? null,
-      played_count: Number(m.played_count ?? 0),
-      win: Number(m.win ?? 0),
-      loss: Number(m.loss ?? 0),
-      draw: Number(m.draw ?? 0),
-    }));
+      const normalized = moves.map((m) => ({
+        uci: String(m.uci),
+        san: (m.san as string | null) ?? null,
+        played_count: Number(m.played_count ?? 0),
+        win: Number(m.win ?? 0),
+        loss: Number(m.loss ?? 0),
+        draw: Number(m.draw ?? 0),
+      }));
 
-    const normalizedAgainst = movesAgainst.map((m) => ({
-      uci: String(m.uci),
-      san: (m.san as string | null) ?? null,
-      played_count: Number(m.played_count ?? 0),
-      win: Number(m.win ?? 0),
-      loss: Number(m.loss ?? 0),
-      draw: Number(m.draw ?? 0),
-    }));
-
-    return {
-      totalCountOpponent: Number(json?.available_total_count ?? 0),
-      totalCountAgainst: Number(json?.available_against_total_count ?? 0),
-      depthRemaining: typeof json?.depth_remaining === "number" ? (json.depth_remaining as number) : null,
-      movesOpponent: normalized,
-      movesAgainst: normalizedAgainst,
-    };
+      const normalizedAgainst = movesAgainst.map((m) => ({
+        uci: String(m.uci),
+        san: (m.san as string | null) ?? null,
+        played_count: Number(m.played_count ?? 0),
+        win: Number(m.win ?? 0),
+        loss: Number(m.loss ?? 0),
+        draw: Number(m.draw ?? 0),
+      }));
+      
+      return {
+        totalCountOpponent: Number(json?.available_total_count ?? 0),
+        totalCountAgainst: Number(json?.available_against_total_count ?? 0),
+        depthRemaining: typeof json?.depth_remaining === "number" ? (json.depth_remaining as number) : null,
+        movesOpponent: normalized,
+        movesAgainst: normalizedAgainst,
+      };
+    } finally {
+      fetchInFlightRef.current = false;
+    }
   }
 
   useEffect(() => {
@@ -337,31 +394,46 @@ export function AnalysisBoard(props: Props) {
       return;
     }
 
+    // Clear any pending debounce timer
+    if (fetchDebounceTimerRef.current != null) {
+      window.clearTimeout(fetchDebounceTimerRef.current);
+      fetchDebounceTimerRef.current = null;
+    }
+
     let cancelled = false;
     setOpponentStatsBusy(true);
 
-    void fetchOpponentStats({ fen: state.fen, username: trimmed })
-      .then((stats) => {
-        if (cancelled) return;
-        setOpponentStats(stats);
-      })
-      .catch((e) => {
-        if (cancelled) return;
-        const now = Date.now();
-        if (now - lastOpponentPollErrorAtRef.current > 5000) {
-          lastOpponentPollErrorAtRef.current = now;
-          const msg = e instanceof Error ? e.message : "Opponent stats failed";
-          console.warn("[AnalysisBoard] opponent stats fetch failed", msg);
-        }
-        setOpponentStats(null);
-      })
-      .finally(() => {
-        if (cancelled) return;
-        setOpponentStatsBusy(false);
-      });
+    // Debounce filter changes to prevent rapid refetches
+    fetchDebounceTimerRef.current = window.setTimeout(() => {
+      fetchDebounceTimerRef.current = null;
+      
+      void fetchOpponentStats({ fen: state.fen, username: trimmed, skipIfInFlight: false })
+        .then((stats) => {
+          if (cancelled || !stats) return;
+          setOpponentStats(stats);
+        })
+        .catch((e) => {
+          if (cancelled) return;
+          const now = Date.now();
+          if (now - lastOpponentPollErrorAtRef.current > 5000) {
+            lastOpponentPollErrorAtRef.current = now;
+            const msg = e instanceof Error ? e.message : "Opponent stats failed";
+            console.warn("[AnalysisBoard] opponent stats fetch failed", msg);
+          }
+          setOpponentStats(null);
+        })
+        .finally(() => {
+          if (cancelled) return;
+          setOpponentStatsBusy(false);
+        });
+    }, 300); // 300ms debounce for filter changes
 
     return () => {
       cancelled = true;
+      if (fetchDebounceTimerRef.current != null) {
+        window.clearTimeout(fetchDebounceTimerRef.current);
+        fetchDebounceTimerRef.current = null;
+      }
     };
   }, [opponentUsername, filtersKey, showArrow, enabled, state.fen, opponentImportedCount, setOpponentStatsBusy, setOpponentStats]);
 
@@ -373,11 +445,15 @@ export function AnalysisBoard(props: Props) {
 
     const timer = window.setInterval(() => {
       if (pollInFlightRef.current) return;
+      // Skip polling if another fetch is already in flight
+      if (fetchInFlightRef.current) return;
+      
       pollInFlightRef.current = true;
-      setOpponentStatsBusy(true);
-      void fetchOpponentStats({ fen: state.fen, username: trimmed })
+      void fetchOpponentStats({ fen: state.fen, username: trimmed, skipIfInFlight: true })
         .then((stats) => {
-          setOpponentStats(stats);
+          if (stats) {
+            setOpponentStats(stats);
+          }
         })
         .catch((e) => {
           const now = Date.now();
@@ -389,14 +465,13 @@ export function AnalysisBoard(props: Props) {
         })
         .finally(() => {
           pollInFlightRef.current = false;
-          setOpponentStatsBusy(false);
         });
-    }, 1200);
+    }, 2000); // Increased from 1200ms to 2000ms to reduce polling frequency
 
     return () => {
       window.clearInterval(timer);
     };
-  }, [enabled, isSyncing, opponentUsername, state.fen, filtersKey, setOpponentStats, setOpponentStatsBusy]);
+  }, [enabled, isSyncing, opponentUsername, state.fen, filtersKey, setOpponentStats]);
 
   useEffect(() => {
     const trimmed = opponentUsername.trim();
@@ -405,18 +480,20 @@ export function AnalysisBoard(props: Props) {
     const prev = prevImportedCountRef.current;
     prevImportedCountRef.current = opponentImportedCount;
     if (opponentImportedCount <= prev) return;
-    setOpponentStatsBusy(true);
-    void fetchOpponentStats({ fen: state.fen, username: trimmed })
+    
+    // Skip if another fetch is in flight to prevent racing
+    if (fetchInFlightRef.current) return;
+    
+    void fetchOpponentStats({ fen: state.fen, username: trimmed, skipIfInFlight: true })
       .then((stats) => {
-        setOpponentStats(stats);
+        if (stats) {
+          setOpponentStats(stats);
+        }
       })
       .catch(() => {
-        setOpponentStats(null);
-      })
-      .finally(() => {
-        setOpponentStatsBusy(false);
+        // Silently fail on import count changes to avoid noise
       });
-  }, [opponentImportedCount, opponentUsername, showArrow, enabled, state.fen, setOpponentStats, setOpponentStatsBusy]);
+  }, [opponentImportedCount, opponentUsername, showArrow, enabled, state.fen, setOpponentStats]);
 
   useEffect(() => {
     if (!showEngineBest) {
@@ -473,10 +550,46 @@ export function AnalysisBoard(props: Props) {
   const isOppToMove = state.game.turn() === opponentColor;
 
   const nextMoveList = useMemo(() => {
+    // When we have refined data from date filter, use it instead of all-time stats
+    if (hasRefinedData && refinementState.refinedMoves && refinementState.refinedMoves.length > 0) {
+      const refinedMoves = refinementState.refinedMoves;
+      const total = refinedMoves.reduce((sum, m) => sum + m.count, 0);
+      
+      // Transform MoveStats to MoveRow format, converting UCI to SAN
+      const tempChess = new Chess(state.fen);
+      const moves: MoveRow[] = refinedMoves.map((m) => {
+        // Try to convert UCI to SAN
+        let san: string | null = null;
+        try {
+          const from = m.uci.slice(0, 2);
+          const to = m.uci.slice(2, 4);
+          const promotion = m.uci.length > 4 ? m.uci.slice(4) : undefined;
+          const move = tempChess.move({ from, to, promotion });
+          if (move) {
+            san = move.san;
+            tempChess.undo(); // Undo to keep position for next move
+          }
+        } catch {
+          // If move is invalid, just use UCI
+        }
+        
+        return {
+          uci: m.uci,
+          san,
+          played_count: m.count,
+          win: m.win,
+          loss: m.loss,
+          draw: m.draw,
+        };
+      });
+      
+      return { total, moves };
+    }
+    
     if (!opponentStats) return { total: 0, moves: [] as MoveRow[] };
     if (isOppToMove) return { total: opponentStats.totalCountOpponent, moves: opponentStats.movesOpponent as MoveRow[] };
     return { total: opponentStats.totalCountAgainst, moves: opponentStats.movesAgainst as MoveRow[] };
-  }, [opponentStats, isOppToMove]);
+  }, [opponentStats, isOppToMove, hasRefinedData, refinementState.refinedMoves, state.fen]);
 
   const visibleMovesKey = useMemo(() => {
     return nextMoveList.moves
@@ -681,6 +794,65 @@ export function AnalysisBoard(props: Props) {
   return (
     <div className="flex flex-col gap-2">
       {state.status ? <div className="text-xs text-zinc-600">{state.status}</div> : null}
+      
+      {/* Date filter status banner - show when date filter is active */}
+      {(filterFrom || filterTo) && enabled && nextMoveList.moves?.length > 0 ? (
+        <div className={`rounded-lg border px-2 py-1.5 text-[10px] ${
+          hasRefinedData 
+            ? 'border-emerald-200 bg-emerald-50 text-emerald-800' 
+            : 'border-blue-200 bg-blue-50 text-blue-800'
+        }`}>
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1">
+              {isRefining ? (
+                <>
+                  <Loader2 className="h-3 w-3 animate-spin text-blue-600" />
+                  <span className="font-medium">Refining to exact date range...</span>
+                  <span className="text-blue-600">
+                    ({refinementState.progress?.gamesLoaded ?? 0} games)
+                  </span>
+                </>
+              ) : hasRefinedData ? (
+                <>
+                  <span className="font-medium text-emerald-700">Exact stats</span>
+                  <span className="mx-1">•</span>
+                  <span className="text-emerald-600">
+                    {refinementState.filteredGames} of {refinementState.totalGames} games match filter
+                  </span>
+                </>
+              ) : refinementState.status === 'unavailable' ? (
+                <>
+                  <span className="font-medium">All-time stats</span>
+                  <span className="mx-1">•</span>
+                  <span className="text-blue-600">Re-sync opponent to enable date filtering</span>
+                </>
+              ) : refinementState.status === 'error' ? (
+                <>
+                  <span className="font-medium">All-time stats</span>
+                  <span className="mx-1">•</span>
+                  <span className="text-amber-600">Date filter failed: {refinementState.error}</span>
+                </>
+              ) : (
+                <>
+                  <span className="font-medium">All-time stats</span>
+                  <span className="mx-1">•</span>
+                  <span className="text-blue-600">Calculating filtered stats...</span>
+                </>
+              )}
+            </div>
+            {isRefining ? (
+              <button
+                type="button"
+                onClick={cancelRefinement}
+                className="rounded p-0.5 hover:bg-blue-100"
+                title="Cancel refinement"
+              >
+                <X className="h-3 w-3 text-blue-600" />
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
 
       {enabled ? (
         <div className="grid min-w-0 gap-1">

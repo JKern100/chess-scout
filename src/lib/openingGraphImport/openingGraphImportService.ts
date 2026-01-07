@@ -1,5 +1,6 @@
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { normalizeFen } from "@/server/opponentModel";
+import { upsertCachedGames, type CachedGame, type OpeningTraceEntry } from "@/lib/analysis/analysisCache";
 
 type WorkerFlushNode = {
   filter_key: string;
@@ -16,6 +17,14 @@ type WorkerFlushGame = {
   speed: string | null;
   rated: boolean | null;
   pgn: string;
+  opponent_color: "w" | "b";
+  result: string;
+  opening_trace: Array<{
+    ply: number;
+    positionKey: string;
+    moveUci: string;
+    isOpponentMove: boolean;
+  }>;
 };
 
 type WorkerMessage =
@@ -157,6 +166,45 @@ export function createOpeningGraphImporter(params: {
     }
   }
 
+  async function cacheGamesInIndexedDB(
+    visitorId: string,
+    platform: string,
+    username: string,
+    games: WorkerFlushGame[]
+  ): Promise<void> {
+    if (games.length === 0) return;
+    
+    const usernameNormalized = username.trim().toLowerCase();
+    const visitorKey = `${visitorId}_${platform}_${usernameNormalized}`;
+    
+    const cachedGames: CachedGame[] = games
+      .filter((g) => g.platform_game_id && g.opening_trace)
+      .map((g) => ({
+        id: g.platform_game_id,
+        visitorKey,
+        platform,
+        opponent: usernameNormalized,
+        playedAt: g.played_at ?? new Date().toISOString(),
+        speed: g.speed,
+        rated: g.rated,
+        result: g.result ?? "*",
+        opponentColor: g.opponent_color,
+        openingTrace: g.opening_trace.map((t) => ({
+          ply: t.ply,
+          positionKey: t.positionKey,
+          moveUci: t.moveUci,
+          isOpponentMove: t.isOpponentMove,
+        })),
+      }));
+    
+    try {
+      await upsertCachedGames(cachedGames);
+    } catch (e) {
+      // IndexedDB caching is best-effort; don't fail the import
+      console.warn("[ImportService] Failed to cache games in IndexedDB:", e);
+    }
+  }
+
   function postStart(p: OpeningGraphImportParams) {
     if (!worker) throw new Error("Worker not initialized");
     worker.postMessage({ type: "start", ...p });
@@ -227,6 +275,7 @@ export function createOpeningGraphImporter(params: {
           .then(() => Promise.all([
             upsertNodes(platform, username, nodes),
             upsertGames(platform, username, games),
+            cacheGamesInIndexedDB(profileId!, platform, username, games),
           ]))
           .then(() => {
             pendingWriteCount = Math.max(0, pendingWriteCount - 1);
