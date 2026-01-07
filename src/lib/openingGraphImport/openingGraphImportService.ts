@@ -50,6 +50,7 @@ export type OpeningGraphImportParams = {
   untilMs?: number;
   rated?: "any" | "rated" | "casual";
   perfType?: string | null;
+  maxGames?: number; // Cap on number of games to import (default: 1000)
 };
 
 export function createOpeningGraphImporter(params: {

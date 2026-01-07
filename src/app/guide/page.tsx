@@ -112,8 +112,8 @@ export default function GuidePage() {
                   <div>
                     <h3 className="font-semibold text-zinc-900 mb-1">Connect Your Chess Account</h3>
                     <p className="text-sm text-zinc-600">
-                      Link your Lichess account to import your game history. We analyze your last 3 years
-                      of games to build your personal Scout profile.
+                      Link your Lichess account to import your game history. We analyze your most recent
+                      1,000 games to build your personal Scout profile.
                     </p>
                   </div>
                 </div>
@@ -173,12 +173,12 @@ export default function GuidePage() {
           <div className="rounded-xl border border-zinc-200 bg-gradient-to-br from-orange-50 to-amber-50 p-6 mb-6">
             <h3 className="font-semibold text-zinc-900 mb-2 flex items-center gap-2">
               <Clock className="h-4 w-4 text-orange-600" />
-              Why 3 Years of Games?
+              Why 1,000 Games?
             </h3>
             <p className="text-sm text-zinc-700 leading-relaxed">
-              ChessScout imports your last <strong>3 years</strong> of games by default. This timeframe provides
-              the perfect balance: enough data to identify consistent patterns and tendencies, while filtering
-              out outdated playing styles from years ago. Your chess evolves, and so should your analysis.
+              ChessScout imports your most recent <strong>1,000 games</strong> by default. This provides
+              enough data to identify consistent patterns and tendencies, while keeping the import fast.
+              As you play more games, use the <strong>Refresh</strong> button to sync your latest games!
             </p>
           </div>
 

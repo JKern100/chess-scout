@@ -136,7 +136,7 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
 
   // Activity timeout - if no progress for 5 minutes, consider import stalled
   const ACTIVITY_TIMEOUT_MS = 300_000; // 5 minutes with no progress = stalled
-  const SCOUT_BASE_YEARS = 3; // Only sync games from the past 3 years
+  const MAX_GAMES_PER_IMPORT = 1000; // Cap imports at 1000 games for performance
 
   const pollSyncedCount = useCallback(async (opponentId: string) => {
     const parsed = parseOpponentId(opponentId);
@@ -455,16 +455,14 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
     console.log("[ImportQueue] Actual DB count for", nextKey, ":", actualDbCount);
     baseCountRef.current = actualDbCount;
     
-    // Apply 3-year filter as the minimum date
-    const threeYearsAgoMs = new Date().setFullYear(new Date().getFullYear() - SCOUT_BASE_YEARS);
-    let sinceMs: number = threeYearsAgoMs; // Default to 3 years ago
+    // For incremental sync (refresh): use lastSyncTimestamp if we have games
+    // For initial import: no sinceMs filter, just cap at MAX_GAMES_PER_IMPORT
+    let sinceMs: number | undefined = undefined;
     
-    // Only use lastSyncTimestamp for incremental sync if we actually have games in the DB
-    // Otherwise the timestamp is stale from a failed/stopped sync
     const lastTs = lastSyncTimestampRef.current[nextKey];
     if (actualDbCount > 0 && typeof lastTs === "number" && lastTs > 0) {
-      // Use the later of: last sync timestamp or 3 years ago
-      sinceMs = Math.max(lastTs + 1, threeYearsAgoMs);
+      // Incremental sync: fetch games newer than last sync
+      sinceMs = lastTs + 1;
       console.log("[ImportQueue] Using incremental sync from", new Date(sinceMs).toISOString());
     } else if (lastTs) {
       // Clear stale timestamp if no games are in the database
@@ -484,7 +482,7 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
       });
     }
     
-    console.log("[ImportQueue] sinceMs for", nextKey, ":", new Date(sinceMs).toISOString(), "(3yr ago:", new Date(threeYearsAgoMs).toISOString(), ")");
+    console.log("[ImportQueue] Import for", nextKey, "- sinceMs:", sinceMs ? new Date(sinceMs).toISOString() : "(initial)", "maxGames:", MAX_GAMES_PER_IMPORT);
     
     setProgress(actualDbCount);
     setSyncedCount(actualDbCount);
@@ -497,6 +495,7 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
         color: "both",
         rated: "any",
         sinceMs,
+        maxGames: MAX_GAMES_PER_IMPORT,
       });
     } catch {
       finishCurrent();

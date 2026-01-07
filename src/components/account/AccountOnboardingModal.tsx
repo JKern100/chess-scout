@@ -402,23 +402,23 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
                 </h2>
                 <p className="mt-2 text-sm text-zinc-600 max-w-md mx-auto">
                   {isUserSyncing
-                    ? "We're importing your last 3 years of games to build a comprehensive picture of your playing style."
+                    ? "We're importing your most recent 1,000 games to build a comprehensive picture of your playing style."
                     : userSyncProgress > 0
                     ? "Your games have been imported successfully."
                     : "Preparing to import your games..."}
                 </p>
               </div>
 
-              {/* 3-Year Explanation */}
+              {/* Import Explanation */}
               {isUserSyncing && (
                 <div className="mb-4 rounded-xl border border-blue-100 bg-blue-50 p-4 text-left">
                   <div className="flex items-start gap-3">
                     <Clock className="h-5 w-5 text-blue-600 mt-0.5 shrink-0" />
                     <div>
-                      <div className="text-sm font-medium text-blue-900">Why 3 years of games?</div>
+                      <div className="text-sm font-medium text-blue-900">Why 1,000 games?</div>
                       <p className="mt-1 text-xs text-blue-700">
-                        This timeframe captures your current playing style while filtering out outdated patterns.
-                        The result? More accurate insights and better opponent preparation.
+                        Your most recent 1,000 games capture your current playing style while keeping the import fast.
+                        You can refresh anytime to sync new games as you play more!
                       </p>
                     </div>
                   </div>

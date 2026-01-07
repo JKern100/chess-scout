@@ -10,6 +10,7 @@ type ImportStartMessage = {
   untilMs?: number;
   rated?: "any" | "rated" | "casual";
   perfType?: string | null;
+  maxGames?: number; // Cap on number of games to import (default: 1000)
 };
 
 type ImportStopMessage = { type: "stop" };
@@ -279,7 +280,8 @@ async function runImport(params: ImportStartMessage) {
   }
 
   const url = new URL(`https://lichess.org/api/games/user/${encodeURIComponent(user)}`);
-  url.searchParams.set("max", "1000000");
+  const maxGames = typeof params.maxGames === "number" && params.maxGames > 0 ? params.maxGames : 1000;
+  url.searchParams.set("max", String(maxGames));
   url.searchParams.set("pgnInJson", "true");
   url.searchParams.set("moves", "true");
   url.searchParams.set("clocks", "false");

@@ -587,7 +587,7 @@ export function DashboardPage({ initialOpponents }: Props) {
                 Importing <span className="font-medium text-zinc-900">{activeImport.username}</span>
                 {typeof activeImport.scoutBaseCount === "number" ? (
                   <>
-                    {" "}· Scout Base: <span className="font-semibold text-zinc-900">{activeImport.scoutBaseCount}</span> (Past 3 Years)
+                    {" "}· Games: <span className="font-semibold text-zinc-900">{activeImport.scoutBaseCount}</span> (up to 1,000)
                   </>
                 ) : (
                   <>
@@ -646,7 +646,7 @@ export function DashboardPage({ initialOpponents }: Props) {
                   <div className="grid gap-2">
                     <div className="flex items-center justify-between text-xs text-zinc-700">
                       <div className="font-medium text-zinc-900">
-                        {typeof activeImport.scoutBaseCount === "number" ? "Scout Base (Past 3 Years)" : "Downloading games"}
+                        {typeof activeImport.scoutBaseCount === "number" ? "Games (up to 1,000)" : "Downloading games"}
                       </div>
                       <div className="tabular-nums">
                         {typeof activeImport.scoutBaseCount === "number" ? activeImport.scoutBaseCount : activeImport.importedCount}
@@ -890,7 +890,7 @@ export function DashboardPage({ initialOpponents }: Props) {
               // "Synced" should reflect realtime imported_count during active import, otherwise DB count
               const realtimeImportedCount = typeof (importRow as any)?.imported_count === "number" ? (importRow as any).imported_count : 0;
               const syncedGamesCount = realtimeImportedCount > 0 ? Math.max(dbGamesCount, realtimeImportedCount) : dbGamesCount;
-              // Use scout_base_count (3-year window) as the total, not all-time total_games
+              // Use scout_base_count (up to 1000 games) as the total, not all-time total_games
               const scoutBaseTotal = scoutBaseCount ?? 0;
               const canUseScout = dbGamesCount >= MIN_GAMES_FOR_ANALYSIS || isActive;
 
@@ -1005,14 +1005,31 @@ export function DashboardPage({ initialOpponents }: Props) {
                           <span className="text-neutral-500">Synced:</span>
                           <AnimatedNumber value={syncedGamesCount} className="font-semibold text-neutral-900" />
                         </div>
-                        <div className="text-xs text-neutral-500">
+                        <div className="flex items-center gap-2 text-xs text-neutral-500">
                           {scoutBaseTotal > 0 ? (
                             <>
                               <span className="text-neutral-400">/</span>
                               <span className="tabular-nums">{scoutBaseTotal}</span>
-                              <span className="text-neutral-400"> (3yr)</span>
                             </>
                           ) : null}
+                          {/* Refresh button for syncing new games */}
+                          {!isFastRunning && !isFastQueued && syncedGamesCount > 0 && (
+                            <button
+                              type="button"
+                              className="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700 hover:bg-blue-100"
+                              title="Sync new games since last import"
+                              disabled={loading}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (latest.platform !== "lichess") return;
+                                addToQueue(`lichess:${latest.username.toLowerCase()}`);
+                                startImport();
+                              }}
+                            >
+                              <RefreshCw className="h-3 w-3" />
+                              Refresh
+                            </button>
+                          )}
                         </div>
                       </div>
 

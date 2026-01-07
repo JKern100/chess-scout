@@ -271,9 +271,9 @@ export function OpponentCard({
           </div>
         </div>
         
-        {/* 3-year scope note */}
+        {/* Import scope note */}
         <div className="text-[10px] text-neutral-400">
-          Games from past 3 years
+          Up to 1,000 most recent games
         </div>
         
         {/* Error message */}
