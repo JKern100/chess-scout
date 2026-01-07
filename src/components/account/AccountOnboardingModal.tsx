@@ -102,14 +102,14 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
 
   // Auto-advance from syncing when enough games are synced or sync completes
   useEffect(() => {
-    if (step === "syncing" && !isUserSyncing && syncedGamesCount > 0) {
+    if (step === "syncing" && !isUserSyncing && userSyncProgress > 0) {
       // Sync finished with games - auto advance after a short delay
       const timer = setTimeout(() => {
         setStep("filters");
       }, 1500);
       return () => clearTimeout(timer);
     }
-  }, [step, isUserSyncing, syncedGamesCount]);
+  }, [step, isUserSyncing, userSyncProgress]);
 
   const handleSaveIdentity = useCallback(async () => {
     if (!platformUsername.trim()) return;
@@ -180,7 +180,7 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
       if (user?.id) {
         await supabase.from("profiles").update({
           user_profile_generated_at: new Date().toISOString(),
-          user_games_imported_count: syncedGamesCount,
+          user_games_imported_count: userSyncProgress,
         }).eq("id", user.id);
       }
 
@@ -191,7 +191,7 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
     } finally {
       setIsGenerating(false);
     }
-  }, [platformUsername, primaryPlatform, speeds, rated, fromDate, toDate, syncedGamesCount]);
+  }, [platformUsername, primaryPlatform, speeds, rated, fromDate, toDate, userSyncProgress]);
 
   const handleComplete = useCallback(async () => {
     try {
@@ -398,12 +398,12 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
                   <RefreshCw className={`h-8 w-8 text-blue-600 ${isUserSyncing ? "animate-spin" : ""}`} />
                 </div>
                 <h2 className="text-lg font-semibold text-zinc-900">
-                  {isUserSyncing ? "Building Your Chess Profile..." : syncedGamesCount > 0 ? "Sync Complete!" : "Starting Sync..."}
+                  {isUserSyncing ? "Building Your Chess Profile..." : userSyncProgress > 0 ? "Sync Complete!" : "Starting Sync..."}
                 </h2>
                 <p className="mt-2 text-sm text-zinc-600 max-w-md mx-auto">
                   {isUserSyncing
                     ? "We're importing your last 3 years of games to build a comprehensive picture of your playing style."
-                    : syncedGamesCount > 0
+                    : userSyncProgress > 0
                     ? "Your games have been imported successfully."
                     : "Preparing to import your games..."}
                 </p>
@@ -426,23 +426,23 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
               )}
 
               <div className="mb-6 rounded-xl bg-zinc-50 p-6">
-                <div className="text-4xl font-bold text-zinc-900">{syncedGamesCount.toLocaleString()}</div>
-                <div className="mt-1 text-sm text-zinc-500">games synced</div>
+                <div className="text-4xl font-bold text-zinc-900">{userSyncProgress.toLocaleString()}</div>
+                <div className="mt-1 text-sm text-zinc-500">games processed</div>
 
                 {isUserSyncing && (
                   <div className="mt-4">
                     <div className="h-2.5 w-full overflow-hidden rounded-full bg-zinc-200">
                       <div
                         className="h-2.5 rounded-full bg-gradient-to-r from-blue-500 to-blue-600 transition-all duration-500"
-                        style={{ width: `${Math.min(100, Math.max(5, (syncedGamesCount / Math.max(syncedGamesCount + 500, 1000)) * 100))}%` }}
+                        style={{ width: `${Math.min(100, Math.max(5, (userSyncProgress / Math.max(userSyncProgress + 500, 1000)) * 100))}%` }}
                       />
                     </div>
                     <div className="mt-3 text-xs text-zinc-500">
-                      {syncedGamesCount < 100 
+                      {userSyncProgress < 100 
                         ? "Getting started... this usually takes 1-5 minutes."
-                        : syncedGamesCount < 500
+                        : userSyncProgress < 500
                         ? "Making great progress! Your profile is taking shape."
-                        : syncedGamesCount < 2000
+                        : userSyncProgress < 2000
                         ? "Impressive game history! Almost there."
                         : "Wow, you've played a lot! Hang tight, we're processing everything."}
                     </div>
@@ -468,7 +468,7 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
               )}
 
               {/* Only show continue when sync is complete */}
-              {!isUserSyncing && syncedGamesCount > 0 && (
+              {!isUserSyncing && userSyncProgress > 0 && (
                 <button
                   type="button"
                   onClick={() => setStep("filters")}
@@ -515,10 +515,10 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
                 <div className="mt-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{generateError}</div>
               )}
 
-              {syncedGamesCount < MIN_GAMES_FOR_PROFILE && (
+              {userSyncProgress < MIN_GAMES_FOR_PROFILE && (
                 <div className="mt-4 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-700">
                   You need at least {MIN_GAMES_FOR_PROFILE} synced games to generate a meaningful profile. 
-                  Currently synced: {syncedGamesCount} games.
+                  Currently synced: {userSyncProgress} games.
                   {isUserSyncing ? " Please wait while we import more games..." : " Please go back and wait for more games to sync."}
                 </div>
               )}
@@ -534,9 +534,9 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
                 <button
                   type="button"
                   onClick={handleGenerateProfile}
-                  disabled={isGenerating || syncedGamesCount < MIN_GAMES_FOR_PROFILE}
+                  disabled={isGenerating || userSyncProgress < MIN_GAMES_FOR_PROFILE}
                   className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-zinc-900 px-6 text-sm font-medium text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
-                  title={syncedGamesCount < MIN_GAMES_FOR_PROFILE ? `Need at least ${MIN_GAMES_FOR_PROFILE} games (have ${syncedGamesCount})` : undefined}
+                  title={userSyncProgress < MIN_GAMES_FOR_PROFILE ? `Need at least ${MIN_GAMES_FOR_PROFILE} games (have ${userSyncProgress})` : undefined}
                 >
                   {isGenerating ? (
                     <>
@@ -574,7 +574,7 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="rounded-xl bg-zinc-50 p-4 text-center">
-                    <div className="text-2xl font-bold text-zinc-900">{syncedGamesCount.toLocaleString()}</div>
+                    <div className="text-2xl font-bold text-zinc-900">{userSyncProgress.toLocaleString()}</div>
                     <div className="text-xs text-zinc-500">Games Synced</div>
                   </div>
                   <div className="rounded-xl bg-zinc-50 p-4 text-center">
