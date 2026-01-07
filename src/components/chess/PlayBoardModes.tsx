@@ -36,6 +36,7 @@ import { fetchLichessStats, type LichessExplorerMove, type ExplorerSource } from
 import { useImportQueue } from "@/context/ImportQueueContext";
 import { useActiveOpponent } from "@/context/ActiveOpponentContext";
 import { sanToFigurine } from "@/components/chess/FigurineIcon";
+import { trackActivity } from "@/lib/trackActivity";
 
 type Props = {
   initialFen?: string;
@@ -1142,12 +1143,14 @@ export function PlayBoardModes({ initialFen }: Props) {
         setClockPaused(false);
         tickRef.current.lastTs = Date.now();
       }
+      // Track simulation run for admin metrics
+      void trackActivity("simulation_run", { opponent: opponentUsername });
     } else if (clockPaused) {
       // Resuming from pause
       setClockPaused(false);
       tickRef.current.lastTs = Date.now();
     }
-  }, [gameStarted, clockPaused, clockExpired, clocksEnabled]);
+  }, [gameStarted, clockPaused, clockExpired, clocksEnabled, opponentUsername]);
 
   // Auto-pause clocks when switching to Analysis mode
   useEffect(() => {

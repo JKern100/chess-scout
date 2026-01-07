@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useImportsRealtime } from "@/lib/hooks/useImportsRealtime";
 import { createOpeningGraphImporter, type OpeningGraphImportStatus } from "@/lib/openingGraphImport/openingGraphImportService";
+import { trackActivity } from "@/lib/trackActivity";
 
 type ImportRow = ReturnType<typeof useImportsRealtime>["imports"][number];
 
@@ -87,6 +88,9 @@ export function ImportPanel({ selfUsername, selfPlatform }: Props) {
         color: "both",
         rated: "any",
       });
+      
+      // Track opponent scouted for admin metrics
+      void trackActivity("opponent_scouted", { platform: "lichess", username: trimmed });
     } catch (e) {
       setStatus(e instanceof Error ? e.message : "Failed to start fast import");
     }
@@ -149,6 +153,9 @@ export function ImportPanel({ selfUsername, selfPlatform }: Props) {
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error ?? "Failed to start opponent import");
       setActiveImportId(json?.import?.id ?? null);
+      
+      // Track opponent scouted for admin metrics
+      void trackActivity("opponent_scouted", { platform: opponentPlatform, username: opponentUsername });
     } catch (e) {
       setStatus(e instanceof Error ? e.message : "Failed to start opponent import");
     } finally {

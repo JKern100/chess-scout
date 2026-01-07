@@ -22,15 +22,42 @@ import {
 } from "lucide-react";
 import { useAdminRedirect } from "@/hooks/useAdminGuard";
 import {
-  mockUsers,
-  calculateGlobalStats,
   mockResourceUsage,
   formatRelativeTime,
   formatDuration,
-  type MockUser,
-  type GlobalStats,
   type ResourceUsage,
 } from "@/data/mockUsers";
+
+// User type matching API response
+type AdminUser = {
+  id: string;
+  displayName: string;
+  email: string | null;
+  platform: string;
+  platformUsername: string;
+  createdAt: string;
+  lastActive: string | null;
+  status: "online" | "idle" | "offline" | "churning";
+  metrics: {
+    opponentsScouted: number;
+    reportsGenerated: number;
+    simulationsRun: number;
+    totalTimeSpentMinutes: number;
+  };
+  onboardingCompleted: boolean;
+};
+
+type GlobalStats = {
+  totalUsers: number;
+  activeUsersToday: number;
+  activeUsersWeek: number;
+  totalScouts: number;
+  totalReports: number;
+  totalSimulations: number;
+  avgSessionDuration: number;
+  scoutToSimConversion: number;
+  churnRiskCount: number;
+};
 
 type SortField = "displayName" | "lastActive" | "totalTime" | "reportsGenerated" | "opponentsScouted";
 type SortDirection = "asc" | "desc";
@@ -142,7 +169,7 @@ function StatusBadge({ status }: { status: MockUser["status"] }) {
   );
 }
 
-function UserRow({ user }: { user: MockUser }) {
+function UserRow({ user }: { user: AdminUser }) {
   return (
     <tr className="border-b border-zinc-100 hover:bg-zinc-50">
       <td className="px-4 py-3">
@@ -152,12 +179,12 @@ function UserRow({ user }: { user: MockUser }) {
           </div>
           <div>
             <div className="font-medium text-zinc-900">{user.displayName}</div>
-            <div className="text-xs text-zinc-500">{user.email}</div>
+            <div className="text-xs text-zinc-500">{user.platformUsername || user.platform}</div>
           </div>
         </div>
       </td>
       <td className="px-4 py-3">
-        <div className="text-sm text-zinc-700">{formatRelativeTime(user.lastActive)}</div>
+        <div className="text-sm text-zinc-700">{user.lastActive ? formatRelativeTime(user.lastActive) : "Never"}</div>
       </td>
       <td className="px-4 py-3">
         <div className="text-sm text-zinc-700">{formatDuration(user.metrics.totalTimeSpentMinutes)}</div>
@@ -186,22 +213,48 @@ export function AdminDashboard() {
   const [searchQuery, setSearchQuery] = useState("");
   const [sortField, setSortField] = useState<SortField>("lastActive");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
-  const [users, setUsers] = useState<MockUser[]>(mockUsers);
+  const [users, setUsers] = useState<AdminUser[]>([]);
   const [globalStats, setGlobalStats] = useState<GlobalStats | null>(null);
   const [resourceUsage, setResourceUsage] = useState<ResourceUsage>(mockResourceUsage);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [dataLoaded, setDataLoaded] = useState(false);
 
-  // Calculate stats on mount
+  // Fetch real data from API
+  const fetchUsers = async () => {
+    try {
+      setIsRefreshing(true);
+      setFetchError(null);
+      const res = await fetch("/api/admin/users");
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Failed to fetch users (${res.status})`);
+      }
+      const data = await res.json();
+      setUsers(data.users || []);
+      setGlobalStats(data.globalStats || null);
+      setDataLoaded(true);
+    } catch (err) {
+      console.error("[AdminDashboard] Fetch error:", err);
+      setFetchError(err instanceof Error ? err.message : "Failed to load data");
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  // Fetch data on mount
   useEffect(() => {
-    setGlobalStats(calculateGlobalStats(users));
-  }, [users]);
+    if (isAdmin && !dataLoaded) {
+      void fetchUsers();
+    }
+  }, [isAdmin, dataLoaded]);
 
   // Filter and sort users
   const filteredUsers = useMemo(() => {
     let result = users.filter(
       (u) =>
         u.displayName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        u.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (u.email || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
         u.platformUsername.toLowerCase().includes(searchQuery.toLowerCase())
     );
 
@@ -213,7 +266,9 @@ export function AdminDashboard() {
           comparison = a.displayName.localeCompare(b.displayName);
           break;
         case "lastActive":
-          comparison = new Date(b.lastActive).getTime() - new Date(a.lastActive).getTime();
+          const aTime = a.lastActive ? new Date(a.lastActive).getTime() : 0;
+          const bTime = b.lastActive ? new Date(b.lastActive).getTime() : 0;
+          comparison = bTime - aTime;
           break;
         case "totalTime":
           comparison = b.metrics.totalTimeSpentMinutes - a.metrics.totalTimeSpentMinutes;
@@ -241,12 +296,7 @@ export function AdminDashboard() {
   };
 
   const handleRefresh = async () => {
-    setIsRefreshing(true);
-    // Simulate API call delay
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    // In real implementation, fetch fresh data here
-    setGlobalStats(calculateGlobalStats(users));
-    setIsRefreshing(false);
+    await fetchUsers();
   };
 
   const SortHeader = ({ field, label }: { field: SortField; label: string }) => (

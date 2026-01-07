@@ -5,6 +5,7 @@ import { OpponentFiltersPanel } from "@/components/chess/OpponentFiltersPanel";
 import { useOpponentFilters } from "@/components/chess/useOpponentFilters";
 import { StyleSpectrumBar, StyleSpectrumData } from "@/components/profile/StyleSpectrumBar";
 import { GenerationProgressModal } from "@/components/profile/GenerationProgressModal";
+import { trackActivity } from "@/lib/trackActivity";
 import ReactMarkdown from "react-markdown";
 import { Download, Mail } from "lucide-react";
 
@@ -744,6 +745,9 @@ export function OpponentProfileClient({ platform, username, isSelfAnalysis = fal
       }
 
       setProgressStatus("completed");
+      
+      // Track report generation for admin metrics
+      void trackActivity("report_generated", { platform, username });
     } catch (e) {
       if (e instanceof Error && e.name === "AbortError") {
         setProgressStatus("cancelled");
