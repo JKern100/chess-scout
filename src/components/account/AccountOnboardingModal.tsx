@@ -1,18 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { X, RefreshCw, Check, ChevronRight, BookOpen, Clock } from "lucide-react";
+import { X, RefreshCw, ChevronRight, BookOpen, Clock } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { useImportQueue } from "@/context/ImportQueueContext";
-import { OpponentFiltersPanel } from "@/components/chess/OpponentFiltersPanel";
 import { useOpponentFilters } from "@/components/chess/useOpponentFilters";
-import { GenerationProgressModal } from "@/components/profile/GenerationProgressModal";
 
 type Platform = "lichess" | "chesscom";
 
-type OnboardingStep = "welcome" | "identity" | "syncing" | "filters" | "generating" | "complete";
+type OnboardingStep = "welcome" | "identity" | "syncing";
 
 type ProfileData = {
   primary_platform: Platform;
@@ -43,13 +41,10 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
   const [isGenerating, setIsGenerating] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
   const [profileGenerated, setProfileGenerated] = useState(!!initialProfile?.user_profile_generated_at);
-  const [generationStatus, setGenerationStatus] = useState<"idle" | "generating" | "completed" | "cancelled" | "error">("idle");
-  const [generationStep, setGenerationStep] = useState<number | null>(null);
   const [scanMaxGames, setScanMaxGames] = useState<number | null>(200);
 
   // Onboarding should use default filters (not persisted from prior sessions)
-  const { speeds, setSpeeds, rated, setRated, datePreset, setDatePreset, fromDate, setFromDate, toDate, setToDate } =
-    useOpponentFilters({ persist: false });
+  const { speeds, rated, fromDate, toDate } = useOpponentFilters({ persist: false });
   const { addToQueue, isImporting, currentOpponent, progress, progressByOpponent, importPhase, pendingWrites } = useImportQueue();
 
   const pollIntervalRef = useRef<number | null>(null);
@@ -153,8 +148,6 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
 
     setIsGenerating(true);
     setGenerateError(null);
-    setGenerationStatus("generating");
-    setGenerationStep(1);
 
     try {
       generationAbortRef.current?.abort();
@@ -184,9 +177,6 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
         throw new Error(String((json as any)?.error ?? "Failed to generate profile"));
       }
 
-      // Response received and parsed
-      setGenerationStep(7);
-
       // Update profile to mark as generated
       const supabase = createSupabaseBrowserClient();
       const { data: { user } } = await supabase.auth.getUser();
@@ -197,108 +187,60 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
         }).eq("id", user.id);
       }
 
-      setGenerationStep(8);
-
-      setGenerationStatus("completed");
       setProfileGenerated(true);
-      
-      // Auto-advance to complete step after a brief delay
-      setTimeout(() => {
-        setGenerationStatus("idle");
-        setGenerationStep(null);
-        setStep("complete");
 
-        // Mark onboarding complete and take user directly to their self report
-        void (async () => {
-          try {
-            const supabase2 = createSupabaseBrowserClient();
-            const { data: { user: user2 } } = await supabase2.auth.getUser();
-            if (user2?.id) {
-              await supabase2.from("profiles").update({ onboarding_completed: true }).eq("id", user2.id);
-            }
-          } catch {
-            // ignore
-          }
+      // Mark onboarding complete and take user directly to their self report
+      try {
+        const supabase2 = createSupabaseBrowserClient();
+        const { data: { user: user2 } } = await supabase2.auth.getUser();
+        if (user2?.id) {
+          await supabase2.from("profiles").update({ onboarding_completed: true }).eq("id", user2.id);
+        }
+      } catch {
+        // ignore
+      }
 
-          onComplete();
-          router.push(`/opponents/${primaryPlatform}/${encodeURIComponent(platformUsername.trim())}/profile`);
-        })();
-      }, 1500);
+      onComplete();
+      router.push(`/opponents/${primaryPlatform}/${encodeURIComponent(platformUsername.trim())}/profile`);
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") {
-        setGenerationStatus("cancelled");
         return;
       }
-      setGenerationStatus("error");
       setGenerateError(err instanceof Error ? err.message : "Failed to generate profile");
     } finally {
       setIsGenerating(false);
     }
   }, [platformUsername, primaryPlatform, speeds, rated, fromDate, toDate, userSyncProgress, onComplete, router]);
 
-  // Auto-advance from syncing when enough games are synced or sync completes
+  // Auto-generate from syncing screen and then redirect directly to report.
   useEffect(() => {
     if (step !== "syncing") return;
     if (isUserSyncing) return;
     if (userSyncProgress <= 0) return;
 
-    // If a profile already exists, skip straight to completion.
-    if (profileGenerated) {
-      const timer = setTimeout(() => setStep("complete"), 800);
-      return () => clearTimeout(timer);
+    // If a profile already exists, take the user straight to it.
+    if (profileGenerated && !isGenerating) {
+      onComplete();
+      router.push(`/opponents/${primaryPlatform}/${encodeURIComponent(platformUsername.trim())}/profile`);
+      return;
     }
 
-    // Otherwise auto-generate after a short delay (if enough games)
-    if (userSyncProgress >= MIN_GAMES_FOR_PROFILE) {
-      const timer = setTimeout(() => {
-        setStep("generating");
-        void handleGenerateProfile();
-      }, 1200);
-      return () => clearTimeout(timer);
+    // Otherwise, generate once we have enough games.
+    if (!profileGenerated && !isGenerating && userSyncProgress >= MIN_GAMES_FOR_PROFILE) {
+      void handleGenerateProfile();
     }
-
-    // Not enough games yet - user stays on syncing screen.
-  }, [step, isUserSyncing, userSyncProgress, profileGenerated, handleGenerateProfile]);
-
-  const handleCancelGeneration = useCallback(() => {
-    generationAbortRef.current?.abort();
-    setGenerationStatus("cancelled");
-    setIsGenerating(false);
-    setTimeout(() => {
-      setGenerationStatus("idle");
-      setGenerationStep(null);
-    }, 1000);
-  }, []);
-
-  const handleDismissGeneration = useCallback(() => {
-    if (generationStatus === "completed") {
-      setGenerationStatus("idle");
-      setGenerationStep(null);
-      setStep("complete");
-    } else if (generationStatus === "error" || generationStatus === "cancelled") {
-      setGenerationStatus("idle");
-      setGenerationStep(null);
-    }
-  }, [generationStatus]);
-
-  const handleComplete = useCallback(async () => {
-    try {
-      const supabase = createSupabaseBrowserClient();
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user?.id) {
-        await supabase.from("profiles").update({
-          onboarding_completed: true,
-        }).eq("id", user.id);
-      }
-    } catch {
-      // ignore
-    }
-    onComplete();
-  }, [onComplete]);
-
-  const handleSkipToFilters = useCallback(() => {
-    setStep("filters");
-  }, []);
+  }, [
+    step,
+    isUserSyncing,
+    userSyncProgress,
+    profileGenerated,
+    isGenerating,
+    handleGenerateProfile,
+    onComplete,
+    router,
+    primaryPlatform,
+    platformUsername,
+  ]);
 
   if (!isOpen) return null;
 
@@ -596,14 +538,22 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
                   <RefreshCw className={`h-8 w-8 text-blue-600 ${isUserSyncing ? "animate-spin" : ""}`} />
                 </div>
                 <h2 className="text-lg font-semibold text-zinc-900">
-                  {isUserSyncing ? "Building Your Chess Profile..." : userSyncProgress > 0 ? "Sync Complete!" : "Starting Sync..."}
+                  {isUserSyncing
+                    ? "Building Your Chess Profile..."
+                    : isGenerating
+                      ? "Generating Your Scout Report..."
+                      : userSyncProgress > 0
+                        ? "Sync Complete!"
+                        : "Starting Sync..."}
                 </h2>
                 <p className="mt-2 text-sm text-zinc-600 max-w-md mx-auto">
                   {isUserSyncing
                     ? `We’re importing ${scanMaxGames === null ? "your full game history" : `your most recent ${scanMaxGames.toLocaleString()} games`} to build a comprehensive picture of your playing style.`
-                    : userSyncProgress > 0
-                    ? "Your games have been imported successfully."
-                    : "Preparing to import your games..."}
+                    : isGenerating
+                      ? "Hang tight — we’re analyzing your games and building your Scout report."
+                      : userSyncProgress > 0
+                        ? "Your games have been imported successfully."
+                        : "Preparing to import your games..."}
                 </p>
               </div>
 
@@ -627,24 +577,30 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
                 <div className="text-4xl font-bold text-zinc-900">{userSyncProgress.toLocaleString()}</div>
                 <div className="mt-1 text-sm text-zinc-500">games processed</div>
 
-                {isUserSyncing && (
+                {(isUserSyncing || isGenerating) && (
                   <div className="mt-4">
                     <div className="h-2.5 w-full overflow-hidden rounded-full bg-zinc-200">
                       <div
                         className={`h-2.5 rounded-full transition-all duration-500 ${
-                          importPhase === "saving" 
+                          isGenerating
+                            ? "bg-gradient-to-r from-emerald-500 to-emerald-600"
+                            : importPhase === "saving" 
                             ? "bg-gradient-to-r from-amber-500 to-amber-600" 
                             : "bg-gradient-to-r from-blue-500 to-blue-600"
                         }`}
                         style={{ 
-                          width: importPhase === "saving" 
-                            ? `${Math.min(100, Math.max(50, 100 - (pendingWrites / 10)))}%`
-                            : `${Math.min(50, Math.max(5, (userSyncProgress / Math.max(1, scanMaxGames ?? 1000)) * 50))}%` 
+                          width: isGenerating
+                            ? "92%"
+                            : importPhase === "saving" 
+                              ? `${Math.min(90, Math.max(60, 90 - (pendingWrites / 10)))}%`
+                              : `${Math.min(60, Math.max(5, (userSyncProgress / Math.max(1, scanMaxGames ?? 1000)) * 60))}%` 
                         }}
                       />
                     </div>
                     <div className="mt-3 text-xs text-zinc-500">
-                      {importPhase === "saving" 
+                      {isGenerating
+                        ? "Generating Scout report..."
+                        : importPhase === "saving" 
                         ? pendingWrites > 0 
                           ? `Saving to database... (${pendingWrites} batches remaining)`
                           : "Finishing up..."
@@ -675,154 +631,16 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
                 </div>
               )}
 
-              {/* Only show continue when sync is complete */}
-              {!isUserSyncing && userSyncProgress > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setStep("filters")}
-                  className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-zinc-900 px-6 text-sm font-medium text-white hover:bg-zinc-800"
-                >
-                  Continue
-                  <ChevronRight className="h-4 w-4" />
-                </button>
-              )}
-
               {/* Encouraging message while syncing */}
-              {isUserSyncing && (
+              {(isUserSyncing || isGenerating) && (
                 <p className="text-xs text-zinc-400 mt-4">
                   Please keep this window open. The sync will complete automatically.
                 </p>
               )}
             </div>
           )}
-
-          {/* Step: Filters */}
-          {step === "filters" && (
-            <div>
-              <h2 className="mb-2 text-lg font-semibold text-zinc-900">Generate Your Scout Profile</h2>
-              <p className="mb-6 text-sm text-zinc-600">
-                Choose which games to analyze for your personal Scout report.
-              </p>
-
-              <OpponentFiltersPanel
-                speeds={speeds}
-                setSpeeds={setSpeeds}
-                rated={rated}
-                setRated={setRated}
-                datePreset={datePreset}
-                setDatePreset={setDatePreset}
-                fromDate={fromDate}
-                setFromDate={setFromDate}
-                toDate={toDate}
-                setToDate={setToDate}
-                generateStyleMarkers={true}
-                setGenerateStyleMarkers={() => {}}
-              />
-
-              {generateError && (
-                <div className="mt-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{generateError}</div>
-              )}
-
-              {userSyncProgress < MIN_GAMES_FOR_PROFILE && (
-                <div className="mt-4 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-700">
-                  You need at least {MIN_GAMES_FOR_PROFILE} synced games to generate a meaningful profile. 
-                  Currently synced: {userSyncProgress} games.
-                  {isUserSyncing ? " Please wait while we import more games..." : " Please go back and wait for more games to sync."}
-                </div>
-              )}
-
-              <div className="mt-6 flex items-center justify-between">
-                <button
-                  type="button"
-                  onClick={() => setStep("syncing")}
-                  className="text-sm font-medium text-zinc-500 hover:text-zinc-700"
-                >
-                  Back
-                </button>
-                <button
-                  type="button"
-                  onClick={handleGenerateProfile}
-                  disabled={isGenerating || userSyncProgress < MIN_GAMES_FOR_PROFILE}
-                  className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-zinc-900 px-6 text-sm font-medium text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
-                  title={userSyncProgress < MIN_GAMES_FOR_PROFILE ? `Need at least ${MIN_GAMES_FOR_PROFILE} games (have ${userSyncProgress})` : undefined}
-                >
-                  {isGenerating ? (
-                    <>
-                      <RefreshCw className="h-4 w-4 animate-spin" />
-                      Generating...
-                    </>
-                  ) : (
-                    <>
-                      Generate Profile
-                      <ChevronRight className="h-4 w-4" />
-                    </>
-                  )}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Step: Complete */}
-          {step === "complete" && (
-            <div className="text-center">
-              <div className="mb-6">
-                <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-green-100">
-                  <Check className="h-8 w-8 text-green-600" />
-                </div>
-                <h2 className="text-lg font-semibold text-zinc-900">You&apos;re All Set!</h2>
-                <p className="mt-2 text-sm text-zinc-600">
-                  Your Scout profile has been generated. You can now explore your playing style insights and start scouting opponents.
-                </p>
-              </div>
-
-              <div className="mb-6 grid gap-3 text-left">
-                <div className="rounded-xl bg-zinc-50 p-4">
-                  <div className="text-sm font-medium text-zinc-900">{platformUsername}</div>
-                  <div className="text-xs text-zinc-500">{primaryPlatform === "lichess" ? "Lichess" : "Chess.com"}</div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="rounded-xl bg-zinc-50 p-4 text-center">
-                    <div className="text-2xl font-bold text-zinc-900">{userSyncProgress.toLocaleString()}</div>
-                    <div className="text-xs text-zinc-500">Games Synced</div>
-                  </div>
-                  <div className="rounded-xl bg-zinc-50 p-4 text-center">
-                    <div className="text-2xl font-bold text-green-600">✓</div>
-                    <div className="text-xs text-zinc-500">Profile Ready</div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid gap-3">
-                <button
-                  type="button"
-                  onClick={handleComplete}
-                  className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-zinc-900 px-6 text-sm font-medium text-white hover:bg-zinc-800"
-                >
-                  View My Scout Profile
-                  <ChevronRight className="h-4 w-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="text-sm font-medium text-zinc-500 hover:text-zinc-700"
-                >
-                  Close and explore later
-                </button>
-              </div>
-            </div>
-          )}
         </div>
       </div>
-
-      {/* Generation Progress Modal */}
-      <GenerationProgressModal
-        isOpen={generationStatus !== "idle"}
-        onCancel={handleCancelGeneration}
-        onDismiss={handleDismissGeneration}
-        status={generationStatus}
-        errorMessage={generateError}
-        currentStepOverride={generationStep}
-      />
     </div>
   );
 }
