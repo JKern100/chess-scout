@@ -329,6 +329,34 @@ function parseNarrativeResponse(text: string): { quick_summary: string; comprehe
   return { quick_summary, comprehensive_report };
 }
 
+function isCompliantNarrative(params: {
+  subjectType: SubjectType;
+  quickSummary: string;
+  comprehensiveReport: string;
+}): boolean {
+  const quick = (params.quickSummary ?? "").trim();
+  const comp = (params.comprehensiveReport ?? "").trim();
+  if (!quick || !comp) return false;
+
+  const lowerQuick = quick.toLowerCase();
+
+  if (/(^|\b)(okay,\s*i\s*have|i\s*(have|'ve)\s*analyzed|here'?s\s+a\s+breakdown|opponent\s+analysis)\b/i.test(quick)) {
+    return false;
+  }
+
+  if (/\n\s*\n/.test(quick)) return false;
+
+  if (params.subjectType === "self") {
+    if (!/\byou\b/i.test(quick) || !/\byour\b/i.test(quick)) return false;
+    if (/\bopponent\b/i.test(lowerQuick) || /\bthis\s+player\b/i.test(lowerQuick)) return false;
+  }
+
+  if (quick.length < 120) return false;
+  if (comp.length < 400) return false;
+
+  return true;
+}
+
 export async function generateNarrative(params: {
   profileJson: any;
   styleMarkers: any[];
@@ -371,16 +399,57 @@ export async function generateNarrative(params: {
     if (!GEMINI_MODEL.startsWith("tunedModels/")) {
       config.systemInstruction = [{ text: SYSTEM_INSTRUCTION }];
     }
-    
+
+    const strictUserPrompt =
+      `MODE: subject_type=${params.subjectType}\n` +
+      `Return markdown with EXACTLY these headings:\n` +
+      `VERSION 1: QUICK SUMMARY\n` +
+      `VERSION 2: COMPREHENSIVE REPORT\n` +
+      `Quick summary must be 1 paragraph (6-7 sentences), not a preface.\n` +
+      `If subject_type=self: use second person (you/your) and do NOT say opponent.\n` +
+      `If subject_type=opponent: use third person (they/the player/opponent).\n\n` +
+      `JSON INPUT:\n${JSON.stringify(payload)}`;
+
     const response = await ai.models.generateContent({
       ...config,
-      contents: [{ role: "user", parts: [{ text: JSON.stringify(payload) }] }],
+      contents: [{ role: "user", parts: [{ text: strictUserPrompt }] }],
     });
 
     const text = response.text ?? "";
     console.log("[GeminiNarrative] Got response, length:", text.length);
 
-    const { quick_summary, comprehensive_report } = parseNarrativeResponse(text);
+    let { quick_summary, comprehensive_report } = parseNarrativeResponse(text);
+
+    if (
+      !isCompliantNarrative({
+        subjectType: params.subjectType,
+        quickSummary: quick_summary,
+        comprehensiveReport: comprehensive_report,
+      })
+    ) {
+      const rewritePrompt =
+        `Rewrite the content below to comply EXACTLY with the required format and mode.\n` +
+        `MODE: subject_type=${params.subjectType}\n` +
+        `Output must be markdown and must start with:\n` +
+        `VERSION 1: QUICK SUMMARY\n` +
+        `(one paragraph, 6-7 sentences, no preface)\n\n` +
+        `VERSION 2: COMPREHENSIVE REPORT\n` +
+        `(full structured report)\n\n` +
+        `Self mode must use you/your and must not call the subject an opponent.\n\n` +
+        `JSON INPUT (do not repeat it verbatim unless needed for grounding):\n${JSON.stringify(payload)}\n\n` +
+        `CONTENT TO REWRITE:\n${text}`;
+
+      const rewriteResponse = await ai.models.generateContent({
+        ...config,
+        contents: [{ role: "user", parts: [{ text: rewritePrompt }] }],
+      });
+
+      const rewriteText = rewriteResponse.text ?? "";
+      console.log("[GeminiNarrative] Got rewrite response, length:", rewriteText.length);
+      const parsed = parseNarrativeResponse(rewriteText);
+      quick_summary = parsed.quick_summary;
+      comprehensive_report = parsed.comprehensive_report;
+    }
 
     return {
       quick_summary,
