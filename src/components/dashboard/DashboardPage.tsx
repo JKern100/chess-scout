@@ -9,6 +9,7 @@ import { useImportsRealtime } from "@/lib/hooks/useImportsRealtime";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { useImportQueue } from "@/context/ImportQueueContext";
 import { AddOpponentBar } from "./AddOpponentBar";
+import { AddPlayerModal } from "./AddPlayerModal";
 import { AnimatedNumber } from "./AnimatedNumber";
 
 type ChessPlatform = "lichess" | "chesscom";
@@ -25,6 +26,7 @@ type OpponentRow = {
     strength: string;
     tooltip: string;
   }>;
+  is_self?: boolean;
 };
 
 type SavedLineRow = {
@@ -44,6 +46,7 @@ type SavedLineRow = {
 
 type Props = {
   initialOpponents: OpponentRow[];
+  initialSelfPlayer?: OpponentRow | null;
 };
 
 function formatRelative(iso: string) {
@@ -88,11 +91,13 @@ type LichessActivity = {
   activityLevel: "inactive" | "active" | "very_active";
 };
 
-export function DashboardPage({ initialOpponents }: Props) {
+export function DashboardPage({ initialOpponents, initialSelfPlayer }: Props) {
   const MIN_GAMES_FOR_ANALYSIS = 10;
   const router = useRouter();
   const [isMounted, setIsMounted] = useState(false);
   const [opponents, setOpponents] = useState<OpponentRow[]>(initialOpponents);
+  const [selfPlayer, setSelfPlayer] = useState<OpponentRow | null>(initialSelfPlayer ?? null);
+  const [addPlayerModalOpen, setAddPlayerModalOpen] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [openMenuKey, setOpenMenuKey] = useState<string | null>(null);
@@ -244,6 +249,9 @@ export function DashboardPage({ initialOpponents }: Props) {
     const json = await res.json();
     if (!res.ok) throw new Error(json?.error ?? "Failed to load opponents");
     setOpponents(Array.isArray(json?.opponents) ? (json.opponents as OpponentRow[]) : []);
+    if (json?.selfPlayer) {
+      setSelfPlayer(json.selfPlayer as OpponentRow);
+    }
   }
 
   // Keep DB-backed counts fresh while importing, and ensure we refresh once the import stops/finishes.
@@ -268,7 +276,7 @@ export function DashboardPage({ initialOpponents }: Props) {
     void reloadOpponents().catch(() => null);
   }, [currentOpponent, isImporting, isMounted, progress]);
 
-  async function addOpponentWithValues(plat: ChessPlatform, user: string) {
+  async function addOpponentWithValues(plat: ChessPlatform, user: string, maxGames: number | null = 200) {
     setLoading(true);
     setStatus(null);
     try {
@@ -303,7 +311,7 @@ export function DashboardPage({ initialOpponents }: Props) {
         setStatus("Fast import currently supports Lichess only");
       } else {
         const key = `${optimistic.platform}:${optimistic.username.toLowerCase()}`;
-        addToQueue(key);
+        addToQueue(key, { maxGames });
         startImport();
       }
       void reloadOpponents();
@@ -538,15 +546,23 @@ export function DashboardPage({ initialOpponents }: Props) {
     return () => window.clearTimeout(id);
   }, [activeImport, activeStage, activeStatus, importModalOpen]);
 
-  async function handleAddOpponent(plat: ChessPlatform, user: string) {
-    await addOpponentWithValues(plat, user);
+  async function handleAddOpponent(plat: ChessPlatform, user: string, maxGames: number | null) {
+    await addOpponentWithValues(plat, user, maxGames);
   }
 
   return (
     <div className="min-h-screen">
       <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6">
         {/* Add Opponent Bar */}
-        <AddOpponentBar onAdd={handleAddOpponent} loading={loading} />
+        <AddOpponentBar onClick={() => setAddPlayerModalOpen(true)} loading={loading} />
+
+        {/* Add Player Modal */}
+        <AddPlayerModal
+          open={addPlayerModalOpen}
+          onClose={() => setAddPlayerModalOpen(false)}
+          onAdd={handleAddOpponent}
+          loading={loading}
+        />
 
         {/* View Toggle */}
         <div className="flex items-center justify-between">
@@ -762,6 +778,11 @@ export function DashboardPage({ initialOpponents }: Props) {
                     const isFastQueued = currentKey ? queue.includes(currentKey) && !isGlobalCurrent : false;
                     const markerBadges = Array.isArray((latest as any)?.style_markers) ? (((latest as any).style_markers as any[]) ?? []) : [];
 
+                    // Check if this is the user's own card
+                    const isSelf = selfPlayer
+                      ? selfPlayer.platform === latest.platform && selfPlayer.username.toLowerCase() === latest.username.toLowerCase()
+                      : false;
+
                     // Rich data
                     const userStatus = latest.platform === "lichess" ? lichessStatus.get(latest.username.toLowerCase()) : null;
                     const userActivity = latest.platform === "lichess" ? lichessActivity.get(latest.username.toLowerCase()) : null;
@@ -793,7 +814,10 @@ export function DashboardPage({ initialOpponents }: Props) {
                         {/* Username */}
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
-                            <span className="font-medium text-zinc-900">{latest.username}</span>
+                            <span className="font-medium text-zinc-900">
+                              {latest.username}
+                              {isSelf && <span className="ml-1 text-zinc-500">(self)</span>}
+                            </span>
                             {latest.platform === "lichess" ? (
                               <span className="text-[10px] text-zinc-400">lichess</span>
                             ) : (
@@ -898,6 +922,11 @@ export function DashboardPage({ initialOpponents }: Props) {
               const isFastQueued = currentKey ? queue.includes(currentKey) && !isGlobalCurrent : false;
               const markerBadges = Array.isArray((latest as any)?.style_markers) ? (((latest as any).style_markers as any[]) ?? []) : [];
 
+              // Check if this is the user's own card
+              const isSelf = selfPlayer
+                ? selfPlayer.platform === latest.platform && selfPlayer.username.toLowerCase() === latest.username.toLowerCase()
+                : false;
+
               // Rich data for card view
               const userStatus = latest.platform === "lichess" ? lichessStatus.get(latest.username.toLowerCase()) : null;
               const userActivity = latest.platform === "lichess" ? lichessActivity.get(latest.username.toLowerCase()) : null;
@@ -958,7 +987,10 @@ export function DashboardPage({ initialOpponents }: Props) {
                               className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${isOnline ? "bg-[#4CAF50]" : "bg-[#9E9E9E]"}`}
                               title={isOnline ? "Online" : "Offline"}
                             />
-                            <span className="truncate text-base font-semibold text-zinc-900">{latest.username}</span>
+                            <span className="truncate text-base font-semibold text-zinc-900">
+                              {latest.username}
+                              {isSelf && <span className="ml-1 text-zinc-500">(self)</span>}
+                            </span>
                             {displayRating ? (
                               <span className="shrink-0 text-xs tabular-nums text-zinc-500">{displayRating}</span>
                             ) : null}

@@ -99,6 +99,59 @@ export default async function Dashboard() {
       })
     );
 
+    // Fetch user's own profile for selfPlayer
+    const { data: profileData } = await supabase
+      .from("profiles")
+      .select("primary_platform, platform_username, user_profile_generated_at")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    const selfProfile = profileData as { primary_platform?: string; platform_username?: string; user_profile_generated_at?: string } | null;
+
+    let selfPlayer: {
+      platform: "lichess" | "chesscom";
+      username: string;
+      created_at: string;
+      last_refreshed_at: string | null;
+      games_count: number;
+      total_games?: number;
+      style_markers?: Array<{ marker_key: string; label: string; strength: string; tooltip: string }>;
+    } | null = null;
+
+    if (selfProfile?.platform_username && selfProfile?.primary_platform) {
+      const selfPlatform = (selfProfile.primary_platform === "chesscom" ? "chesscom" : "lichess") as "lichess" | "chesscom";
+      const selfUsername = String(selfProfile.platform_username).trim();
+      const selfUsernameKey = selfUsername.toLowerCase();
+
+      // Get games count for self
+      const { count: selfGamesCount } = await supabase
+        .from("games")
+        .select("id", { count: "exact", head: true })
+        .eq("profile_id", user.id)
+        .eq("platform", selfPlatform)
+        .ilike("username", selfUsernameKey);
+
+      // Get total games from Lichess if applicable
+      let selfTotalGames: number | null = null;
+      if (selfPlatform === "lichess") {
+        try {
+          selfTotalGames = await fetchLichessUserTotalGames({ username: selfUsername });
+        } catch {
+          selfTotalGames = null;
+        }
+      }
+
+      selfPlayer = {
+        platform: selfPlatform,
+        username: selfUsername,
+        created_at: selfProfile.user_profile_generated_at ?? new Date().toISOString(),
+        last_refreshed_at: selfProfile.user_profile_generated_at ?? null,
+        games_count: typeof selfGamesCount === "number" ? selfGamesCount : 0,
+        total_games: typeof selfTotalGames === "number" ? selfTotalGames : undefined,
+        style_markers: [],
+      };
+    }
+
     try {
       const lichessKeys = opponentsWithCounts
         .filter((o) => o.platform === "lichess")
@@ -163,7 +216,7 @@ export default async function Dashboard() {
       }
     } catch {}
 
-    return <DashboardPage initialOpponents={opponentsWithCounts as any} />;
+    return <DashboardPage initialOpponents={opponentsWithCounts as any} initialSelfPlayer={selfPlayer} />;
   } catch (e) {
     if (e && typeof e === "object") {
       const anyErr = e as any;
