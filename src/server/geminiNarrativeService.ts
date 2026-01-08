@@ -11,6 +11,7 @@ export type NarrativeResult = {
 };
 
 type ProfilePayload = {
+  analysis_subject?: SubjectType;
   analysis_context: {
     subject_type: SubjectType;
   };
@@ -361,12 +362,14 @@ function parseNarrativeResponse(text: string): { quick_summary: string; comprehe
   // Strategy 1: Look for explicit section markers with various formats
   // The AI might output: "## Quick Summary", "# Quick Summary", "**Quick Summary**", "Quick Summary:", etc.
   const quickSummaryPatterns = [
+    /VERSION\s*1\s*:\s*QUICK\s*SUMMARY\s*\n+([\s\S]*?)(?=\nVERSION\s*2\s*:\s*COMPREHENSIVE\s*REPORT\b|\n#{1,3}\s|$)/i,
     /#{1,3}\s*Quick Summary\s*\n+([\s\S]*?)(?=\n#{1,3}\s|$)/i,
     /\*\*Quick Summary\*\*\s*\n+([\s\S]*?)(?=\n\*\*|$)/i,
     /Quick Summary:?\s*\n+([\s\S]*?)(?=\n#{1,3}\s|\nComprehensive|\n\*\*Comprehensive|$)/i,
   ];
 
   const comprehensivePatterns = [
+    /VERSION\s*2\s*:\s*COMPREHENSIVE\s*REPORT\s*\n+([\s\S]*?)$/i,
     /#{1,3}\s*Comprehensive Report\s*\n+([\s\S]*?)$/i,
     /\*\*Comprehensive Report\*\*\s*\n+([\s\S]*?)$/i,
     /Comprehensive Report:?\s*\n+([\s\S]*?)$/i,
@@ -394,11 +397,14 @@ function parseNarrativeResponse(text: string): { quick_summary: string; comprehe
 
   // Strategy 2: If we found comprehensive but not quick, extract quick from before comprehensive header
   if (!quick_summary && comprehensive_report) {
-    const comprehensiveIndex = text.search(/#{1,3}\s*Comprehensive Report|\*\*Comprehensive Report\*\*|Comprehensive Report:/i);
+    const comprehensiveIndex = text.search(
+      /VERSION\s*2\s*:\s*COMPREHENSIVE\s*REPORT|#{1,3}\s*Comprehensive Report|\*\*Comprehensive Report\*\*|Comprehensive Report:/i
+    );
     if (comprehensiveIndex > 0) {
       const beforeComprehensive = text.slice(0, comprehensiveIndex);
       // Remove any Quick Summary header
       quick_summary = beforeComprehensive
+        .replace(/^VERSION\s*1\s*:\s*QUICK\s*SUMMARY\s*\n*/i, "")
         .replace(/^#{1,3}\s*Quick Summary\s*\n*/i, "")
         .replace(/^\*\*Quick Summary\*\*\s*\n*/i, "")
         .replace(/^Quick Summary:?\s*\n*/i, "")
@@ -430,6 +436,7 @@ function parseNarrativeResponse(text: string): { quick_summary: string; comprehe
 
   // Clean up: remove the header from quick_summary if it starts with one
   quick_summary = quick_summary
+    .replace(/^VERSION\s*1\s*:\s*QUICK\s*SUMMARY\s*\n*/i, "")
     .replace(/^#{1,3}\s*Quick Summary\s*\n*/i, "")
     .replace(/^\*\*Quick Summary\*\*\s*\n*/i, "")
     .trim();
@@ -459,6 +466,7 @@ export async function generateNarrative(params: {
   const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 
   const payload: ProfilePayload = {
+    analysis_subject: params.subjectType,
     analysis_context: {
       subject_type: params.subjectType,
     },
