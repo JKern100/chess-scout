@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseServiceClient } from "@/lib/supabase/service";
 
 // Admin email(s) - must match useAdminGuard.ts
 const ADMIN_EMAILS = [
@@ -36,8 +37,8 @@ export async function GET() {
     }
 
     // Fetch all users with their metrics
-    // Using service role would be ideal, but for now we query profiles directly
-    const { data: profiles, error: profilesError } = await supabase
+    const service = createSupabaseServiceClient();
+    const { data: profiles, error: profilesError } = await service
       .from("profiles")
       .select(`
         id,
