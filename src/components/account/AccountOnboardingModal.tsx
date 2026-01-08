@@ -582,7 +582,11 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
             <div className="text-center">
               <div className="mb-6">
                 <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-blue-100">
-                  <RefreshCw className={`h-8 w-8 text-blue-600 ${isUserSyncing ? "animate-spin" : ""}`} />
+                  <RefreshCw
+                    className={`h-8 w-8 text-blue-600 ${
+                      isUserSyncing || isGenerating || importPhase === "saving" || pendingWrites > 0 ? "animate-spin" : ""
+                    }`}
+                  />
                 </div>
                 <h2 className="text-lg font-semibold text-zinc-900">
                   {isUserSyncing
@@ -656,6 +660,23 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
                           : userSyncProgress < 500
                             ? "Making great progress! Your profile is taking shape."
                             : "Impressive game history! Almost there."}
+                    </div>
+
+                    <div className="mt-4 mx-auto max-w-md text-left">
+                      <div className="space-y-1 text-sm">
+                        <div className={`${isUserSyncing && importPhase !== "saving" ? "text-zinc-900 font-medium" : "text-zinc-500"}`}>
+                          Downloading games
+                        </div>
+                        <div className={`${importPhase === "saving" || pendingWrites > 0 ? "text-zinc-900 font-medium" : "text-zinc-500"}`}>
+                          Saving games to database
+                        </div>
+                        <div className={`${!isUserSyncing && !isGenerating && userSyncProgress >= MIN_GAMES_FOR_PROFILE ? "text-zinc-900 font-medium" : "text-zinc-500"}`}>
+                          Preparing your Scout report
+                        </div>
+                        <div className={`${isGenerating ? "text-zinc-900 font-medium" : "text-zinc-500"}`}>
+                          Generating your Scout report
+                        </div>
+                      </div>
                     </div>
                   </div>
                 )}

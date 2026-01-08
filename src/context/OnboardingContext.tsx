@@ -145,12 +145,8 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
     if (typeof window !== "undefined") {
       window.localStorage.removeItem(ONBOARDING_STARTED_KEY);
     }
-    
-    // Navigate to user's own profile page
-    if (profile?.platform_username) {
-      router.push(`/opponents/${profile.primary_platform}/${encodeURIComponent(profile.platform_username)}/profile`);
-    }
-  }, [fetchProfile, profile, router]);
+
+  }, [fetchProfile]);
 
   const isOnboardingComplete = useMemo(() => {
     return Boolean(profile?.onboarding_completed && profile?.platform_username);
@@ -171,12 +167,14 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
   return (
     <OnboardingContext.Provider value={value}>
       {children}
-      <AccountOnboardingModal
-        isOpen={modalOpen}
-        onClose={hideOnboardingModal}
-        onComplete={handleOnboardingComplete}
-        initialProfile={profile}
-      />
+      {modalOpen && (
+        <AccountOnboardingModal
+          isOpen={modalOpen}
+          onClose={hideOnboardingModal}
+          onComplete={handleOnboardingComplete}
+          initialProfile={profile}
+        />
+      )}
     </OnboardingContext.Provider>
   );
 }
