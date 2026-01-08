@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { X, RefreshCw, Check, ChevronRight, BookOpen, Clock } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { useImportQueue } from "@/context/ImportQueueContext";
 import { OpponentFiltersPanel } from "@/components/chess/OpponentFiltersPanel";
@@ -31,6 +32,7 @@ type Props = {
 };
 
 export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialProfile }: Props) {
+  const router = useRouter();
   const [step, setStep] = useState<OnboardingStep>("welcome");
   const [primaryPlatform, setPrimaryPlatform] = useState<Platform>(initialProfile?.primary_platform || "lichess");
   const [platformUsername, setPlatformUsername] = useState(initialProfile?.platform_username || "");
@@ -45,10 +47,13 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
   const [generationStep, setGenerationStep] = useState<number | null>(null);
   const [scanMaxGames, setScanMaxGames] = useState<number | null>(200);
 
-  const { speeds, setSpeeds, rated, setRated, datePreset, setDatePreset, fromDate, setFromDate, toDate, setToDate } = useOpponentFilters();
+  // Onboarding should use default filters (not persisted from prior sessions)
+  const { speeds, setSpeeds, rated, setRated, datePreset, setDatePreset, fromDate, setFromDate, toDate, setToDate } =
+    useOpponentFilters({ persist: false });
   const { addToQueue, isImporting, currentOpponent, progress, progressByOpponent, importPhase, pendingWrites } = useImportQueue();
 
   const pollIntervalRef = useRef<number | null>(null);
+  const generationAbortRef = useRef<AbortController | null>(null);
 
   // Track sync progress for the user's own games
   const userOpponentId = useMemo(() => {
@@ -107,17 +112,6 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
   // Minimum games needed for a meaningful profile
   const MIN_GAMES_FOR_PROFILE = 50;
 
-  // Auto-advance from syncing when enough games are synced or sync completes
-  useEffect(() => {
-    if (step === "syncing" && !isUserSyncing && userSyncProgress > 0) {
-      // Sync finished with games - auto advance after a short delay
-      const timer = setTimeout(() => {
-        setStep("filters");
-      }, 1500);
-      return () => clearTimeout(timer);
-    }
-  }, [step, isUserSyncing, userSyncProgress]);
-
   const handleSaveIdentity = useCallback(async () => {
     if (!platformUsername.trim()) return;
 
@@ -163,13 +157,9 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
     setGenerationStep(1);
 
     try {
-      // Simulate progress steps while API call is running
-      const progressInterval = setInterval(() => {
-        setGenerationStep((prev) => {
-          if (prev === null || prev >= 7) return prev;
-          return prev + 1;
-        });
-      }, 800);
+      generationAbortRef.current?.abort();
+      const controller = new AbortController();
+      generationAbortRef.current = controller;
 
       const res = await fetch(
         `/api/opponents/${encodeURIComponent(primaryPlatform)}/${encodeURIComponent(platformUsername.trim())}/profile/generate`,
@@ -182,18 +172,20 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
             from: fromDate || null,
             to: toDate || null,
             enable_style_markers: true,
+            enable_ai_narrative: true,
+            subject_type: "self",
           }),
+          signal: controller.signal,
         }
       );
-
-      clearInterval(progressInterval);
 
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(String((json as any)?.error ?? "Failed to generate profile"));
       }
 
-      setGenerationStep(8);
+      // Response received and parsed
+      setGenerationStep(7);
 
       // Update profile to mark as generated
       const supabase = createSupabaseBrowserClient();
@@ -205,6 +197,8 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
         }).eq("id", user.id);
       }
 
+      setGenerationStep(8);
+
       setGenerationStatus("completed");
       setProfileGenerated(true);
       
@@ -213,16 +207,61 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
         setGenerationStatus("idle");
         setGenerationStep(null);
         setStep("complete");
+
+        // Mark onboarding complete and take user directly to their self report
+        void (async () => {
+          try {
+            const supabase2 = createSupabaseBrowserClient();
+            const { data: { user: user2 } } = await supabase2.auth.getUser();
+            if (user2?.id) {
+              await supabase2.from("profiles").update({ onboarding_completed: true }).eq("id", user2.id);
+            }
+          } catch {
+            // ignore
+          }
+
+          onComplete();
+          router.push(`/opponents/${primaryPlatform}/${encodeURIComponent(platformUsername.trim())}/profile`);
+        })();
       }, 1500);
     } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") {
+        setGenerationStatus("cancelled");
+        return;
+      }
       setGenerationStatus("error");
       setGenerateError(err instanceof Error ? err.message : "Failed to generate profile");
     } finally {
       setIsGenerating(false);
     }
-  }, [platformUsername, primaryPlatform, speeds, rated, fromDate, toDate, userSyncProgress]);
+  }, [platformUsername, primaryPlatform, speeds, rated, fromDate, toDate, userSyncProgress, onComplete, router]);
+
+  // Auto-advance from syncing when enough games are synced or sync completes
+  useEffect(() => {
+    if (step !== "syncing") return;
+    if (isUserSyncing) return;
+    if (userSyncProgress <= 0) return;
+
+    // If a profile already exists, skip straight to completion.
+    if (profileGenerated) {
+      const timer = setTimeout(() => setStep("complete"), 800);
+      return () => clearTimeout(timer);
+    }
+
+    // Otherwise auto-generate after a short delay (if enough games)
+    if (userSyncProgress >= MIN_GAMES_FOR_PROFILE) {
+      const timer = setTimeout(() => {
+        setStep("generating");
+        void handleGenerateProfile();
+      }, 1200);
+      return () => clearTimeout(timer);
+    }
+
+    // Not enough games yet - user stays on syncing screen.
+  }, [step, isUserSyncing, userSyncProgress, profileGenerated, handleGenerateProfile]);
 
   const handleCancelGeneration = useCallback(() => {
+    generationAbortRef.current?.abort();
     setGenerationStatus("cancelled");
     setIsGenerating(false);
     setTimeout(() => {
