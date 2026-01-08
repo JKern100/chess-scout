@@ -1,4 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
+import crypto from "crypto";
 
 export type SubjectType = "self" | "opponent";
 
@@ -8,6 +9,11 @@ export type NarrativeResult = {
   generated_at: string;
   subject_type: SubjectType;
   model_used: string;
+  debug?: {
+    prompt_hash: string;
+    used_system_instruction: boolean;
+    used_rewrite: boolean;
+  };
 };
 
 type ProfilePayload = {
@@ -394,9 +400,12 @@ export async function generateNarrative(params: {
     const config: any = {
       model: GEMINI_MODEL,
     };
+
+    const usedSystemInstruction = !GEMINI_MODEL.startsWith("tunedModels/");
+    const promptHash = crypto.createHash("sha256").update(SYSTEM_INSTRUCTION).digest("hex").slice(0, 12);
     
     // Add system instruction if not using a tuned model
-    if (!GEMINI_MODEL.startsWith("tunedModels/")) {
+    if (usedSystemInstruction) {
       config.systemInstruction = [{ text: SYSTEM_INSTRUCTION }];
     }
 
@@ -419,14 +428,15 @@ export async function generateNarrative(params: {
     console.log("[GeminiNarrative] Got response, length:", text.length);
 
     let { quick_summary, comprehensive_report } = parseNarrativeResponse(text);
+    let usedRewrite = false;
 
-    if (
-      !isCompliantNarrative({
-        subjectType: params.subjectType,
-        quickSummary: quick_summary,
-        comprehensiveReport: comprehensive_report,
-      })
-    ) {
+    const firstPassOk = isCompliantNarrative({
+      subjectType: params.subjectType,
+      quickSummary: quick_summary,
+      comprehensiveReport: comprehensive_report,
+    });
+
+    if (!firstPassOk) {
       const rewritePrompt =
         `Rewrite the content below to comply EXACTLY with the required format and mode.\n` +
         `MODE: subject_type=${params.subjectType}\n` +
@@ -449,6 +459,20 @@ export async function generateNarrative(params: {
       const parsed = parseNarrativeResponse(rewriteText);
       quick_summary = parsed.quick_summary;
       comprehensive_report = parsed.comprehensive_report;
+
+      usedRewrite = true;
+
+      const rewriteOk = isCompliantNarrative({
+        subjectType: params.subjectType,
+        quickSummary: quick_summary,
+        comprehensiveReport: comprehensive_report,
+      });
+
+      if (!rewriteOk) {
+        throw new Error(
+          `Narrative generation failed compliance checks (subject_type=${params.subjectType}, prompt_hash=${promptHash}, used_rewrite=true)`
+        );
+      }
     }
 
     return {
@@ -457,6 +481,11 @@ export async function generateNarrative(params: {
       generated_at: new Date().toISOString(),
       subject_type: params.subjectType,
       model_used: GEMINI_MODEL,
+      debug: {
+        prompt_hash: promptHash,
+        used_system_instruction: usedSystemInstruction,
+        used_rewrite: usedRewrite,
+      },
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

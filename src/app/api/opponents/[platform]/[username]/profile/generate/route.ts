@@ -210,6 +210,7 @@ export async function POST(request: Request, context: { params: Promise<Params> 
 
     // Generate AI narrative if enabled and we have games
     let aiNarrative: { quick_summary: string; comprehensive_report: string } | null = null;
+    let aiDebug: any = null;
     let responseProfile: any = saved;
     let aiError: string | null = null;
     
@@ -248,6 +249,8 @@ export async function POST(request: Request, context: { params: Promise<Params> 
           quick_summary: narrative.quick_summary,
           comprehensive_report: narrative.comprehensive_report,
         };
+
+        aiDebug = (narrative as any)?.debug ?? null;
 
         // Store narrative in database - use case-insensitive username match
         console.log("[ProfileGenerate] Updating database with new narrative...");
@@ -298,6 +301,7 @@ export async function POST(request: Request, context: { params: Promise<Params> 
       opponent_profile: responseProfile, 
       debug_counts: debugCounts,
       ai_narrative: aiNarrative,
+      ai_debug: aiDebug,
       ai_error: aiError,
     });
   } catch (e) {
