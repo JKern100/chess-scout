@@ -11,6 +11,7 @@ export type NarrativeResult = {
 };
 
 type ProfilePayload = {
+  subject_type?: SubjectType;
   analysis_subject?: SubjectType;
   analysis_context: {
     subject_type: SubjectType;
@@ -346,6 +347,7 @@ export async function generateNarrative(params: {
   const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 
   const payload: ProfilePayload = {
+    subject_type: params.subjectType,
     analysis_subject: params.subjectType,
     analysis_context: {
       subject_type: params.subjectType,
