@@ -49,6 +49,7 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
 
   const pollIntervalRef = useRef<number | null>(null);
   const generationAbortRef = useRef<AbortController | null>(null);
+  const lastDbVerifyAtRef = useRef<number>(0);
 
   // Track sync progress for the user's own games
   const userOpponentId = useMemo(() => {
@@ -162,8 +163,10 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
           body: JSON.stringify({
             speeds,
             rated,
-            from: fromDate || null,
-            to: toDate || null,
+            // Onboarding should not apply date filtering by default.
+            // Otherwise users with older games (or clock skew) can end up with 0 analyzed games.
+            from: null,
+            to: null,
             enable_style_markers: true,
             enable_ai_narrative: true,
             subject_type: "self",
@@ -174,6 +177,12 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
 
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
+        console.warn("[Onboarding] profile generate failed", {
+          status: res.status,
+          error: (json as any)?.error,
+          platform: primaryPlatform,
+          username: platformUsername.trim(),
+        });
         throw new Error(String((json as any)?.error ?? "Failed to generate profile"));
       }
 
@@ -210,13 +219,17 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
     } finally {
       setIsGenerating(false);
     }
-  }, [platformUsername, primaryPlatform, speeds, rated, fromDate, toDate, userSyncProgress, onComplete, router]);
+  }, [platformUsername, primaryPlatform, speeds, rated, userSyncProgress, onComplete, router]);
 
   // Auto-generate from syncing screen and then redirect directly to report.
   useEffect(() => {
     if (step !== "syncing") return;
     if (isUserSyncing) return;
     if (userSyncProgress <= 0) return;
+
+    // Avoid generating while the importer is still flushing writes.
+    // Otherwise the generator can query the DB before games are fully committed.
+    if (importPhase === "saving" || pendingWrites > 0) return;
 
     // If a profile already exists, take the user straight to it.
     if (profileGenerated && !isGenerating) {
@@ -225,9 +238,41 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
       return;
     }
 
-    // Otherwise, generate once we have enough games.
+    // Otherwise, generate once we have enough games AND they've landed in the DB.
     if (!profileGenerated && !isGenerating && userSyncProgress >= MIN_GAMES_FOR_PROFILE) {
-      void handleGenerateProfile();
+      const now = Date.now();
+      // Throttle DB verification to avoid spamming Supabase.
+      if (now - lastDbVerifyAtRef.current < 1500) return;
+      lastDbVerifyAtRef.current = now;
+
+      void (async () => {
+        try {
+          const supabase = createSupabaseBrowserClient();
+          const { data: { user } } = await supabase.auth.getUser();
+          if (!user?.id) return;
+
+          const usernameKey = platformUsername.trim().toLowerCase();
+          const { count, error } = await supabase
+            .from("games")
+            .select("id", { count: "exact", head: true })
+            .eq("profile_id", user.id)
+            .eq("platform", primaryPlatform)
+            .ilike("username", usernameKey);
+
+          if (error) {
+            console.warn("[Onboarding] DB verify failed", error.message);
+            return;
+          }
+
+          const dbCount = typeof count === "number" ? count : 0;
+          // Only proceed once DB has at least the games we believe were processed.
+          if (dbCount >= Math.min(userSyncProgress, MIN_GAMES_FOR_PROFILE)) {
+            void handleGenerateProfile();
+          }
+        } catch {
+          // ignore
+        }
+      })();
     }
   }, [
     step,
@@ -240,6 +285,8 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
     router,
     primaryPlatform,
     platformUsername,
+    importPhase,
+    pendingWrites,
   ]);
 
   if (!isOpen) return null;
