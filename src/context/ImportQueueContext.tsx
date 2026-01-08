@@ -15,7 +15,7 @@ type ImportQueueContextValue = {
   importPhase: ImportPhase;
   pendingWrites: number;
   lastError: string | null;
-  addToQueue: (opponentId: string) => void;
+  addToQueue: (opponentId: string, opts?: { maxGames?: number | null }) => void;
   removeFromQueue: (opponentId: string) => void;
   startImport: () => void;
   stopSync: () => void;
@@ -26,6 +26,7 @@ const ImportQueueContext = createContext<ImportQueueContextValue | null>(null);
 const PROGRESS_STORAGE_KEY = "chessscout.fastImport.progressByOpponent.v2";
 const LAST_SYNC_STORAGE_KEY = "chessscout.fastImport.lastSyncTimestamp.v1";
 const QUEUE_STORAGE_KEY = "chessscout.fastImport.queue.v1";
+const MAX_GAMES_BY_OPPONENT_STORAGE_KEY = "chessscout.fastImport.maxGamesByOpponent.v1";
 
 function normalizeOpponentId(opponentId: string) {
   const raw = String(opponentId ?? "").trim();
@@ -67,6 +68,28 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
       return out;
     } catch {
       return [];
+    }
+  });
+
+  const [maxGamesByOpponent, setMaxGamesByOpponent] = useState<Record<string, number | null>>(() => {
+    try {
+      if (typeof window === "undefined") return {};
+      const raw = window.localStorage.getItem(MAX_GAMES_BY_OPPONENT_STORAGE_KEY);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw) as unknown;
+      if (!parsed || typeof parsed !== "object") return {};
+      const out: Record<string, number | null> = {};
+      for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+        if (v === null) {
+          out[String(k)] = null;
+          continue;
+        }
+        const n = typeof v === "number" ? v : Number(v);
+        if (Number.isFinite(n) && n > 0) out[String(k)] = n;
+      }
+      return out;
+    } catch {
+      return {};
     }
   });
   const [isImporting, setIsImporting] = useState(false);
@@ -129,6 +152,7 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
 
   const progressByOpponentRef = useRef<Record<string, number>>({});
   const lastSyncTimestampRef = useRef<Record<string, number>>({});
+  const maxGamesByOpponentRef = useRef<Record<string, number | null>>({});
 
   const lastSyncedPollAtRef = useRef(0);
   const lastActivityAtRef = useRef(0);
@@ -177,6 +201,10 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
   }, [progressByOpponent]);
 
   useEffect(() => {
+    maxGamesByOpponentRef.current = maxGamesByOpponent;
+  }, [maxGamesByOpponent]);
+
+  useEffect(() => {
     lastSyncTimestampRef.current = lastSyncTimestamp;
   }, [lastSyncTimestamp]);
 
@@ -188,6 +216,7 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
         window.localStorage.setItem(PROGRESS_STORAGE_KEY, JSON.stringify(progressByOpponentRef.current));
         window.localStorage.setItem(LAST_SYNC_STORAGE_KEY, JSON.stringify(lastSyncTimestampRef.current));
         window.localStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(queueRef.current));
+        window.localStorage.setItem(MAX_GAMES_BY_OPPONENT_STORAGE_KEY, JSON.stringify(maxGamesByOpponentRef.current));
       } catch {
       }
     };
@@ -217,6 +246,7 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
         window.localStorage.setItem(PROGRESS_STORAGE_KEY, JSON.stringify(progressByOpponent));
         window.localStorage.setItem(LAST_SYNC_STORAGE_KEY, JSON.stringify(lastSyncTimestamp));
         window.localStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(queueRef.current));
+        window.localStorage.setItem(MAX_GAMES_BY_OPPONENT_STORAGE_KEY, JSON.stringify(maxGamesByOpponent));
       } catch {
         // ignore
       }
@@ -228,7 +258,7 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
         persistTimerRef.current = null;
       }
     };
-  }, [lastSyncTimestamp, progressByOpponent]);
+  }, [lastSyncTimestamp, maxGamesByOpponent, progressByOpponent]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -482,7 +512,16 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
       });
     }
     
-    console.log("[ImportQueue] Import for", nextKey, "- sinceMs:", sinceMs ? new Date(sinceMs).toISOString() : "(initial)", "maxGames:", MAX_GAMES_PER_IMPORT);
+    const maxGamesOverride = maxGamesByOpponentRef.current[nextKey];
+    const effectiveMaxGames = typeof maxGamesOverride === "number" && maxGamesOverride > 0 ? maxGamesOverride : MAX_GAMES_PER_IMPORT;
+    console.log(
+      "[ImportQueue] Import for",
+      nextKey,
+      "- sinceMs:",
+      sinceMs ? new Date(sinceMs).toISOString() : "(initial)",
+      "maxGames:",
+      effectiveMaxGames
+    );
     
     setProgress(actualDbCount);
     setSyncedCount(actualDbCount);
@@ -495,7 +534,7 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
         color: "both",
         rated: "any",
         sinceMs,
-        maxGames: MAX_GAMES_PER_IMPORT,
+        maxGames: effectiveMaxGames,
       });
     } catch {
       finishCurrent();
@@ -545,9 +584,18 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
     void runNext();
   }, [isImporting, queue.length, runNext]);
 
-  const addToQueue = useCallback((opponentId: string) => {
+  const addToQueue = useCallback((opponentId: string, opts?: { maxGames?: number | null }) => {
     const norm = normalizeOpponentId(opponentId);
     if (!norm) return;
+
+    const requestedMaxGames = opts?.maxGames;
+    if (requestedMaxGames === null || (typeof requestedMaxGames === "number" && requestedMaxGames > 0)) {
+      setMaxGamesByOpponent((prev) => {
+        const before = prev[norm];
+        if (before === requestedMaxGames) return prev;
+        return { ...prev, [norm]: requestedMaxGames as any };
+      });
+    }
     setQueue((prev) => {
       if (prev.includes(norm)) return prev;
       return [...prev, norm];

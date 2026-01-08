@@ -14,6 +14,7 @@ type ProfileData = {
   onboarding_completed: boolean;
   user_games_imported_count: number;
   user_profile_generated_at: string | null;
+  is_pro: boolean;
 };
 
 type OnboardingContextValue = {
@@ -53,7 +54,9 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
 
       const { data, error } = await supabase
         .from("profiles")
-        .select("primary_platform, platform_username, display_name, onboarding_completed, user_games_imported_count, user_profile_generated_at")
+        .select(
+          "primary_platform, platform_username, display_name, onboarding_completed, user_games_imported_count, user_profile_generated_at, is_pro"
+        )
         .eq("id", user.id)
         .single();
 
@@ -80,6 +83,7 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
           onboarding_completed: Boolean(data.onboarding_completed),
           user_games_imported_count: Number(data.user_games_imported_count) || 0,
           user_profile_generated_at: data.user_profile_generated_at || null,
+          is_pro: Boolean((data as any).is_pro),
         });
       }
     } catch (err) {

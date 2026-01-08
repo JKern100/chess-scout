@@ -20,6 +20,7 @@ type ProfileData = {
   onboarding_completed: boolean;
   user_games_imported_count: number;
   user_profile_generated_at: string | null;
+  is_pro: boolean;
 };
 
 type Props = {
@@ -42,6 +43,7 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
   const [profileGenerated, setProfileGenerated] = useState(!!initialProfile?.user_profile_generated_at);
   const [generationStatus, setGenerationStatus] = useState<"idle" | "generating" | "completed" | "cancelled" | "error">("idle");
   const [generationStep, setGenerationStep] = useState<number | null>(null);
+  const [scanMaxGames, setScanMaxGames] = useState<number | null>(200);
 
   const { speeds, setSpeeds, rated, setRated, datePreset, setDatePreset, fromDate, setFromDate, toDate, setToDate } = useOpponentFilters();
   const { addToQueue, isImporting, currentOpponent, progress, progressByOpponent, importPhase, pendingWrites } = useImportQueue();
@@ -53,6 +55,8 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
     if (!platformUsername.trim()) return null;
     return `${primaryPlatform}:${platformUsername.trim().toLowerCase()}`;
   }, [primaryPlatform, platformUsername]);
+
+  const isProUser = Boolean(initialProfile?.is_pro);
 
   const userSyncProgress = useMemo(() => {
     if (!userOpponentId) return 0;
@@ -141,14 +145,14 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
       // Start syncing games
       setStep("syncing");
       if (userOpponentId) {
-        addToQueue(userOpponentId);
+        addToQueue(userOpponentId, { maxGames: scanMaxGames });
       }
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Failed to save profile");
     } finally {
       setIsSaving(false);
     }
-  }, [platformUsername, primaryPlatform, displayName, userOpponentId, addToQueue]);
+  }, [platformUsername, primaryPlatform, displayName, userOpponentId, addToQueue, scanMaxGames]);
 
   const handleGenerateProfile = useCallback(async () => {
     if (!platformUsername.trim()) return;
@@ -329,6 +333,116 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
               </p>
 
               <div className="grid gap-5">
+                <div>
+                  <div className="mb-2 text-xs font-medium text-zinc-700">Choose your scan depth</div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <button
+                      type="button"
+                      onClick={() => setScanMaxGames(100)}
+                      className={`group w-full rounded-2xl border p-4 text-left transition-colors ${
+                        scanMaxGames === 100
+                          ? "border-zinc-900 bg-zinc-900 text-white"
+                          : "border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-sm font-semibold">100 Games</div>
+                        <div className={`text-xs font-medium ${scanMaxGames === 100 ? "text-white/80" : "text-zinc-500"}`}>
+                          Blitz Scan
+                        </div>
+                      </div>
+                      <div className={`mt-2 text-xs ${scanMaxGames === 100 ? "text-white/80" : "text-zinc-600"}`}>
+                        A quick tactical overview designed for a fast taste.
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setScanMaxGames(200)}
+                      className={`group w-full rounded-2xl border p-4 text-left transition-colors ${
+                        scanMaxGames === 200
+                          ? "border-zinc-900 bg-zinc-900 text-white"
+                          : "border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-sm font-semibold">200 Games</div>
+                        <div className={`text-xs font-medium ${scanMaxGames === 200 ? "text-white/80" : "text-zinc-500"}`}>
+                          Rapid Review
+                        </div>
+                      </div>
+                      <div className="mt-2 flex items-center justify-between gap-2">
+                        <div className={`text-xs ${scanMaxGames === 200 ? "text-white/80" : "text-zinc-600"}`}>
+                          Our recommended choice; a good statistical base to accurately establish a player&apos;s core habits.
+                        </div>
+                      </div>
+                      <div className={`mt-2 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                        scanMaxGames === 200 ? "bg-white/15 text-white" : "bg-emerald-50 text-emerald-700"
+                      }`}>
+                        Recommended
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setScanMaxGames(500)}
+                      disabled={!isProUser}
+                      title={!isProUser ? "Pro only" : undefined}
+                      className={`group w-full rounded-2xl border p-4 text-left transition-colors ${
+                        !isProUser
+                          ? "cursor-not-allowed border-zinc-200 bg-zinc-50 text-zinc-400"
+                          : scanMaxGames === 500
+                            ? "border-zinc-900 bg-zinc-900 text-white"
+                            : "border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-sm font-semibold">500 Games</div>
+                        <div className={`text-xs font-medium ${scanMaxGames === 500 ? "text-white/80" : !isProUser ? "text-zinc-400" : "text-zinc-500"}`}>
+                          Classical Deep Dive
+                        </div>
+                      </div>
+                      <div className={`mt-2 text-xs ${scanMaxGames === 500 ? "text-white/80" : !isProUser ? "text-zinc-400" : "text-zinc-600"}`}>
+                        A thorough, professional-grade analysis for serious scouting.
+                      </div>
+                      {!isProUser && (
+                        <div className="mt-2 inline-flex rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] font-semibold text-zinc-600">
+                          Pro
+                        </div>
+                      )}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setScanMaxGames(null)}
+                      disabled={!isProUser}
+                      title={!isProUser ? "Pro only" : undefined}
+                      className={`group w-full rounded-2xl border p-4 text-left transition-colors ${
+                        !isProUser
+                          ? "cursor-not-allowed border-zinc-200 bg-zinc-50 text-zinc-400"
+                          : scanMaxGames === null
+                            ? "border-zinc-900 bg-zinc-900 text-white"
+                            : "border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-sm font-semibold">Unlimited</div>
+                        <div className={`text-xs font-medium ${scanMaxGames === null ? "text-white/80" : !isProUser ? "text-zinc-400" : "text-zinc-500"}`}>
+                          Grandmaster Prep
+                        </div>
+                      </div>
+                      <div className={`mt-2 text-xs ${scanMaxGames === null ? "text-white/80" : !isProUser ? "text-zinc-400" : "text-zinc-600"}`}>
+                        An exhaustive, no-stone-unturned option for total analytical dominance.
+                      </div>
+                      {!isProUser && (
+                        <div className="mt-2 inline-flex rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] font-semibold text-zinc-600">
+                          Pro
+                        </div>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
                 {/* Platform Selection */}
                 <div>
                   <label className="mb-2 block text-xs font-medium text-zinc-700">Platform</label>
@@ -447,7 +561,7 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
                 </h2>
                 <p className="mt-2 text-sm text-zinc-600 max-w-md mx-auto">
                   {isUserSyncing
-                    ? "We're importing your most recent 1,000 games to build a comprehensive picture of your playing style."
+                    ? `We’re importing ${scanMaxGames === null ? "your full game history" : `your most recent ${scanMaxGames.toLocaleString()} games`} to build a comprehensive picture of your playing style.`
                     : userSyncProgress > 0
                     ? "Your games have been imported successfully."
                     : "Preparing to import your games..."}
@@ -460,10 +574,10 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
                   <div className="flex items-start gap-3">
                     <Clock className="h-5 w-5 text-blue-600 mt-0.5 shrink-0" />
                     <div>
-                      <div className="text-sm font-medium text-blue-900">Why 1,000 games?</div>
+                      <div className="text-sm font-medium text-blue-900">Why this scan depth?</div>
                       <p className="mt-1 text-xs text-blue-700">
-                        Your most recent 1,000 games capture your current playing style while keeping the import fast.
-                        You can refresh anytime to sync new games as you play more!
+                        Your most recent games capture your current playing style while keeping the import fast.
+                        You can refresh anytime to sync new games as you play more.
                       </p>
                     </div>
                   </div>
@@ -486,7 +600,7 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
                         style={{ 
                           width: importPhase === "saving" 
                             ? `${Math.min(100, Math.max(50, 100 - (pendingWrites / 10)))}%`
-                            : `${Math.min(50, Math.max(5, (userSyncProgress / 1000) * 50))}%` 
+                            : `${Math.min(50, Math.max(5, (userSyncProgress / Math.max(1, scanMaxGames ?? 1000)) * 50))}%` 
                         }}
                       />
                     </div>
