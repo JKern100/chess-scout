@@ -443,7 +443,10 @@ export function DashboardPage({ initialOpponents, initialSelfPlayer }: Props) {
     const m = new Map<string, (typeof imports)[number]>();
     for (const i of imports) {
       if (i.target_type !== "opponent") continue;
-      m.set(`${i.platform}:${i.username.toLowerCase()}`, i);
+      const platform = String((i as any)?.platform ?? "");
+      const usernameKey = String((i as any)?.username ?? "").trim().toLowerCase();
+      if (!platform || !usernameKey) continue;
+      m.set(`${platform}:${usernameKey}`, i);
     }
     return m;
   }, [imports]);
@@ -763,7 +766,7 @@ export function DashboardPage({ initialOpponents, initialSelfPlayer }: Props) {
                 </thead>
                 <tbody className="divide-y divide-zinc-100">
                   {opponents.map((o) => {
-                    const key = `${o.platform}:${o.username.toLowerCase()}`;
+                    const key = `${o.platform}:${o.username.trim().toLowerCase()}`;
                     const latest = byKey.get(key) ?? o;
                     const importRow = importsByKey.get(key) ?? null;
                     const dbGamesCount = typeof (latest as any)?.games_count === "number" ? (latest as any).games_count : 0;
@@ -771,7 +774,7 @@ export function DashboardPage({ initialOpponents, initialSelfPlayer }: Props) {
                     const syncedGamesCount = realtimeImportedCount > 0 ? Math.max(dbGamesCount, realtimeImportedCount) : dbGamesCount;
                     const scoutBaseCount = typeof (importRow as any)?.scout_base_count === "number" ? Number((importRow as any).scout_base_count) : null;
                     const scoutBaseTotal = scoutBaseCount ?? 0;
-                    const canUseScout = dbGamesCount >= MIN_GAMES_FOR_ANALYSIS;
+                    const canUseScout = syncedGamesCount >= MIN_GAMES_FOR_ANALYSIS;
                     const currentKey = latest.platform === "lichess" ? `lichess:${latest.username.toLowerCase()}` : null;
                     const isGlobalCurrent = Boolean(isImporting && currentKey && currentOpponent === currentKey);
                     const isFastRunning = isGlobalCurrent;
@@ -895,7 +898,7 @@ export function DashboardPage({ initialOpponents, initialSelfPlayer }: Props) {
             /* Card View */
             <div className="mt-6 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
             {opponents.map((o) => {
-              const key = `${o.platform}:${o.username.toLowerCase()}`;
+              const key = `${o.platform}:${o.username.trim().toLowerCase()}`;
               const latest = byKey.get(key) ?? o;
               const isActive = Boolean(
                 activeImport &&
@@ -916,7 +919,7 @@ export function DashboardPage({ initialOpponents, initialSelfPlayer }: Props) {
               const syncedGamesCount = realtimeImportedCount > 0 ? Math.max(dbGamesCount, realtimeImportedCount) : dbGamesCount;
               // Use scout_base_count (up to 1000 games) as the total, not all-time total_games
               const scoutBaseTotal = scoutBaseCount ?? 0;
-              const canUseScout = dbGamesCount >= MIN_GAMES_FOR_ANALYSIS || isActive;
+              const canUseScout = syncedGamesCount >= MIN_GAMES_FOR_ANALYSIS || isActive;
 
               const isFastRunning = isGlobalCurrent;
               const isFastQueued = currentKey ? queue.includes(currentKey) && !isGlobalCurrent : false;
