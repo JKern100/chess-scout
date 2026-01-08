@@ -36,24 +36,53 @@ export async function GET() {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    // Fetch all users with their metrics
-    const service = createSupabaseServiceClient();
-    const { data: profiles, error: profilesError } = await service
-      .from("profiles")
-      .select(`
-        id,
-        display_name,
-        primary_platform,
-        platform_username,
-        created_at,
-        last_active,
-        opponents_scouted,
-        reports_generated,
-        simulations_run,
-        total_session_minutes,
-        onboarding_completed
-      `)
-      .order("last_active", { ascending: false, nullsFirst: false });
+    // Fetch all users with their metrics. Prefer service role so we can bypass RLS.
+    // If service role env vars are missing in local dev, fall back to the cookie-authenticated client.
+    let warning: string | null = null;
+    let profiles: any[] | null = null;
+    let profilesError: any = null;
+
+    try {
+      const service = createSupabaseServiceClient();
+      const result = await service
+        .from("profiles")
+        .select(`
+          id,
+          display_name,
+          primary_platform,
+          platform_username,
+          created_at,
+          last_active,
+          opponents_scouted,
+          reports_generated,
+          simulations_run,
+          total_session_minutes,
+          onboarding_completed
+        `)
+        .order("last_active", { ascending: false, nullsFirst: false });
+      profiles = result.data as any;
+      profilesError = result.error;
+    } catch (err) {
+      warning = "SUPABASE_SERVICE_ROLE_KEY is not set. Admin user list may be incomplete due to RLS.";
+      const result = await supabase
+        .from("profiles")
+        .select(`
+          id,
+          display_name,
+          primary_platform,
+          platform_username,
+          created_at,
+          last_active,
+          opponents_scouted,
+          reports_generated,
+          simulations_run,
+          total_session_minutes,
+          onboarding_completed
+        `)
+        .order("last_active", { ascending: false, nullsFirst: false });
+      profiles = result.data as any;
+      profilesError = result.error;
+    }
 
     if (profilesError) {
       console.error("[Admin API] Error fetching profiles:", profilesError);
@@ -134,6 +163,7 @@ export async function GET() {
     return NextResponse.json({
       users,
       globalStats,
+      warning,
       fetchedAt: now.toISOString(),
     });
   } catch (err) {
