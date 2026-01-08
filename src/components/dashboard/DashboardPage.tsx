@@ -771,11 +771,13 @@ export function DashboardPage({ initialOpponents, initialSelfPlayer }: Props) {
                     const importRow = importsByKey.get(key) ?? null;
                     const dbGamesCount = typeof (latest as any)?.games_count === "number" ? (latest as any).games_count : 0;
                     const realtimeImportedCount = typeof (importRow as any)?.imported_count === "number" ? (importRow as any).imported_count : 0;
-                    const syncedGamesCount = realtimeImportedCount > 0 ? Math.max(dbGamesCount, realtimeImportedCount) : dbGamesCount;
+                    const currentKey = latest.platform === "lichess" ? `lichess:${latest.username.toLowerCase()}` : null;
+                    const localImportedCount = currentKey ? Number(progressByOpponent[currentKey] ?? 0) : 0;
+                    const effectiveImportedCount = Math.max(realtimeImportedCount, localImportedCount);
+                    const syncedGamesCount = effectiveImportedCount > 0 ? Math.max(dbGamesCount, effectiveImportedCount) : dbGamesCount;
                     const scoutBaseCount = typeof (importRow as any)?.scout_base_count === "number" ? Number((importRow as any).scout_base_count) : null;
                     const scoutBaseTotal = scoutBaseCount ?? 0;
                     const canUseScout = syncedGamesCount >= MIN_GAMES_FOR_ANALYSIS;
-                    const currentKey = latest.platform === "lichess" ? `lichess:${latest.username.toLowerCase()}` : null;
                     const isGlobalCurrent = Boolean(isImporting && currentKey && currentOpponent === currentKey);
                     const isFastRunning = isGlobalCurrent;
                     const isFastQueued = currentKey ? queue.includes(currentKey) && !isGlobalCurrent : false;
@@ -916,7 +918,9 @@ export function DashboardPage({ initialOpponents, initialSelfPlayer }: Props) {
               const isGlobalCurrent = Boolean(isImporting && currentKey && currentOpponent === currentKey);
               // "Synced" should reflect realtime imported_count during active import, otherwise DB count
               const realtimeImportedCount = typeof (importRow as any)?.imported_count === "number" ? (importRow as any).imported_count : 0;
-              const syncedGamesCount = realtimeImportedCount > 0 ? Math.max(dbGamesCount, realtimeImportedCount) : dbGamesCount;
+              const localImportedCount = currentKey ? Number(progressByOpponent[currentKey] ?? 0) : 0;
+              const effectiveImportedCount = Math.max(realtimeImportedCount, localImportedCount);
+              const syncedGamesCount = effectiveImportedCount > 0 ? Math.max(dbGamesCount, effectiveImportedCount) : dbGamesCount;
               // Use scout_base_count (up to 1000 games) as the total, not all-time total_games
               const scoutBaseTotal = scoutBaseCount ?? 0;
               const canUseScout = syncedGamesCount >= MIN_GAMES_FOR_ANALYSIS || isActive;
