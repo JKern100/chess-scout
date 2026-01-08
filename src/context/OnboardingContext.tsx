@@ -58,16 +58,12 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
           "primary_platform, platform_username, display_name, onboarding_completed, user_games_imported_count, user_profile_generated_at, is_pro"
         )
         .eq("id", user.id)
-        .single();
+        .maybeSingle();
 
       if (error) {
-        // PGRST116 = no rows found (new user)
         // 42P01 = table doesn't exist
         // Column doesn't exist errors
-        if (error.code === "PGRST116") {
-          // New user - no profile yet
-          setProfile(null);
-        } else if (error.code === "42P01" || error.message?.includes("does not exist")) {
+        if (error.code === "42P01" || error.message?.includes("does not exist")) {
           // Table or column doesn't exist - need migration
           console.warn("Profiles table needs migration for onboarding columns");
           setProfile(null);
@@ -85,6 +81,9 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
           user_profile_generated_at: data.user_profile_generated_at || null,
           is_pro: Boolean((data as any).is_pro),
         });
+      } else {
+        // No row found (new user) - treat as needing onboarding.
+        setProfile(null);
       }
     } catch (err) {
       console.error("Error in fetchProfile:", err);

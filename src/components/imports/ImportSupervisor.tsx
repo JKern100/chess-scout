@@ -67,6 +67,19 @@ export function ImportSupervisor() {
         const res = await fetchWithTimeout("/api/imports/status", { cache: "no-store" }, 10_000).catch(() => null);
         if (!res) return [];
 
+        // If the user is logged out / session expired, avoid hammering the endpoint.
+        if (res.status === 401) {
+          backoffMs.current = 60_000;
+          backoffUntilMs.current = Date.now() + backoffMs.current;
+          lastSeenRunning.current = "";
+          const now = Date.now();
+          if (now - lastLogAt.current > 5000) {
+            lastLogAt.current = now;
+            console.warn("[ImportSupervisor] status fetch failed", res.status, "Unauthorized");
+          }
+          return [];
+        }
+
         if (!res.ok) {
           const now = Date.now();
           if (now - lastLogAt.current > 5000) {
