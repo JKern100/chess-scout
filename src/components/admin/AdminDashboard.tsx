@@ -21,6 +21,7 @@ import {
   ChevronUp,
 } from "lucide-react";
 import { useAdminRedirect } from "@/hooks/useAdminGuard";
+import Link from "next/link";
 import {
   mockResourceUsage,
   formatRelativeTime,
@@ -339,15 +340,23 @@ export function AdminDashboard() {
                 <p className="text-sm text-zinc-500">Monitor user engagement and system health</p>
               </div>
             </div>
-            <button
-              type="button"
-              onClick={handleRefresh}
-              disabled={isRefreshing}
-              className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50 disabled:opacity-50"
-            >
-              <RefreshCw className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`} />
-              Refresh
-            </button>
+            <div className="flex items-center gap-2">
+              <Link
+                href="/admin/ai-prompt"
+                className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50"
+              >
+                AI Prompt Editor
+              </Link>
+              <button
+                type="button"
+                onClick={handleRefresh}
+                disabled={isRefreshing}
+                className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50 disabled:opacity-50"
+              >
+                <RefreshCw className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`} />
+                Refresh
+              </button>
+            </div>
           </div>
         </div>
       </div>

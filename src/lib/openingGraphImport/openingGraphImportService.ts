@@ -149,7 +149,7 @@ export function createOpeningGraphImporter(params: {
       const results = await Promise.all(
         batch.map(chunk => 
           supabase.from("games").upsert(chunk, {
-            onConflict: "platform,platform_game_id",
+            onConflict: "profile_id,platform,platform_game_id",
             ignoreDuplicates: true,
           })
         )
