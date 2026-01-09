@@ -336,7 +336,7 @@ export async function POST(request: Request) {
     const { data: upserted, error: upsertErr } = await supabase
       .from("games")
       .upsert(rows, {
-        onConflict: "platform,platform_game_id",
+        onConflict: "profile_id,platform,platform_game_id",
         ignoreDuplicates: true,
       })
       .select("platform_game_id, played_at");

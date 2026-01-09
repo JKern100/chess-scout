@@ -336,11 +336,17 @@ export function AdminDashboard() {
                 <Shield className="h-5 w-5 text-orange-600" />
               </div>
               <div>
-                <h1 className="text-xl font-semibold text-zinc-900">Admin Dashboard</h1>
-                <p className="text-sm text-zinc-500">Monitor user engagement and system health</p>
+                <h1 className="text-2xl font-bold text-zinc-900">Admin Dashboard</h1>
+                <p className="mt-1 text-sm text-zinc-500">Monitor users, analyze performance, and manage platform operations.</p>
               </div>
             </div>
             <div className="flex items-center gap-2">
+              <Link
+                href="/admin/maintenance"
+                className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50"
+              >
+                Maintenance Mode
+              </Link>
               <Link
                 href="/admin/ai-prompt"
                 className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50"
