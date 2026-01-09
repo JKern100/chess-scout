@@ -8,6 +8,16 @@ const FALLBACK_MOST_RECENT_LIMIT = 100;
 
 type ChessPlatform = "lichess" | "chesscom";
 
+const REQUIRED_IMPORTS_COLUMNS = [
+  "ready",
+  "stage",
+  "archived_count",
+  "scout_base_since",
+  "scout_base_count",
+  "scout_base_fallback",
+  "scout_base_fallback_limit",
+];
+
 export async function POST(request: Request) {
   const supabase = await createSupabaseServerClient();
 
@@ -101,15 +111,16 @@ export async function POST(request: Request) {
 
   if (error) {
     const msg = String(error.message || "");
+    const msgLower = msg.toLowerCase();
     const missingColumn =
-      msg.includes("scout_base_since") ||
-      msg.includes("scout_base_count") ||
-      msg.includes("scout_base_fallback") ||
-      msg.includes("scout_base_fallback_limit");
+      msgLower.includes("column") &&
+      (msgLower.includes("does not exist") || msgLower.includes("could not find") || msgLower.includes("not found")) &&
+      REQUIRED_IMPORTS_COLUMNS.some((c) => msgLower.includes(String(c).toLowerCase()));
     if (missingColumn) {
       return NextResponse.json(
         {
-          error: "Imports table is missing Scout Base columns. Run scripts/supabase_imports_scout_base.sql in Supabase SQL editor.",
+          error:
+            "Imports table schema is out of date. Run supabase/migrations/20260109_fix_imports_table.sql (or scripts/supabase_imports_scout_base.sql + scripts/supabase_imports_tiered_loading.sql) in Supabase SQL editor.",
           needs_migration: true,
           details: error.message,
         },

@@ -431,12 +431,22 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
     console.log("[ImportQueue] Starting import for:", nextKey);
 
     try {
-      await fetch("/api/imports/lichess/opponent/start", {
+      const res = await fetch("/api/imports/lichess/opponent/start", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ platform: parsed.platform, username: parsed.username }),
       });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({} as any));
+        const msg = String((json as any)?.error ?? `Failed to start import (${res.status})`);
+        setLastError(msg);
+        finishCurrent();
+        return;
+      }
     } catch {
+      setLastError("Failed to start import");
+      finishCurrent();
+      return;
     }
 
     // Ensure this opponent exists in the `opponents` table so it appears immediately

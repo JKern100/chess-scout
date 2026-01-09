@@ -161,7 +161,16 @@ export function createOpeningGraphImporter(params: {
           if (statusCode === 401 || statusCode === 403) {
             writeDisabled = true;
           }
-          throw error;
+          const baseMsg =
+            typeof (error as any)?.message === "string" ? String((error as any).message) : "Failed to write games";
+
+          if (statusCode === 400) {
+            throw new Error(
+              `${baseMsg} (400). This usually means your Supabase 'games' table is missing the required unique constraint for on_conflict=profile_id,platform,platform_game_id. Run supabase/migrations/20260109_fix_games_table.sql in Supabase SQL editor.`
+            );
+          }
+
+          throw new Error(baseMsg);
         }
       }
     }
