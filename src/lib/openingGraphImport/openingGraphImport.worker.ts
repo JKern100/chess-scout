@@ -140,6 +140,32 @@ function inferSpeedFromPgn(pgn: string): string | null {
   return null;
 }
 
+function inferDateFromPgn(pgn: string): string | null {
+  // Try UTCDate + UTCTime first (most accurate)
+  const utcDate = getPgnTag(pgn, "UTCDate");
+  const utcTime = getPgnTag(pgn, "UTCTime");
+  if (utcDate && /^\d{4}\.\d{2}\.\d{2}$/.test(utcDate)) {
+    const dateStr = utcDate.replace(/\./g, "-");
+    const timeStr = utcTime && /^\d{2}:\d{2}:\d{2}$/.test(utcTime) ? utcTime : "12:00:00";
+    try {
+      return new Date(`${dateStr}T${timeStr}Z`).toISOString();
+    } catch {
+      // Fall through to Date tag
+    }
+  }
+  // Fallback to Date tag
+  const dateTag = getPgnTag(pgn, "Date");
+  if (dateTag && /^\d{4}\.\d{2}\.\d{2}$/.test(dateTag)) {
+    const dateStr = dateTag.replace(/\./g, "-");
+    try {
+      return new Date(`${dateStr}T12:00:00Z`).toISOString();
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 function inferRatedFromPgn(pgn: string): boolean | null {
   const ratedTag = (getPgnTag(pgn, "Rated") ?? "").trim().toLowerCase();
   if (["true", "yes", "1"].includes(ratedTag)) return true;
@@ -378,7 +404,8 @@ async function runImport(params: ImportStartMessage) {
           : inferSpeedFromPgn(pgn);
 
       const ts = typeof parsed?.lastMoveAt === "number" ? parsed.lastMoveAt : typeof parsed?.createdAt === "number" ? parsed.createdAt : null;
-      const playedAtIso = ts ? new Date(ts).toISOString() : null;
+      // Use API timestamp if available, otherwise extract from PGN headers
+      const playedAtIso = ts ? new Date(ts).toISOString() : inferDateFromPgn(pgn);
 
       // Track the newest game timestamp for incremental sync
       if (ts !== null && (newestGameTimestamp === null || ts > newestGameTimestamp)) {

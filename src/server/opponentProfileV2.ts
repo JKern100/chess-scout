@@ -195,6 +195,32 @@ function inferRatedFromPgn(pgn: string): boolean | null {
   return null;
 }
 
+function inferDateFromPgn(pgn: string): string | null {
+  // Try UTCDate + UTCTime first (most accurate)
+  const utcDate = getPgnTagValue(pgn, "UTCDate");
+  const utcTime = getPgnTagValue(pgn, "UTCTime");
+  if (utcDate && /^\d{4}\.\d{2}\.\d{2}$/.test(utcDate)) {
+    const dateStr = utcDate.replace(/\./g, "-");
+    const timeStr = utcTime && /^\d{2}:\d{2}:\d{2}$/.test(utcTime) ? utcTime : "12:00:00";
+    try {
+      return new Date(`${dateStr}T${timeStr}Z`).toISOString();
+    } catch {
+      // Fall through to Date tag
+    }
+  }
+  // Fallback to Date tag
+  const dateTag = getPgnTagValue(pgn, "Date");
+  if (dateTag && /^\d{4}\.\d{2}\.\d{2}$/.test(dateTag)) {
+    const dateStr = dateTag.replace(/\./g, "-");
+    try {
+      return new Date(`${dateStr}T12:00:00Z`).toISOString();
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 function inferOpponentColorFromPgn(pgn: string, opponentUsername: string): "w" | "b" | null {
   const re = /^\[(White|Black)\s+"([^"]+)"\]$/gm;
   const opp = opponentUsername.trim().toLowerCase();
@@ -683,16 +709,15 @@ export async function buildOpponentProfileV2(params: {
       const remaining = maxGamesCap == null ? batchSize : Math.min(batchSize, maxGamesCap - fetchedTotal);
       if (remaining <= 0) break;
 
-      let query = params.supabase
+      // Fetch ALL games without date filter - we'll filter in code after extracting dates from PGN
+      // This handles games where played_at is NULL in the database
+      const query = params.supabase
         .from("games")
         .select("id, pgn, played_at, platform_game_id, white_acpl, black_acpl, white_blunders, black_blunders, evals_json")
         .eq("profile_id", params.profileId)
         .eq("platform", params.platform)
         .ilike("username", usernameKey)
-        .order("played_at", { ascending: false });
-
-      if (fromIso) query = query.gte("played_at", fromIso);
-      if (toIso) query = query.lte("played_at", toIso);
+        .order("played_at", { ascending: false, nullsFirst: false });
 
       const { data, error } = await query.range(offset, offset + remaining - 1);
       if (error) throw error;
@@ -721,6 +746,16 @@ export async function buildOpponentProfileV2(params: {
     for (const row of rows) {
       const pgn = String((row as any)?.pgn ?? "");
       if (!pgn) continue;
+
+      // Get played_at from DB or extract from PGN as fallback
+      let playedAtIso = row.played_at ? new Date(row.played_at).toISOString() : null;
+      if (!playedAtIso) {
+        playedAtIso = inferDateFromPgn(pgn);
+      }
+
+      // Apply date filter in code (since we fetched all games from DB)
+      if (fromIso && playedAtIso && playedAtIso < fromIso) continue;
+      if (toIso && playedAtIso && playedAtIso > toIso) continue;
 
       if (speedsFilter.length > 0) {
         const s = inferSpeedFromPgn(pgn);
@@ -759,7 +794,7 @@ export async function buildOpponentProfileV2(params: {
 
       normalized.push({
         id: String((row as any)?.id ?? (row as any)?.platform_game_id ?? ""),
-        played_at: row.played_at ? new Date(row.played_at).toISOString() : null,
+        played_at: playedAtIso,
         speed,
         rated,
         opponent_color: oppColor,
