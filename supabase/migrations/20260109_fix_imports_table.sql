@@ -48,6 +48,52 @@ alter table public.imports add column if not exists scout_base_fallback_limit in
 alter table public.imports add column if not exists created_at timestamptz;
 alter table public.imports add column if not exists updated_at timestamptz;
 
+-- Ensure profile_id is NOT NULL and references auth.users(id)
+do $$
+declare
+  fk_table regclass;
+begin
+  -- Drop wrong FK target if present (common drift: references public.profiles)
+  if exists (
+    select 1
+    from pg_constraint c
+    join pg_class t on t.oid = c.conrelid
+    where c.contype = 'f'
+      and t.relname = 'imports'
+      and c.conname = 'imports_profile_id_fkey'
+  ) then
+    select c.confrelid into fk_table
+    from pg_constraint c
+    join pg_class t on t.oid = c.conrelid
+    where c.contype = 'f'
+      and t.relname = 'imports'
+      and c.conname = 'imports_profile_id_fkey'
+    limit 1;
+
+    -- auth.users regclass is 'auth.users'
+    if fk_table::text <> 'auth.users' then
+      alter table public.imports drop constraint imports_profile_id_fkey;
+    end if;
+  end if;
+
+  -- Recreate FK if missing
+  if not exists (
+    select 1
+    from pg_constraint c
+    join pg_class t on t.oid = c.conrelid
+    where c.contype = 'f'
+      and t.relname = 'imports'
+      and c.conname = 'imports_profile_id_fkey'
+  ) then
+    alter table public.imports
+      add constraint imports_profile_id_fkey
+      foreign key (profile_id)
+      references auth.users(id)
+      on delete cascade;
+  end if;
+end
+$$;
+
 -- Defaults (safe; will no-op if already set)
 alter table public.imports alter column ready set default false;
 alter table public.imports alter column stage set default 'indexing';

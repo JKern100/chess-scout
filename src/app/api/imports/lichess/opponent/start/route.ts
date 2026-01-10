@@ -50,6 +50,13 @@ function looksLikeRls(msgLower: string) {
   );
 }
 
+function looksLikeImportsProfileFk(msgLower: string) {
+  return (
+    msgLower.includes("imports_profile_id_fkey") ||
+    (msgLower.includes("violates foreign key") && msgLower.includes("imports") && msgLower.includes("profile"))
+  );
+}
+
 export async function POST(request: Request) {
   try {
     const supabase = await createSupabaseServerClient();
@@ -167,6 +174,18 @@ export async function POST(request: Request) {
           {
             error:
               "Supabase RLS/policies for the 'imports' table are blocking this request. Ensure RLS policies from 20260109_fix_imports_table.sql were applied.",
+            needs_migration: true,
+            details: msg,
+          },
+          { status: 409 }
+        );
+      }
+
+      if (looksLikeImportsProfileFk(msgLower)) {
+        return NextResponse.json(
+          {
+            error:
+              "Supabase imports.profile_id foreign key is misconfigured (imports_profile_id_fkey). It must reference auth.users(id). Re-run supabase/migrations/20260109_fix_imports_table.sql (updated) in Supabase SQL editor.",
             needs_migration: true,
             details: msg,
           },

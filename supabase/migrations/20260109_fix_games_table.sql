@@ -40,6 +40,52 @@ alter table public.games add column if not exists evals_json jsonb;
 alter table public.games add column if not exists created_at timestamptz;
 alter table public.games add column if not exists updated_at timestamptz;
 
+-- Ensure profile_id references auth.users(id), not public.profiles
+do $$
+declare
+  fk_table regclass;
+begin
+  -- Check if FK exists and points to wrong table
+  if exists (
+    select 1
+    from pg_constraint c
+    join pg_class t on t.oid = c.conrelid
+    where c.contype = 'f'
+      and t.relname = 'games'
+      and c.conname = 'games_profile_id_fkey'
+  ) then
+    select c.confrelid into fk_table
+    from pg_constraint c
+    join pg_class t on t.oid = c.conrelid
+    where c.contype = 'f'
+      and t.relname = 'games'
+      and c.conname = 'games_profile_id_fkey'
+    limit 1;
+
+    -- Drop if it doesn't reference auth.users
+    if fk_table::text <> 'auth.users' then
+      alter table public.games drop constraint games_profile_id_fkey;
+    end if;
+  end if;
+
+  -- Recreate FK if missing
+  if not exists (
+    select 1
+    from pg_constraint c
+    join pg_class t on t.oid = c.conrelid
+    where c.contype = 'f'
+      and t.relname = 'games'
+      and c.conname = 'games_profile_id_fkey'
+  ) then
+    alter table public.games
+      add constraint games_profile_id_fkey
+      foreign key (profile_id)
+      references auth.users(id)
+      on delete cascade;
+  end if;
+end
+$$;
+
 -- Ensure per-user uniqueness so PostgREST upsert can use on_conflict=profile_id,platform,platform_game_id
 create unique index if not exists games_unique_user_platform_game
   on public.games (profile_id, platform, platform_game_id);
