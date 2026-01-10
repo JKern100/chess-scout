@@ -40,6 +40,34 @@ alter table public.games add column if not exists evals_json jsonb;
 alter table public.games add column if not exists created_at timestamptz;
 alter table public.games add column if not exists updated_at timestamptz;
 
+-- Remove legacy uniqueness on platform_game_id (causes cross-user conflicts)
+-- The app expects per-user uniqueness on (profile_id, platform, platform_game_id)
+do $$
+begin
+  if exists (
+    select 1
+    from pg_constraint c
+    join pg_class t on t.oid = c.conrelid
+    join pg_namespace n on n.oid = t.relnamespace
+    where n.nspname = 'public'
+      and t.relname = 'games'
+      and c.conname = 'games_platform_game_id_unique'
+  ) then
+    alter table public.games drop constraint games_platform_game_id_unique;
+  end if;
+
+  if exists (
+    select 1
+    from pg_indexes
+    where schemaname = 'public'
+      and tablename = 'games'
+      and indexname = 'games_platform_game_id_unique'
+  ) then
+    drop index public.games_platform_game_id_unique;
+  end if;
+end
+$$;
+
 -- Ensure profile_id references auth.users(id), not public.profiles
 do $$
 declare
