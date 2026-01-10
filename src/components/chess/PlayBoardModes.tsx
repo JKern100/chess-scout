@@ -1499,11 +1499,14 @@ export function PlayBoardModes({ initialFen }: Props) {
     if (mode !== "simulation") return null;
     if (!opponentUsername.trim()) return null;
 
+    const isThinking = simBusy && (opponentSource === "engine" || opponentSource === "scout");
     const flash = (opponentSource === "engine" && engineTakeoverFlash) || (opponentSource === "scout" && scoutInsightTakeoverFlash);
     const baseClass = "inline-flex h-6 w-6 items-center justify-center rounded-md";
-    const className = flash
-      ? `${baseClass} ${opponentSource === "scout" ? "bg-purple-200 text-purple-900" : "bg-amber-200 text-amber-900"} animate-pulse`
-      : `${baseClass} bg-zinc-200 text-zinc-700`;
+    const className = isThinking
+      ? `${baseClass} ${opponentSource === "scout" ? "bg-purple-200 text-purple-900" : "bg-amber-200 text-amber-900"} scout-think-pulse`
+      : flash
+        ? `${baseClass} ${opponentSource === "scout" ? "bg-purple-200 text-purple-900" : "bg-amber-200 text-amber-900"} animate-pulse`
+        : `${baseClass} bg-zinc-200 text-zinc-700`;
 
     const title = opponentSource === "history" 
       ? "Opponent history — moves from opponent's game database" 
@@ -1538,7 +1541,7 @@ export function PlayBoardModes({ initialFen }: Props) {
         ) : null}
       </span>
     );
-  }, [engineTakeoverFlash, mode, opponentSource, opponentUsername, scoutInsightTakeoverFlash, simGamesLeft]);
+  }, [engineTakeoverFlash, mode, opponentSource, opponentUsername, scoutInsightTakeoverFlash, simBusy, simGamesLeft]);
 
   const handleSetEngineBestMove = useCallback((next: { uci: string; san: string | null } | null) => {
     setAnalysisEngineBestUci(next?.uci ?? null);
@@ -1740,6 +1743,10 @@ export function PlayBoardModes({ initialFen }: Props) {
         // Try Scout Insights first if enabled
         if (useScoutInsightsForOutOfHistory) {
           try {
+            // Show Scout indicator immediately while prediction runs (even before first move)
+            setScoutInsightTakeover(true);
+            setEngineTakeover(false);
+
             const fenParts = fen.split(" ");
             const fullmoveNumber = Number(fenParts[5] ?? "1");
             const styleMarkers = analysisStyleMarkersRef.current;
@@ -1791,15 +1798,18 @@ export function PlayBoardModes({ initialFen }: Props) {
             }
           } catch {
             // Scout failed, fall back to engine
+            setScoutInsightTakeover(false);
           }
         }
 
         // Fall back to engine
         setScoutInsightTakeover(false);
+        // Show engine indicator immediately while engine thinks (even before first move)
         setEngineTakeover(true);
 
         const bestUci = await getBestMoveForPlay(fen);
         if (!bestUci) {
+          setEngineTakeover(false);
           state.setStatus("Out of opponent history at this position, and engine could not find a move.");
           return;
         }
