@@ -124,7 +124,7 @@ export function createOpeningGraphImporter(params: {
 
     const usernameNormalized = username.trim().toLowerCase();
 
-    const rows = games
+    const rowsRaw = games
       .map((g) => ({
         profile_id: profileId,
         platform,
@@ -134,6 +134,17 @@ export function createOpeningGraphImporter(params: {
         pgn: String(g.pgn ?? ""),
       }))
       .filter((r) => r.platform_game_id && r.pgn);
+
+    // Important: Postgres can throw `ON CONFLICT DO UPDATE command cannot affect row a second time`
+    // if the same conflict key appears more than once within a single INSERT/UPSERT payload.
+    // This surfaces via PostgREST as a 409 Conflict.
+    // Dedup by (profile_id, platform, platform_game_id) within this flush.
+    const deduped = new Map<string, (typeof rowsRaw)[number]>();
+    for (const r of rowsRaw) {
+      const key = `${r.profile_id}::${r.platform}::${r.platform_game_id}`;
+      if (!deduped.has(key)) deduped.set(key, r);
+    }
+    const rows = Array.from(deduped.values());
 
     // Use larger chunks and parallel writes for better performance
     const chunkSize = 200;
