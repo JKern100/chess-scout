@@ -267,7 +267,7 @@ function MovesSoFarPanel(props: { state: ChessBoardCoreState; opponentUsername: 
       })();
       (chess as any).header?.("Result", result);
 
-      const pgn = chess.pgn({ newline_char: "\n" });
+      const pgn = chess.pgn({ newline: "\n" });
       if (!pgn) {
         setPgnToast("Could not build PGN");
         return;
