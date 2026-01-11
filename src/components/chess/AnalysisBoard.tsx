@@ -54,6 +54,7 @@ type Props = {
   filterTo?: string | null;
   filterSpeeds?: string[] | null;
   filterRated?: 'any' | 'rated' | 'casual';
+  engineDepth?: number;
 };
 
 type MoveRow = {
@@ -207,6 +208,7 @@ export function AnalysisBoard(props: Props) {
     filterTo,
     filterSpeeds,
     filterRated = 'any',
+    engineDepth = 18,
   } = props;
   
   // Compute position key for refinement
@@ -276,7 +278,7 @@ export function AnalysisBoard(props: Props) {
     const timeout = window.setTimeout(() => {
       void (async () => {
         try {
-          const raw = await evaluatePositionShallow(state.fen);
+          const raw = await evaluatePositionShallow(state.fen, { depth: engineDepth });
           if (cancelled) return;
           if (evalReqIdRef.current !== reqId) return;
 
@@ -301,7 +303,7 @@ export function AnalysisBoard(props: Props) {
       cancelled = true;
       window.clearTimeout(timeout);
     };
-  }, [showEval, state.fen, state.game, onEvalChange]);
+  }, [showEval, state.fen, state.game, onEvalChange, engineDepth]);
 
   const playTableMove = useCallback(
     (uci: string) => {
@@ -387,6 +389,12 @@ export function AnalysisBoard(props: Props) {
     const trimmed = opponentUsername.trim();
     if (!trimmed) {
       setOpponentStats(null);
+      return;
+    }
+
+    if (state.isGameOver) {
+      setOpponentStats(null);
+      setOpponentStatsBusy(false);
       return;
     }
 
@@ -507,7 +515,7 @@ export function AnalysisBoard(props: Props) {
     const reqId = (engineReqIdRef.current += 1);
 
     const timeout = window.setTimeout(() => {
-      void evaluateBestMove(state.fen)
+      void evaluateBestMove(state.fen, { depth: engineDepth })
         .then((res) => {
           if (cancelled) return;
           if (engineReqIdRef.current !== reqId) return;
@@ -543,7 +551,7 @@ export function AnalysisBoard(props: Props) {
       cancelled = true;
       window.clearTimeout(timeout);
     };
-  }, [showEngineBest, state.fen, setEngineBestMove]);
+  }, [showEngineBest, state.fen, setEngineBestMove, engineDepth]);
 
   const userColor = state.playerSide === "white" ? "w" : "b";
   const opponentColor = userColor === "w" ? "b" : "w";
@@ -729,7 +737,7 @@ export function AnalysisBoard(props: Props) {
               continue;
             }
 
-            const score = await evaluatePositionShallow(base.fen());
+            const score = await evaluatePositionShallow(base.fen(), { depth: engineDepth });
             // Stockfish returns score from side-to-move of the evaluated position.
             // After the move, it's the other side's turn, so we need to convert to White POV.
             const turnAfterMove = base.turn();

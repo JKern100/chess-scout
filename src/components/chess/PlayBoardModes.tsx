@@ -199,6 +199,7 @@ function MovesSoFarPanel(props: { state: ChessBoardCoreState; opponentUsername: 
   const [saveLineNotes, setSaveLineNotes] = useState<string>("");
   const [saveLineBusy, setSaveLineBusy] = useState(false);
   const [saveLineToast, setSaveLineToast] = useState<string | null>(null);
+  const [pgnToast, setPgnToast] = useState<string | null>(null);
 
   const allMoves = useMemo(() => {
     return [...state.moveHistory, ...state.redoMoves];
@@ -224,6 +225,74 @@ function MovesSoFarPanel(props: { state: ChessBoardCoreState; opponentUsername: 
     const t = window.setTimeout(() => setSaveLineToast(null), 2000);
     return () => window.clearTimeout(t);
   }, [saveLineToast]);
+
+  useEffect(() => {
+    if (!pgnToast) return;
+    const t = window.setTimeout(() => setPgnToast(null), 2000);
+    return () => window.clearTimeout(t);
+  }, [pgnToast]);
+
+  async function copyPgn() {
+    try {
+      const startingFen = state.fenHistory[0] ?? new Chess().fen();
+      const movesSan = [...state.moveHistory];
+
+      const chess = new Chess();
+      const defaultStart = new Chess().fen();
+      if (startingFen && startingFen !== defaultStart) {
+        chess.load(startingFen);
+        (chess as any).header?.("SetUp", "1");
+        (chess as any).header?.("FEN", startingFen);
+      }
+
+      for (const san of movesSan) {
+        const played = chess.move(san);
+        if (!played) break;
+      }
+
+      const opp = opponentUsername.trim() ? opponentUsername.trim() : "Opponent";
+      (chess as any).header?.("Event", "ChessScout");
+      (chess as any).header?.("Site", "ChessScout");
+      (chess as any).header?.("White", "You");
+      (chess as any).header?.("Black", opp);
+
+      const result = (() => {
+        if (!chess.isGameOver()) return "*";
+        if (chess.isCheckmate()) {
+          const turn = chess.turn();
+          return turn === "w" ? "0-1" : "1-0";
+        }
+        if (chess.isDraw()) return "1/2-1/2";
+        return "*";
+      })();
+      (chess as any).header?.("Result", result);
+
+      const pgn = chess.pgn({ newline_char: "\n" });
+      if (!pgn) {
+        setPgnToast("Could not build PGN");
+        return;
+      }
+
+      try {
+        await navigator.clipboard.writeText(pgn);
+        setPgnToast("PGN copied — paste into lichess.org/paste");
+      } catch {
+        const ta = document.createElement("textarea");
+        ta.value = pgn;
+        ta.style.position = "fixed";
+        ta.style.left = "-1000px";
+        ta.style.top = "-1000px";
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        const ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+        setPgnToast(ok ? "PGN copied — paste into lichess.org/paste" : "Could not copy PGN");
+      }
+    } catch {
+      setPgnToast("Could not copy PGN");
+    }
+  }
 
   function buildDefaultLineName() {
     const opp = opponentUsername.trim() ? opponentUsername.trim() : "Opponent";
@@ -441,6 +510,16 @@ function MovesSoFarPanel(props: { state: ChessBoardCoreState; opponentUsername: 
           <div className="mt-2 flex items-center justify-between gap-2">
             <button
               type="button"
+              className="inline-flex h-9 items-center justify-center rounded-xl border border-zinc-200 bg-white px-3 text-[10px] font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
+              onClick={() => void copyPgn()}
+              disabled={state.moveHistory.length === 0}
+              title="Copy PGN for Lichess analysis"
+            >
+              Copy PGN
+            </button>
+
+            <button
+              type="button"
               className="inline-flex h-9 items-center justify-center rounded-xl border border-zinc-200 bg-white px-3 text-[10px] font-medium text-zinc-900 hover:bg-zinc-50"
               onClick={() => {
                 setSaveLineName(buildDefaultLineName());
@@ -451,6 +530,7 @@ function MovesSoFarPanel(props: { state: ChessBoardCoreState; opponentUsername: 
               Save Line
             </button>
 
+            {pgnToast ? <div className="text-[10px] text-zinc-600">{pgnToast}</div> : null}
             {saveLineToast ? <div className="text-[10px] text-zinc-600">{saveLineToast}</div> : null}
           </div>
         </div>
@@ -968,6 +1048,10 @@ export function PlayBoardModes({ initialFen }: Props) {
           const opponentColor = ctx.playerSide === "white" ? "b" : "w";
           const isOpponentTurn = nextTurn === opponentColor;
 
+          if (next.isGameOver()) {
+            continue;
+          }
+
           const replyPrediction = await scoutPredictOnce({
             fen: nextFen,
             opponentUsername: trimmedOpp,
@@ -1008,12 +1092,22 @@ export function PlayBoardModes({ initialFen }: Props) {
     async (ctx: { fen: string; turn: "w" | "b"; playerSide: "white" | "black" }) => {
       const trimmedOpp = opponentUsername.trim();
       if (!trimmedOpp) return;
-      const fenParts = ctx.fen.split(" ");
-      const fullmoveNumber = Number(fenParts[5] ?? "1");
-      const opponentColor = ctx.playerSide === "white" ? "b" : "w";
-      const isOpponentTurn = ctx.turn === opponentColor;
+
+      try {
+        const check = new Chess(ctx.fen);
+        if (check.isGameOver()) {
+          return;
+        }
+      } catch {
+        // ignore invalid fen
+      }
+
+      const fullmoveNumber = Number(ctx.fen.split(" ")[5] ?? "1");
       const historyMoves = await fetchScoutHistoryMoves({ fen: ctx.fen, username: trimmedOpp }).catch(() => []);
       const styleMarkers = analysisStyleMarkersRef.current;
+
+      const opponentColor = ctx.playerSide === "white" ? "b" : "w";
+      const isOpponentTurn = ctx.turn === opponentColor;
 
       await scoutPredict({
         fen: ctx.fen,
@@ -1163,6 +1257,7 @@ export function PlayBoardModes({ initialFen }: Props) {
   const [analysisShowEngineBest, setAnalysisShowEngineBest] = useState(false);
   const [analysisShowEval, setAnalysisShowEval] = useState(false);
   const [analysisShowEngineColumn, setAnalysisShowEngineColumn] = useState(false);
+  const [analysisEngineDepth, setAnalysisEngineDepth] = useState(18);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [analysisEngineBestUci, setAnalysisEngineBestUci] = useState<string | null>(null);
   const [analysisEngineBestSan, setAnalysisEngineBestSan] = useState<string | null>(null);
@@ -2581,6 +2676,8 @@ export function PlayBoardModes({ initialFen }: Props) {
               setAnalysisShowEngineBest={setAnalysisShowEngineBest}
               analysisShowEngineColumn={analysisShowEngineColumn}
               setAnalysisShowEngineColumn={setAnalysisShowEngineColumn}
+              analysisEngineDepth={analysisEngineDepth}
+              setAnalysisEngineDepth={setAnalysisEngineDepth}
               soundEnabled={soundEnabled}
               setSoundEnabled={setSoundEnabled}
               setAnalysisEval={setAnalysisEval}
@@ -2622,6 +2719,11 @@ export function PlayBoardModes({ initialFen }: Props) {
               }}
               scoutOpponentReplyByMove={scoutOpponentReplyByMove}
               scoutOpponentReplyLoading={scoutOpponentReplyLoading}
+              onAnalyzeGame={() => {
+                // Switch to analysis mode with the current game state
+                setMode("analysis");
+                // Keep the current game state intact for analysis
+              }}
               filterFrom={analysisAppliedFilters.fromDate || null}
               filterTo={analysisAppliedFilters.toDate || null}
               filterSpeeds={analysisAppliedFilters.speeds}
@@ -2694,6 +2796,11 @@ export function PlayBoardModes({ initialFen }: Props) {
               }}
               scoutOpponentReplyByMove={scoutOpponentReplyByMove}
               scoutOpponentReplyLoading={scoutOpponentReplyLoading}
+              onAnalyzeGame={() => {
+                // Switch to analysis mode with the current game state
+                setMode("analysis");
+                // Keep the current game state intact for analysis
+              }}
             />
           </SimulationAutoTrigger>
         );
@@ -2721,6 +2828,8 @@ function AnalysisRightSidebar(props: {
   setAnalysisShowEngineBest: (v: boolean) => void;
   analysisShowEngineColumn: boolean;
   setAnalysisShowEngineColumn: (v: boolean) => void;
+  analysisEngineDepth: number;
+  setAnalysisEngineDepth: (v: number) => void;
   soundEnabled: boolean;
   setSoundEnabled: (v: boolean) => void;
   setAnalysisEval: (s: EngineScore | null) => void;
@@ -2758,6 +2867,7 @@ function AnalysisRightSidebar(props: {
   onScoutPredict?: () => void;
   scoutOpponentReplyByMove?: Record<string, any> | null;
   scoutOpponentReplyLoading?: boolean;
+  onAnalyzeGame?: () => void;
   // Date filter refinement props (Phase 1b)
   filterFrom?: string | null;
   filterTo?: string | null;
@@ -2783,6 +2893,8 @@ function AnalysisRightSidebar(props: {
     setAnalysisShowEngineBest,
     analysisShowEngineColumn,
     setAnalysisShowEngineColumn,
+    analysisEngineDepth,
+    setAnalysisEngineDepth,
     soundEnabled,
     setSoundEnabled,
     setAnalysisEval,
@@ -2820,6 +2932,7 @@ function AnalysisRightSidebar(props: {
     onScoutPredict,
     scoutOpponentReplyByMove,
     scoutOpponentReplyLoading,
+    onAnalyzeGame,
     filterFrom,
     filterTo,
     filterSpeeds,
@@ -3047,6 +3160,23 @@ function AnalysisRightSidebar(props: {
                 Show engine eval column
               </label>
 
+              <div className="pt-2 text-[10px] font-medium text-zinc-900">Engine Depth</div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="range"
+                  min={8}
+                  max={24}
+                  step={2}
+                  value={analysisEngineDepth}
+                  onChange={(e) => setAnalysisEngineDepth(Number(e.target.value))}
+                  className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-zinc-200 accent-zinc-900"
+                />
+                <span className="w-6 text-right font-mono text-[10px] text-zinc-600">{analysisEngineDepth}</span>
+              </div>
+              <div className="text-[9px] text-zinc-500">
+                Higher = more accurate but slower (8-24)
+              </div>
+
               <div className="pt-1 text-[10px] font-medium text-zinc-900">Audio</div>
               <label className="inline-flex cursor-pointer items-center gap-2">
                 <input type="checkbox" checked={soundEnabled} onChange={(e) => setSoundEnabled(e.target.checked)} />
@@ -3077,6 +3207,7 @@ function AnalysisRightSidebar(props: {
               setOpponentStatsBusy={setAnalysisStatsBusy}
               enabled={active === "stats" || analysisFilterApplyStatus === "applying"}
               showEngineColumn={analysisShowEngineColumn}
+              engineDepth={analysisEngineDepth}
               styleMarkers={analysisStyleMarkers}
               platform="lichess"
               filterFrom={filterFrom}

@@ -1,4 +1,5 @@
 import { AuthPanel } from "@/components/auth/AuthPanel";
+import { AuthRedirectCatcher } from "@/components/auth/AuthRedirectCatcher";
 import { ImportPanel } from "@/components/imports/ImportPanel";
 import { ConnectAccountPanel } from "@/components/profile/ConnectAccountPanel";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -18,6 +19,7 @@ export default async function Home() {
 
   return (
     <div className="min-h-screen">
+      <AuthRedirectCatcher />
       <main className="mx-auto flex w-full max-w-5xl flex-col gap-10 px-6 py-12">
         <header className="flex flex-col gap-3">
           <div className="text-sm font-medium text-zinc-600">ChessScout</div>

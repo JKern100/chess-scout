@@ -126,8 +126,9 @@ async function requestEval(fen: string, opts?: { depth?: number }): Promise<Eval
   return await enqueue(() => requestEngine<EvalResult>({ fen, depth, kind: "eval", timeoutMs: 12_000 }));
 }
 
-export async function evaluateBestMove(fen: string): Promise<BestMoveResult> {
-  return await requestBestMove(fen, { depth: 14 });
+export async function evaluateBestMove(fen: string, opts?: { depth?: number }): Promise<BestMoveResult> {
+  const depth = Number.isFinite(opts?.depth) ? Math.max(8, Math.min(24, Math.floor(opts!.depth!))) : 14;
+  return await requestBestMove(fen, { depth });
 }
 
 export async function getBestMoveForPlay(fen: string): Promise<string | null> {
@@ -135,7 +136,8 @@ export async function getBestMoveForPlay(fen: string): Promise<string | null> {
   return res.bestMoveUci;
 }
 
-export async function evaluatePositionShallow(fen: string): Promise<EngineScore | null> {
-  const res = await requestEval(fen, { depth: 20 });
+export async function evaluatePositionShallow(fen: string, opts?: { depth?: number }): Promise<EngineScore | null> {
+  const depth = Number.isFinite(opts?.depth) ? Math.max(8, Math.min(24, Math.floor(opts!.depth!))) : 20;
+  const res = await requestEval(fen, { depth });
   return res.score;
 }

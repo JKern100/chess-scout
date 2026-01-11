@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { normalizeFen, type MoveSelectionStrategy } from "@/server/opponentModel";
 import { isFeatureEnabled } from "@/lib/featureFlags";
+import { Chess } from "chess.js";
 
 type Mode = MoveSelectionStrategy;
 
@@ -77,6 +78,51 @@ export async function POST(request: Request) {
 
   if (!fen) {
     return NextResponse.json({ error: "fen is required" }, { status: 400 });
+  }
+
+  try {
+    const chess = new Chess(fen);
+    if (chess.isGameOver()) {
+      const outcome = chess.isCheckmate()
+        ? "Checkmate"
+        : chess.isStalemate()
+          ? "Stalemate"
+          : chess.isThreefoldRepetition()
+            ? "Threefold repetition"
+            : chess.isInsufficientMaterial()
+              ? "Insufficient material"
+              : chess.isDraw()
+                ? "Draw"
+                : "Game over";
+
+      const positionKey = normalizeFen(fen);
+      return NextResponse.json({
+        cache: { status: "db", max_games: 0, age_ms: 0, build_ms: 0 },
+        filter_meta: {
+          requested: { speeds: speedsFilter, rated, from, to },
+          source: "terminal",
+          opening_graph_key_used: null,
+          approximate: false,
+          date_filter_ignored: false,
+          client_tree_enabled: false,
+          showing_all_time: false,
+          date_refine_available: false,
+        },
+        terminal: { is_game_over: true, outcome },
+        position: positionKey,
+        mode,
+        available_count: 0,
+        available_total_count: 0,
+        available_against_count: 0,
+        available_against_total_count: 0,
+        depth_remaining: 0,
+        move: null,
+        moves: [],
+        moves_against: [],
+      });
+    }
+  } catch {
+    // ignore invalid fen; downstream will handle
   }
 
   const startFenKey = normalizeFen(fen);

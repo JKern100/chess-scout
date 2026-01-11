@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Chess } from "chess.js";
 
 const SCOUT_API_URL = process.env.SCOUT_API_URL || "http://localhost:8001";
 
@@ -22,6 +23,52 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
+
+    try {
+      const fen = typeof body?.fen === "string" ? String(body.fen) : "";
+      if (fen) {
+        const chess = new Chess(fen);
+        if (chess.isGameOver()) {
+          const outcome = chess.isCheckmate()
+            ? "Checkmate"
+            : chess.isStalemate()
+              ? "Stalemate"
+              : chess.isThreefoldRepetition()
+                ? "Threefold repetition"
+                : chess.isInsufficientMaterial()
+                  ? "Insufficient material"
+                  : chess.isDraw()
+                    ? "Draw"
+                    : "Game over";
+
+          const mode = body?.mode === "pure_history" ? "pure_history" : "hybrid";
+          return NextResponse.json({
+            prediction_mode: mode,
+            selected_move: "",
+            selected_move_uci: "",
+            weights: {
+              phase: "terminal",
+              history: 0,
+              engine: 0,
+              style: 0,
+            },
+            candidates: [],
+            trace_log: [{ type: "warning", message: outcome }],
+            tilt_active: false,
+            blunder_applied: false,
+            move_source: {
+              primary_source: "history",
+              history_contribution: 0,
+              style_contribution: 0,
+              engine_contribution: 0,
+            },
+            terminal: { is_game_over: true, outcome },
+          });
+        }
+      }
+    } catch {
+      // ignore fen parse errors
+    }
 
     const res = await fetch(`${SCOUT_API_URL}/predict`, {
       method: "POST",

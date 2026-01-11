@@ -1,6 +1,6 @@
 "use client";
 
-import { Filter, Settings, Brain } from "lucide-react";
+import { Filter, Settings, Brain, Search } from "lucide-react";
 import type { ChessBoardCoreState } from "./ChessBoardCore";
 import { ScoutPanelContent } from "./ScoutOverlay";
 
@@ -63,6 +63,7 @@ type Props = {
   onScoutPredict?: () => void;
   scoutOpponentReplyByMove?: Record<string, any> | null;
   scoutOpponentReplyLoading?: boolean;
+  onAnalyzeGame?: () => void;
 };
 
 export function SimulationRightSidebar(props: Props) {
@@ -108,6 +109,7 @@ export function SimulationRightSidebar(props: Props) {
     onScoutPredict,
     scoutOpponentReplyByMove,
     scoutOpponentReplyLoading,
+    onAnalyzeGame,
   } = props;
 
   const turn = state.game.turn();
@@ -462,6 +464,17 @@ export function SimulationRightSidebar(props: Props) {
                         ? "Opponent to move"
                         : "Your move"}
                 </div>
+
+                {state.isGameOver && onAnalyzeGame ? (
+                  <button
+                    type="button"
+                    className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-zinc-900 px-3 py-2 text-[10px] font-medium text-white hover:bg-zinc-800"
+                    onClick={onAnalyzeGame}
+                  >
+                    <Search className="h-3.5 w-3.5" />
+                    Analyze this game
+                  </button>
+                ) : null}
               </div>
             </div>
           </div>
