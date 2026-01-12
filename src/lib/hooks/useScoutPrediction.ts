@@ -45,6 +45,7 @@ const SCOUT_API_URL = process.env.NEXT_PUBLIC_SCOUT_API_URL || "/api/scout";
 
 export function useScoutPrediction() {
   const [prediction, setPrediction] = useState<ScoutPrediction | null>(null);
+  const [predictionFen, setPredictionFen] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<PredictionMode>("hybrid");
@@ -53,7 +54,9 @@ export function useScoutPrediction() {
 
   const predictOnce = useCallback(
     async (params: PredictParams): Promise<ScoutPrediction> => {
-      // Check cache first
+      // Check cache first - but skip cache if history moves are provided
+      // This ensures the history-enriched second call always hits the API
+      const hasHistory = params.historyMoves && params.historyMoves.length > 0;
       const cacheKey = getScoutCacheKey({
         fen: params.fen,
         opponentUsername: params.opponentUsername,
@@ -61,9 +64,11 @@ export function useScoutPrediction() {
         isOpponentTurn: params.isOpponentTurn,
       });
       
-      const cached = await getCachedScoutPrediction(cacheKey);
-      if (cached) {
-        return cached as ScoutPrediction;
+      if (!hasHistory) {
+        const cached = await getCachedScoutPrediction(cacheKey);
+        if (cached) {
+          return cached as ScoutPrediction;
+        }
       }
       
       const body = {
@@ -119,7 +124,9 @@ export function useScoutPrediction() {
       setError(null);
 
       try {
-        // Check cache first
+        // Check cache first - but skip cache if history moves are provided
+        // This ensures the history-enriched second call always hits the API
+        const hasHistory = params.historyMoves && params.historyMoves.length > 0;
         const cacheKey = getScoutCacheKey({
           fen: params.fen,
           opponentUsername: params.opponentUsername,
@@ -127,10 +134,13 @@ export function useScoutPrediction() {
           isOpponentTurn: params.isOpponentTurn,
         });
         
-        const cached = await getCachedScoutPrediction(cacheKey);
-        if (cached) {
-          setPrediction(cached as ScoutPrediction);
-          return cached as ScoutPrediction;
+        if (!hasHistory) {
+          const cached = await getCachedScoutPrediction(cacheKey);
+          if (cached) {
+            setPrediction(cached as ScoutPrediction);
+            setPredictionFen(params.fen);
+            return cached as ScoutPrediction;
+          }
         }
         
         const body = {
@@ -171,6 +181,7 @@ export function useScoutPrediction() {
         void cacheScoutPrediction(cacheKey, data);
         
         setPrediction(data as ScoutPrediction);
+        setPredictionFen(params.fen);
         return data as ScoutPrediction;
       } catch (err) {
         if (err instanceof Error && err.name === "AbortError") {
@@ -188,11 +199,13 @@ export function useScoutPrediction() {
 
   const clearPrediction = useCallback(() => {
     setPrediction(null);
+    setPredictionFen(null);
     setError(null);
   }, []);
 
   return {
     prediction,
+    predictionFen,
     loading,
     error,
     mode,

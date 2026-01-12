@@ -11,7 +11,8 @@ import random
 from models import (
     PredictionMode, StyleMarkers, HistoryMove,
     PredictionResponse, CandidateMove, MoveAttribution,
-    PhaseWeights, TraceLogEntry, HabitDetection, MoveSourceAttribution
+    PhaseWeights, TraceLogEntry, HabitDetection, MoveSourceAttribution,
+    TacticalGuardrail
 )
 from engine import EngineWrapper
 from heuristics import ChessHeuristics
@@ -302,6 +303,61 @@ class ScoutPredictor:
         
         return None
     
+    # Tactical Guardrail threshold: 1.5 pawns = 150 centipawns
+    TACTICAL_GUARDRAIL_THRESHOLD_CP = 150
+    
+    def _check_tactical_guardrail(
+        self,
+        board: chess.Board,
+        engine_analysis: List[Dict[str, Any]],
+        trace_log: List[TraceLogEntry]
+    ) -> TacticalGuardrail:
+        """
+        Check if the Tactical Guardrail should be triggered.
+        
+        The guardrail triggers when:
+        1. The eval delta between M1 and M2 is > 1.5 pawns (150 cp)
+        2. M1 is a "forcing" move (check, capture, or queen threat)
+        
+        When triggered, style weights are ignored and the engine's top move is selected.
+        """
+        if len(engine_analysis) < 2:
+            return TacticalGuardrail()
+        
+        m1 = engine_analysis[0]
+        m2 = engine_analysis[1]
+        
+        # Calculate eval delta (in centipawns)
+        eval_delta = m1["score_cp"] - m2["score_cp"]
+        
+        # Check if M1 is a forcing move
+        try:
+            move = board.parse_san(m1["move_san"])
+            is_forcing = ChessHeuristics.is_forcing_move(board, move)
+        except Exception:
+            is_forcing = False
+        
+        # Guardrail triggers if delta > threshold AND move is forcing
+        if eval_delta >= self.TACTICAL_GUARDRAIL_THRESHOLD_CP and is_forcing:
+            reason = f"M1 ({m1['move_san']}) is {eval_delta/100:.1f} pawns better than M2 and is a forcing move"
+            trace_log.append(TraceLogEntry(
+                type="decision",
+                message=f"TACTICAL GUARDRAIL: {reason}. Style bias ignored."
+            ))
+            return TacticalGuardrail(
+                triggered=True,
+                eval_delta=eval_delta / 100,  # Convert to pawns for display
+                is_forcing=is_forcing,
+                reason=reason
+            )
+        
+        return TacticalGuardrail(
+            triggered=False,
+            eval_delta=eval_delta / 100,
+            is_forcing=is_forcing,
+            reason=""
+        )
+    
     def predict(
         self,
         fen: str,
@@ -504,6 +560,51 @@ class ScoutPredictor:
     ) -> PredictionResponse:
         """Hybrid mode: Weighted softmax of history, engine, and style."""
         
+        # TACTICAL GUARDRAIL: Check if engine's top move is clearly superior
+        tactical_guardrail = self._check_tactical_guardrail(board, engine_analysis, trace_log)
+        
+        if tactical_guardrail.triggered:
+            # Override style weights - return engine's top move directly
+            m1 = engine_analysis[0]
+            
+            # Build minimal candidate list for display
+            guardrail_candidates = []
+            for ea in engine_analysis:
+                guardrail_candidates.append(CandidateMove(
+                    move=ea["move_san"],
+                    move_uci=ea["move_uci"],
+                    engine_eval=ea["score_cp"] / 100,
+                    engine_rank=ea["rank"],
+                    history_frequency=0,
+                    style_fit=0,
+                    raw_score=1.0 if ea["move_san"] == m1["move_san"] else 0,
+                    final_prob=100 if ea["move_san"] == m1["move_san"] else 0,
+                    attribution=MoveAttribution(),
+                    reason="Tactical Truth: Forced tactic with 1.5+ pawn advantage" if ea["move_san"] == m1["move_san"] else ""
+                ))
+            
+            move_source = MoveSourceAttribution(
+                primary_source="engine",
+                history_contribution=0,
+                style_contribution=0,
+                engine_contribution=100
+            )
+            
+            return PredictionResponse(
+                prediction_mode=PredictionMode.HYBRID,
+                selected_move=m1["move_san"],
+                selected_move_uci=m1["move_uci"],
+                weights=weights,
+                candidates=guardrail_candidates,
+                trace_log=trace_log,
+                tilt_active=tilt_active,
+                blunder_applied=False,
+                habit_detection=habit_detection,
+                move_source=move_source,
+                suggested_delay_ms=800,  # Fast response for obvious tactics
+                tactical_guardrail=tactical_guardrail
+            )
+        
         # Start with engine's top moves
         candidate_sans = [ea["move_san"] for ea in engine_analysis]
         engine_analysis_map = {ea["move_san"]: ea for ea in engine_analysis}
@@ -687,5 +788,6 @@ class ScoutPredictor:
             blunder_applied=blunder_applied,
             habit_detection=habit_detection,
             move_source=move_source,
-            suggested_delay_ms=suggested_delay
+            suggested_delay_ms=suggested_delay,
+            tactical_guardrail=tactical_guardrail
         )

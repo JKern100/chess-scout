@@ -76,19 +76,43 @@ export async function POST(req: NextRequest) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(15_000),
     });
 
     if (!res.ok) {
-      const errData = await res.json().catch(() => ({}));
+      const contentType = res.headers.get("content-type") || "";
+      const errData = contentType.includes("application/json")
+        ? await res.json().catch(() => ({}))
+        : await res.text().catch(() => "");
       return NextResponse.json(
-        { error: errData.detail || `Scout API error: ${res.status}` },
+        {
+          error:
+            typeof errData === "object" && errData
+              ? ((errData as any).detail ?? (errData as any).error ?? `Scout API error: ${res.status}`)
+              : String(errData || `Scout API error: ${res.status}`),
+        },
         { status: res.status }
+      );
+    }
+
+    const contentType = res.headers.get("content-type") || "";
+    if (!contentType.includes("application/json")) {
+      const text = await res.text().catch(() => "");
+      return NextResponse.json(
+        { error: text || "Scout API returned a non-JSON response" },
+        { status: 502 }
       );
     }
 
     const data = await res.json();
     return NextResponse.json(data);
   } catch (err) {
+    if (err instanceof Error && err.name === "TimeoutError") {
+      return NextResponse.json(
+        { error: "Scout API request timed out" },
+        { status: 504 }
+      );
+    }
     console.error("Scout API proxy error:", err);
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Scout API unavailable" },

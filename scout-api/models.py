@@ -101,6 +101,14 @@ class MoveSourceAttribution(BaseModel):
     engine_contribution: float = Field(default=0.0, description="Percentage from engine (0-100)")
 
 
+class TacticalGuardrail(BaseModel):
+    """Tactical Guardrail result for forced tactics detection."""
+    triggered: bool = Field(default=False, description="True if guardrail overrode style weights")
+    eval_delta: float = Field(default=0.0, description="Centipawn gap between M1 and M2")
+    is_forcing: bool = Field(default=False, description="True if M1 is check/capture/queen threat")
+    reason: str = Field(default="", description="Explanation of why guardrail triggered")
+
+
 class PredictionResponse(BaseModel):
     """Response from the prediction endpoint."""
     prediction_mode: PredictionMode
@@ -114,3 +122,4 @@ class PredictionResponse(BaseModel):
     habit_detection: HabitDetection = Field(default_factory=HabitDetection, description="Habit detection result")
     move_source: MoveSourceAttribution = Field(default_factory=MoveSourceAttribution, description="Primary source attribution")
     suggested_delay_ms: int = Field(default=1500, description="Suggested delay before playing move (ms)")
+    tactical_guardrail: TacticalGuardrail = Field(default_factory=TacticalGuardrail, description="Tactical guardrail result")

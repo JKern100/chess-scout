@@ -66,6 +66,13 @@ export type TraceLogEntry = {
   message: string;
 };
 
+export type TacticalGuardrail = {
+  triggered: boolean;
+  eval_delta: number;
+  is_forcing: boolean;
+  reason: string;
+};
+
 export type ScoutPrediction = {
   prediction_mode: PredictionMode;
   selected_move: string;
@@ -78,6 +85,7 @@ export type ScoutPrediction = {
   habit_detection?: HabitDetection;
   move_source?: MoveSourceAttribution;
   suggested_delay_ms?: number;
+  tactical_guardrail?: TacticalGuardrail;
 };
 
 export type OpponentReplyForecast = {
@@ -380,12 +388,17 @@ const CandidateRow = memo(function CandidateRow({
 
   return (
     <div
-      className={`grid grid-cols-[60px_60px_60px_1fr] items-center gap-2 rounded-lg px-3 py-2 text-sm ${
+      className={`grid grid-cols-[60px_60px_64px_60px_1fr] items-center gap-2 rounded-lg px-3 py-2 text-sm ${
         isSelected ? "bg-amber-50 ring-1 ring-amber-300" : "bg-zinc-50"
       }`}
     >
       <div className="font-semibold text-zinc-900">{candidate.move}</div>
       <div className="text-zinc-600">{candidate.final_prob.toFixed(1)}%</div>
+      <div className="font-mono text-[12px] text-zinc-600">
+        {typeof candidate.engine_eval === "number"
+          ? `${candidate.engine_eval >= 0 ? "+" : ""}${candidate.engine_eval.toFixed(2)}`
+          : "—"}
+      </div>
       <div className="flex items-center gap-1">
         {hasBonus && <TrendingUp className="h-3 w-3 text-emerald-500" />}
         {hasPenalty && <AlertTriangle className="h-3 w-3 text-rose-500" />}
@@ -445,6 +458,8 @@ export const ScoutPanelContent = memo(function ScoutPanelContent({
   opponentReplyLoading,
   onRefresh,
   isOpponentTurn = true,
+  currentFen,
+  predictionFen,
   totalGamesInFilter,
   filtersLimited,
 }: {
@@ -458,11 +473,20 @@ export const ScoutPanelContent = memo(function ScoutPanelContent({
   opponentReplyLoading?: boolean;
   onRefresh?: () => void;
   isOpponentTurn?: boolean;
+  currentFen?: string;
+  predictionFen?: string | null;
   totalGamesInFilter?: number;
   filtersLimited?: boolean;
 }) {
   const LOW_SAMPLE_THRESHOLD = 100;
   const [helpOpen, setHelpOpen] = useState(false);
+  const isShowingCurrent = Boolean(
+    isOpponentTurn &&
+      typeof currentFen === "string" &&
+      typeof predictionFen === "string" &&
+      currentFen.trim() === predictionFen.trim()
+  );
+  const title = isShowingCurrent ? "Opponent's Next Move" : "Opponent's Previous Move";
   
   return (
     <div className="grid gap-3">
@@ -473,7 +497,7 @@ export const ScoutPanelContent = memo(function ScoutPanelContent({
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1">
           <span className="text-[10px] font-medium text-zinc-900">
-            Scout Insights: {opponentUsername}
+            {title}
           </span>
           <button
             type="button"
@@ -537,7 +561,7 @@ export const ScoutPanelContent = memo(function ScoutPanelContent({
       ) : prediction ? (
         <div className="grid gap-3">
           {/* Low Sample / Filter Warning */}
-          {(totalGamesInFilter != null && totalGamesInFilter < LOW_SAMPLE_THRESHOLD) && (
+          {(totalGamesInFilter != null && totalGamesInFilter > 0 && totalGamesInFilter < LOW_SAMPLE_THRESHOLD) && (
             <div className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2">
               <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
               <div className="text-[9px] text-amber-700">
@@ -555,7 +579,7 @@ export const ScoutPanelContent = memo(function ScoutPanelContent({
           )}
 
           {/* Habit Detection Banner - Only show for opponent's turn */}
-          {isOpponentTurn && prediction.habit_detection?.detected && (
+          {prediction.habit_detection?.detected && (
             <div className="flex items-center gap-2 rounded-lg border border-orange-300 bg-orange-50 px-3 py-2">
               <div className="flex h-6 w-6 items-center justify-center rounded-full bg-orange-500 text-white">
                 <Brain className="h-3.5 w-3.5" />
@@ -573,6 +597,12 @@ export const ScoutPanelContent = memo(function ScoutPanelContent({
 
           {/* Status Indicators */}
           <div className="flex flex-wrap items-center gap-2">
+            {prediction.tactical_guardrail?.triggered && (
+              <div className="flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[9px] font-medium text-emerald-700">
+                <Target className="h-2.5 w-2.5" />
+                Tactical Truth Prioritized
+              </div>
+            )}
             {prediction.tilt_active && (
               <div className="flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[9px] font-medium text-rose-700">
                 <Zap className="h-2.5 w-2.5" />
@@ -637,7 +667,14 @@ export const ScoutPanelContent = memo(function ScoutPanelContent({
                     <span className="font-semibold text-zinc-900">{c.move}</span>
                     <span className="text-zinc-500">#{c.engine_rank}</span>
                   </div>
-                  <span className="font-medium text-zinc-700">{c.final_prob.toFixed(1)}%</span>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-[9px] text-zinc-500">
+                      {typeof c.engine_eval === "number"
+                        ? `${c.engine_eval >= 0 ? "+" : ""}${c.engine_eval.toFixed(2)}`
+                        : ""}
+                    </span>
+                    <span className="font-medium text-zinc-700">{c.final_prob.toFixed(1)}%</span>
+                  </div>
                 </div>
               ))}
             </div>
@@ -758,6 +795,12 @@ export const ScoutOverlay = memo(function ScoutOverlay({
           <div className="mt-4 grid gap-6">
             {/* Status Indicators */}
             <div className="flex items-center gap-4">
+              {prediction.tactical_guardrail?.triggered && (
+                <div className="flex items-center gap-2 rounded-full bg-emerald-100 px-3 py-1 text-xs font-medium text-emerald-700">
+                  <Target className="h-3 w-3" />
+                  Tactical Truth Prioritized
+                </div>
+              )}
               {prediction.tilt_active && (
                 <div className="flex items-center gap-2 rounded-full bg-rose-100 px-3 py-1 text-xs font-medium text-rose-700">
                   <Zap className="h-3 w-3" />

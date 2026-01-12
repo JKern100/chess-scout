@@ -33,7 +33,7 @@ export type ChessBoardCoreState = {
 type Props = {
   initialFen?: string;
   soundEnabled?: boolean;
-  onFenChange?: (fen: string) => void;
+  onFenChange?: (fen: string, ctx: { turn: "w" | "b"; playerSide: Side }) => void;
   arrows?: any[] | ((state: ChessBoardCoreState) => any[]);
   squareStyles?: Record<string, React.CSSProperties> | ((state: ChessBoardCoreState) => Record<string, React.CSSProperties>);
   specialArrow?:
@@ -248,7 +248,7 @@ export function ChessBoardCore({ initialFen, soundEnabled = true, onFenChange, a
     });
     setRedoFens([]);
     setRedoMoves([]);
-    if (onFenChange) onFenChange(nextFen);
+    if (onFenChange) onFenChange(nextFen, { turn: next.turn(), playerSide });
   }
 
   function hydrateFromFenAndMoves(startingFen: string, movesSan: string[]) {
@@ -280,7 +280,7 @@ export function ChessBoardCore({ initialFen, soundEnabled = true, onFenChange, a
     setMoveHistory(applied);
     setRedoFens([]);
     setRedoMoves([]);
-    if (onFenChange) onFenChange(g.fen());
+    if (onFenChange) onFenChange(g.fen(), { turn: g.turn(), playerSide });
   }
 
   function undoPlies(count: number) {
@@ -304,7 +304,7 @@ export function ChessBoardCore({ initialFen, soundEnabled = true, onFenChange, a
       const g = loadGameFromFen(targetFen);
       if (g) {
         setGame(g);
-        if (onFenChange) onFenChange(targetFen);
+        if (onFenChange) onFenChange(targetFen, { turn: g.turn(), playerSide });
       }
     }
   }
@@ -333,7 +333,7 @@ export function ChessBoardCore({ initialFen, soundEnabled = true, onFenChange, a
       const g = loadGameFromFen(targetFen);
       if (g) {
         setGame(g);
-        if (onFenChange) onFenChange(targetFen);
+        if (onFenChange) onFenChange(targetFen, { turn: g.turn(), playerSide });
       }
     }
   }
@@ -353,7 +353,7 @@ export function ChessBoardCore({ initialFen, soundEnabled = true, onFenChange, a
     setMoveHistory([]);
     setRedoFens([]);
     setRedoMoves([]);
-    if (onFenChange) onFenChange(g.fen());
+    if (onFenChange) onFenChange(g.fen(), { turn: g.turn(), playerSide });
   }
 
   const isGameOver = game.isGameOver();

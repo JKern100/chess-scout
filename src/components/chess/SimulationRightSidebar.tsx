@@ -56,6 +56,7 @@ type Props = {
   scoutEnabled?: boolean;
   opponentUsername?: string;
   scoutPrediction?: any;
+  scoutPredictionFen?: string | null;
   scoutLoading?: boolean;
   scoutError?: string | null;
   scoutMode?: "pure_history" | "hybrid";
@@ -102,6 +103,7 @@ export function SimulationRightSidebar(props: Props) {
     scoutEnabled = false,
     opponentUsername = "",
     scoutPrediction,
+    scoutPredictionFen,
     scoutLoading,
     scoutError,
     scoutMode,
@@ -493,6 +495,8 @@ export function SimulationRightSidebar(props: Props) {
             opponentReplyLoading={scoutOpponentReplyLoading}
             onRefresh={onScoutPredict}
             isOpponentTurn={isOpponentsTurn}
+            currentFen={state.fen}
+            predictionFen={scoutPredictionFen}
           />
         ) : null}
         </div>

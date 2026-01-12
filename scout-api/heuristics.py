@@ -312,3 +312,31 @@ class ChessHeuristics:
         attribution.tilt_modifier = 0.5  # 50% boost to style effects
         
         return tilted_markers
+    
+    @staticmethod
+    def is_forcing_move(board: chess.Board, move: chess.Move) -> bool:
+        """
+        Check if a move is "forcing" - a check, capture, or immediate queen threat.
+        Used by the Tactical Guardrail to detect tactically critical moves.
+        """
+        # Check if it's a capture
+        if board.is_capture(move):
+            return True
+        
+        # Check if it gives check
+        board_copy = board.copy()
+        board_copy.push(move)
+        if board_copy.is_check():
+            return True
+        
+        # Check if it creates a direct threat to the queen
+        moving_piece = board.piece_at(move.from_square)
+        if moving_piece:
+            enemy_color = not moving_piece.color
+            attacks = board_copy.attacks(move.to_square)
+            for sq in attacks:
+                target = board_copy.piece_at(sq)
+                if target and target.color == enemy_color and target.piece_type == chess.QUEEN:
+                    return True
+        
+        return False

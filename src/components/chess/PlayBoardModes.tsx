@@ -977,6 +977,7 @@ export function PlayBoardModes({ initialFen }: Props) {
   const [scoutOverlayOpen, setScoutOverlayOpen] = useState(false);
   const {
     prediction: scoutPrediction,
+    predictionFen: scoutPredictionFen,
     loading: scoutLoading,
     error: scoutError,
     mode: scoutMode,
@@ -990,7 +991,9 @@ export function PlayBoardModes({ initialFen }: Props) {
   const [scoutOpponentReplyLoading, setScoutOpponentReplyLoading] = useState(false);
   const scoutOpponentReplyReqIdRef = useRef(0);
   const scoutBoardContextRef = useRef<{ fen: string; turn: "w" | "b"; playerSide: "white" | "black" } | null>(null);
+  const simBoardStateRef = useRef<ChessBoardCoreState | null>(null);
   const analysisStyleMarkersRef = useRef<any>(undefined);
+  const scoutCatchUpLastAttemptRef = useRef<{ fen: string; ts: number } | null>(null);
 
   const scoutAutoRefreshTimerRef = useRef<number | null>(null);
 
@@ -1045,7 +1048,7 @@ export function PlayBoardModes({ initialFen }: Props) {
           const fenParts = nextFen.split(" ");
           const fullmoveNumber = Number(fenParts[5] ?? "1");
           const nextTurn = (fenParts[1] === "b" ? "b" : "w") as "w" | "b";
-          const opponentColor = ctx.playerSide === "white" ? "b" : "w";
+          const opponentColor = opponentPlaysColor === "white" ? "w" : "b";
           const isOpponentTurn = nextTurn === opponentColor;
 
           if (next.isGameOver()) {
@@ -1093,6 +1096,14 @@ export function PlayBoardModes({ initialFen }: Props) {
       const trimmedOpp = opponentUsername.trim();
       if (!trimmedOpp) return;
 
+      const fenKey = ctx.fen.split(" ").slice(0, 2).join(" ");
+      console.debug("[scout] predict:start", {
+        ts: Date.now(),
+        fenKey,
+        turn: ctx.turn,
+        playerSide: ctx.playerSide,
+      });
+
       try {
         const check = new Chess(ctx.fen);
         if (check.isGameOver()) {
@@ -1103,23 +1114,190 @@ export function PlayBoardModes({ initialFen }: Props) {
       }
 
       const fullmoveNumber = Number(ctx.fen.split(" ")[5] ?? "1");
-      const historyMoves = await fetchScoutHistoryMoves({ fen: ctx.fen, username: trimmedOpp }).catch(() => []);
       const styleMarkers = analysisStyleMarkersRef.current;
 
-      const opponentColor = ctx.playerSide === "white" ? "b" : "w";
+      const opponentColor = opponentPlaysColor === "white" ? "w" : "b";
       const isOpponentTurn = ctx.turn === opponentColor;
+
+      // This panel is always about opponent moves. Never request a prediction for a user-to-move position.
+      // If user manually refreshes during their turn, re-run the last opponent-position prediction.
+      if (!isOpponentTurn) {
+        const fallbackFen = scoutPredictionFen;
+        if (!fallbackFen || fallbackFen.trim() === ctx.fen.trim()) {
+          console.debug("[scout] predict:skip_user_turn", {
+            ts: Date.now(),
+            fenKey,
+            turn: ctx.turn,
+          });
+          return;
+        }
+
+        const fallbackTurn = (fallbackFen.split(" ")[1] ?? "") as "w" | "b";
+        const fallbackIsOpponentTurn = fallbackTurn === opponentColor;
+        if (!fallbackIsOpponentTurn) {
+          console.debug("[scout] predict:skip_user_turn_no_opponent_fallback", {
+            ts: Date.now(),
+            fenKey,
+            fallbackFenKey: fallbackFen.split(" ").slice(0, 2).join(" "),
+            fallbackTurn,
+          });
+          return;
+        }
+
+        const fallbackFullmoveNumber = Number(fallbackFen.split(" ")[5] ?? "1");
+        const fallbackFenKey = fallbackFen.split(" ").slice(0, 2).join(" ");
+        const historyMovesPromise = fetchScoutHistoryMoves({ fen: fallbackFen, username: trimmedOpp }).catch(() => []);
+
+        await scoutPredict({
+          fen: fallbackFen,
+          opponentUsername: trimmedOpp,
+          styleMarkers,
+          historyMoves: [],
+          isOpponentTurn: true,
+          moveNumber: Number.isFinite(fallbackFullmoveNumber) ? fallbackFullmoveNumber : 1,
+        });
+
+        const historyMoves = await historyMovesPromise;
+        if (historyMoves.length > 0) {
+          await scoutPredict({
+            fen: fallbackFen,
+            opponentUsername: trimmedOpp,
+            styleMarkers,
+            historyMoves,
+            isOpponentTurn: true,
+            moveNumber: Number.isFinite(fallbackFullmoveNumber) ? fallbackFullmoveNumber : 1,
+          });
+        }
+
+        console.debug("[scout] predict:refreshed_last_opponent_pos", {
+          ts: Date.now(),
+          fenKey,
+          fallbackFenKey,
+        });
+        return;
+      }
+
+      const historyMovesPromise = fetchScoutHistoryMoves({ fen: ctx.fen, username: trimmedOpp }).catch(() => []);
 
       await scoutPredict({
         fen: ctx.fen,
         opponentUsername: trimmedOpp,
         styleMarkers,
-        historyMoves,
+        historyMoves: [],
         isOpponentTurn,
         moveNumber: Number.isFinite(fullmoveNumber) ? fullmoveNumber : 1,
       });
+
+      console.debug("[scout] predict:base_done", {
+        ts: Date.now(),
+        fenKey,
+        isOpponentTurn,
+      });
+
+      const historyMoves = await historyMovesPromise;
+      if (historyMoves.length > 0) {
+        const latest = scoutBoardContextRef.current;
+        if (
+          latest &&
+          latest.fen === ctx.fen &&
+          latest.turn === ctx.turn
+        ) {
+          console.debug("[scout] predict:with_history_start", {
+            ts: Date.now(),
+            fenKey,
+            historyCount: historyMoves.length,
+            topMoves: historyMoves.slice(0, 3).map(m => `${m.move_san}:${m.frequency}`),
+            isOpponentTurn,
+          });
+
+          await scoutPredict({
+            fen: ctx.fen,
+            opponentUsername: trimmedOpp,
+            styleMarkers,
+            historyMoves,
+            isOpponentTurn,
+            moveNumber: Number.isFinite(fullmoveNumber) ? fullmoveNumber : 1,
+          });
+
+          console.debug("[scout] predict:history_done", {
+            ts: Date.now(),
+            fenKey,
+            historyCount: historyMoves.length,
+            isOpponentTurn,
+          });
+        }
+      } else {
+        console.debug("[scout] predict:no_history_available", {
+          ts: Date.now(),
+          fenKey,
+          isOpponentTurn,
+        });
+      }
     },
-    [opponentUsername, scoutPredict]
+    [opponentUsername, opponentPlaysColor, scoutPredict, scoutPredictionFen]
   );
+
+  const getLatestOpponentPredictContext = useCallback(
+    (state: ChessBoardCoreState): { fen: string; turn: "w" | "b"; playerSide: "white" | "black" } | null => {
+      const turn = state.game.turn();
+      const opponentColor = opponentPlaysColor === "white" ? "w" : "b";
+
+      if (turn === opponentColor) {
+        return { fen: state.fen, turn, playerSide: state.playerSide };
+      }
+
+      const history = state.fenHistory;
+      if (!history || history.length < 2) return null;
+
+      const prevFen = history[history.length - 2] ?? null;
+      if (!prevFen) return null;
+
+      const prevTurn = (prevFen.split(" ")[1] ?? "") as "w" | "b";
+      if (prevTurn !== opponentColor) return null;
+
+      return { fen: prevFen, turn: prevTurn, playerSide: state.playerSide };
+    },
+    [opponentPlaysColor]
+  );
+
+  useEffect(() => {
+    if (mode !== "simulation") return;
+    if (simRightTab !== "scout") return;
+    if (!opponentUsername.trim()) return;
+    if (simBusy) return;
+    if (scoutLoading) return;
+
+    const s = simBoardStateRef.current;
+    if (!s) return;
+
+    const opponentColor = opponentPlaysColor === "white" ? "w" : "b";
+    const isOpponentsTurn = s.game.turn() === opponentColor;
+    if (isOpponentsTurn) return;
+
+    const target = getLatestOpponentPredictContext(s);
+    if (!target) return;
+    if (target.fen.trim() === (scoutPredictionFen ?? "").trim()) return;
+
+    const now = Date.now();
+    const last = scoutCatchUpLastAttemptRef.current;
+    if (last && last.fen.trim() === target.fen.trim() && now - last.ts < 5000) {
+      return;
+    }
+    scoutCatchUpLastAttemptRef.current = { fen: target.fen, ts: now };
+
+    void runScoutPredictForContext(target);
+  }, [
+    mode,
+    simRightTab,
+    opponentUsername,
+    opponentPlaysColor,
+    simBusy,
+    scoutLoading,
+    scoutPredictionFen,
+    scoutError,
+    getLatestOpponentPredictContext,
+    runScoutPredictForContext,
+  ]);
 
   const selectedTc = useMemo(() => {
     return timeControls.find((t) => t.key === timeControlKey) ?? timeControls[0];
@@ -2402,24 +2580,33 @@ export function PlayBoardModes({ initialFen }: Props) {
   return (
     <ChessBoardCore
       initialFen={initialFen}
-      onFenChange={() => {
+      onFenChange={(fen, ctx) => {
         const trimmedOpp = opponentUsername.trim();
         if (!trimmedOpp) return;
+
+        if (mode === "simulation") {
+          return;
+        }
+
+        // Only auto-refresh Scout when it's the opponent to move.
+        // On the user's turn, we want to keep showing the last opponent prediction and avoid
+        // triggering a fallback refresh that can abort an in-flight opponent-turn prediction.
+        const opponentColor = ctx.playerSide === "white" ? "b" : "w";
+        if (ctx.turn !== opponentColor) return;
 
         const shouldAutoRefresh =
           scoutOverlayOpen || (mode === "analysis" ? analysisRightTab === "scout" : simRightTab === "scout");
         if (!shouldAutoRefresh) return;
 
-        const ctx = scoutBoardContextRef.current;
-        if (!ctx) return;
-
         if (scoutAutoRefreshTimerRef.current != null) {
           window.clearTimeout(scoutAutoRefreshTimerRef.current);
         }
         scoutAutoRefreshTimerRef.current = window.setTimeout(() => {
-          const latest = scoutBoardContextRef.current;
-          if (!latest) return;
-          void runScoutPredictForContext(latest);
+          void runScoutPredictForContext({
+            fen,
+            turn: ctx.turn,
+            playerSide: ctx.playerSide,
+          });
         }, 200);
       }}
       soundEnabled={soundEnabled}
@@ -2649,6 +2836,7 @@ export function PlayBoardModes({ initialFen }: Props) {
         simMetaRef.current.turn = state.game.turn();
         simMetaRef.current.isGameOver = state.isGameOver;
         scoutBoardContextRef.current = { fen: state.fen, turn: state.game.turn(), playerSide: state.playerSide };
+        simBoardStateRef.current = state;
 
         const shouldHydrateSavedLine = Boolean(savedLineId && mode === "analysis");
 
@@ -2708,12 +2896,13 @@ export function PlayBoardModes({ initialFen }: Props) {
               analysisStyleMarkers={analysisStyleMarkers}
               scoutEnabled={Boolean(opponentUsername.trim())}
               scoutPrediction={scoutPrediction}
+              scoutPredictionFen={scoutPredictionFen}
               scoutLoading={scoutLoading}
               scoutError={scoutError}
               scoutMode={scoutMode}
               onScoutModeChange={setScoutMode}
               onScoutPredict={() => {
-                const ctx = scoutBoardContextRef.current;
+                const ctx = getLatestOpponentPredictContext(state);
                 if (!ctx) return;
                 void runScoutPredictForContext(ctx);
               }}
@@ -2743,6 +2932,12 @@ export function PlayBoardModes({ initialFen }: Props) {
             clockPaused={clockPaused}
             clockExpired={clockExpired}
             gameStarted={gameStarted}
+            scoutVisible={scoutOverlayOpen || simRightTab === "scout"}
+            onScoutPredict={async () => {
+              const ctx = getLatestOpponentPredictContext(state);
+              if (!ctx) return;
+              await runScoutPredictForContext(ctx);
+            }}
             onOpponentMoveNow={() => {
               void playOpponentNow(state);
             }}
@@ -2785,22 +2980,7 @@ export function PlayBoardModes({ initialFen }: Props) {
               scoutEnabled={Boolean(opponentUsername.trim())}
               opponentUsername={opponentUsername}
               scoutPrediction={scoutPrediction}
-              scoutLoading={scoutLoading}
-              scoutError={scoutError}
-              scoutMode={scoutMode}
-              onScoutModeChange={setScoutMode}
-              onScoutPredict={() => {
-                const ctx = scoutBoardContextRef.current;
-                if (!ctx) return;
-                void runScoutPredictForContext(ctx);
-              }}
-              scoutOpponentReplyByMove={scoutOpponentReplyByMove}
-              scoutOpponentReplyLoading={scoutOpponentReplyLoading}
-              onAnalyzeGame={() => {
-                // Switch to analysis mode with the current game state
-                setMode("analysis");
-                // Keep the current game state intact for analysis
-              }}
+              scoutPredictionFen={scoutPredictionFen}
             />
           </SimulationAutoTrigger>
         );
@@ -2860,6 +3040,7 @@ function AnalysisRightSidebar(props: {
   analysisStyleMarkers?: any;
   scoutEnabled?: boolean;
   scoutPrediction?: any;
+  scoutPredictionFen?: string | null;
   scoutLoading?: boolean;
   scoutError?: string | null;
   scoutMode?: "pure_history" | "hybrid";
@@ -2925,6 +3106,7 @@ function AnalysisRightSidebar(props: {
     analysisStyleMarkers,
     scoutEnabled = false,
     scoutPrediction,
+    scoutPredictionFen,
     scoutLoading,
     scoutError,
     scoutMode,
@@ -3274,6 +3456,8 @@ function AnalysisRightSidebar(props: {
               opponentReplyLoading={scoutOpponentReplyLoading}
               onRefresh={onScoutPredict}
               isOpponentTurn={state.game.turn() === (opponentPlaysColor === "white" ? "w" : "b")}
+              currentFen={state.fen}
+              predictionFen={scoutPredictionFen ?? null}
               totalGamesInFilter={
                 analysisStats
                   ? Math.max(
@@ -3301,6 +3485,8 @@ function SimulationAutoTrigger(props: {
   clockPaused: boolean;
   clockExpired: boolean;
   gameStarted: boolean;
+  scoutVisible?: boolean;
+  onScoutPredict?: () => Promise<void>;
   onOpponentMoveNow: () => void;
   children: React.ReactNode;
 }) {
@@ -3314,6 +3500,8 @@ function SimulationAutoTrigger(props: {
     clockPaused,
     clockExpired,
     gameStarted,
+    scoutVisible,
+    onScoutPredict,
     onOpponentMoveNow,
     children,
   } = props;
@@ -3347,7 +3535,30 @@ function SimulationAutoTrigger(props: {
     if (lastAutoKeyRef.current === key) return;
     lastAutoKeyRef.current = key;
 
-    onOpponentMoveNow();
+    void (async () => {
+      if (scoutVisible && onScoutPredict) {
+        console.debug("[sim] scout_visible_pre_move", {
+          ts: Date.now(),
+          fenKey: state.fen.split(" ").slice(0, 2).join(" "),
+          turn,
+        });
+        const MIN_RENDER_MS = 250;
+        const SCOUT_WAIT_MS = 3000;
+        const startedAt = Date.now();
+        await Promise.race([onScoutPredict(), sleep(SCOUT_WAIT_MS)]);
+        const elapsed = Date.now() - startedAt;
+        if (elapsed < MIN_RENDER_MS) {
+          await sleep(MIN_RENDER_MS - elapsed);
+        }
+      }
+
+      console.debug("[sim] play_opponent_now", {
+        ts: Date.now(),
+        fenKey: state.fen.split(" ").slice(0, 2).join(" "),
+        turn,
+      });
+      onOpponentMoveNow();
+    })();
   }, [
     state.fen,
     state.isGameOver,
@@ -3358,6 +3569,8 @@ function SimulationAutoTrigger(props: {
     clockPaused,
     clockExpired,
     gameStarted,
+    scoutVisible,
+    onScoutPredict,
     isOpponentsTurn,
     opponentIsWhite,
     turn,
