@@ -821,6 +821,19 @@ export function PlayBoardModes({ initialFen }: Props) {
   const [simBusy, setSimBusy] = useState(false);
   const [opponentCommentary, setOpponentCommentary] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const thinking = mode === "simulation" && simBusy;
+    window.dispatchEvent(new CustomEvent("chessscout:sim-thinking", { detail: { thinking } }));
+  }, [mode, simBusy]);
+
+  useEffect(() => {
+    return () => {
+      if (typeof window === "undefined") return;
+      window.dispatchEvent(new CustomEvent("chessscout:sim-thinking", { detail: { thinking: false } }));
+    };
+  }, []);
+
   const [savedLinePopup, setSavedLinePopup] = useState<{ savedLineId: string; message: string } | null>(null);
   const [ackedSavedLineId, setAckedSavedLineId] = useState<string | null>(null);
 

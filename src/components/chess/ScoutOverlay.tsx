@@ -451,6 +451,7 @@ export const ScoutPanelContent = memo(function ScoutPanelContent({
   prediction,
   loading,
   error,
+  simThinking,
   mode,
   onModeChange,
   opponentUsername,
@@ -467,6 +468,7 @@ export const ScoutPanelContent = memo(function ScoutPanelContent({
   prediction: ScoutPrediction | null;
   loading?: boolean;
   error?: string | null;
+  simThinking?: boolean;
   mode?: PredictionMode;
   onModeChange?: (mode: PredictionMode) => void;
   opponentUsername: string;
@@ -482,6 +484,18 @@ export const ScoutPanelContent = memo(function ScoutPanelContent({
 }) {
   const LOW_SAMPLE_THRESHOLD = 100;
   const [helpOpen, setHelpOpen] = useState(false);
+
+  const [thinkingDots, setThinkingDots] = useState(1);
+  useEffect(() => {
+    if (!simThinking) {
+      setThinkingDots(1);
+      return;
+    }
+    const id = window.setInterval(() => {
+      setThinkingDots((d) => (d >= 3 ? 1 : d + 1));
+    }, 350);
+    return () => window.clearInterval(id);
+  }, [simThinking]);
   const isShowingCurrent = Boolean(
     isOpponentTurn &&
       typeof currentFen === "string" &&
@@ -489,6 +503,14 @@ export const ScoutPanelContent = memo(function ScoutPanelContent({
       currentFen.trim() === predictionFen.trim()
   );
   const title = isShowingCurrent ? "Opponent's Next Move" : "Opponent's Previous Move";
+
+  const shouldShowThinking = Boolean(
+    simThinking ||
+      (playedMove &&
+        typeof predictionFen === "string" &&
+        !isShowingCurrent &&
+        playedMove.fen.trim() !== predictionFen.trim())
+  );
 
   const selectedMoveOverride =
     prediction &&
@@ -561,7 +583,11 @@ export const ScoutPanelContent = memo(function ScoutPanelContent({
       )}
 
       {/* Content */}
-      {loading ? (
+      {shouldShowThinking ? (
+        <div className="flex h-32 items-center justify-center">
+          <div className="text-[10px] font-medium text-zinc-600">Thinking{".".repeat(thinkingDots)}</div>
+        </div>
+      ) : loading ? (
         <div className="flex h-32 items-center justify-center">
           <div className="h-6 w-6 animate-spin rounded-full border-2 border-zinc-300 border-t-zinc-600" />
         </div>
