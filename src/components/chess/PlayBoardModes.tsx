@@ -817,7 +817,7 @@ export function PlayBoardModes({ initialFen }: Props) {
   const [generateStyleMarkers, setGenerateStyleMarkers] = useState(true);
   const [opponentMode, setOpponentMode] = useState<Strategy>("proportional");
   const [depthRemaining, setDepthRemaining] = useState<number | null>(null);
-  const [lastOpponentMove, setLastOpponentMove] = useState<{ uci: string; san: string | null } | null>(null);
+  const [lastOpponentMove, setLastOpponentMove] = useState<{ fen: string; uci: string; san: string | null } | null>(null);
   const [simBusy, setSimBusy] = useState(false);
   const [opponentCommentary, setOpponentCommentary] = useState<string | null>(null);
 
@@ -1994,7 +1994,7 @@ export function PlayBoardModes({ initialFen }: Props) {
             }
           }
 
-          setLastOpponentMove({ uci: scoutUci, san: played.san ?? null });
+          setLastOpponentMove({ fen, uci: scoutUci, san: played.san ?? null });
           setOpponentCommentary(`Scout Insights: ${trimmed} plays ${played.san ?? scoutUci}`);
           state.setStatus(null);
           state.commitGame(reply, played.san ?? null);
@@ -2062,7 +2062,7 @@ export function PlayBoardModes({ initialFen }: Props) {
                   }
                 }
 
-                setLastOpponentMove({ uci: scoutUci, san: played.san ?? null });
+                setLastOpponentMove({ fen, uci: scoutUci, san: played.san ?? null });
                 setOpponentCommentary("Out of opponent history — Scout Insights is now predicting moves based on opponent's style.");
                 state.setStatus(null);
                 state.commitGame(reply, played.san ?? null);
@@ -2117,7 +2117,7 @@ export function PlayBoardModes({ initialFen }: Props) {
           }
         }
 
-        setLastOpponentMove({ uci: bestUci, san: played.san ?? null });
+        setLastOpponentMove({ fen, uci: bestUci, san: played.san ?? null });
         setOpponentCommentary("Out of opponent history — engine is now playing for the opponent.");
         state.setStatus(null);
         state.commitGame(reply, played.san ?? null);
@@ -2157,7 +2157,7 @@ export function PlayBoardModes({ initialFen }: Props) {
         }
       }
 
-      setLastOpponentMove({ uci: String(move.uci), san: (move.san as string | null) ?? null });
+      setLastOpponentMove({ fen, uci: String(move.uci), san: (move.san as string | null) ?? null });
       setOpponentCommentary(
         `${trimmed} plays ${(move.san as string | null) ?? move.uci}. Switch to Analysis Mode to explore alternatives.`
       );
@@ -2247,6 +2247,7 @@ export function PlayBoardModes({ initialFen }: Props) {
   const onSimReset = useCallback(
     (state: ChessBoardCoreState) => {
       state.reset();
+      setLastOpponentMove(null);
       if (clocksEnabled) resetClocksToSelected();
     },
     [clocksEnabled, resetClocksToSelected]
@@ -2255,6 +2256,7 @@ export function PlayBoardModes({ initialFen }: Props) {
   const onSimUndoPlies = useCallback(
     (state: ChessBoardCoreState, plies: number) => {
       state.undoPlies(plies);
+      setLastOpponentMove(null);
       if (clocksEnabled) resetClocksToSelected();
     },
     [clocksEnabled, resetClocksToSelected]
@@ -2263,6 +2265,7 @@ export function PlayBoardModes({ initialFen }: Props) {
   const onSimRedoPlies = useCallback(
     (state: ChessBoardCoreState, plies: number) => {
       state.redoPlies(plies);
+      setLastOpponentMove(null);
       if (clocksEnabled) resetClocksToSelected();
     },
     [clocksEnabled, resetClocksToSelected]

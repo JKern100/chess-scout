@@ -46,7 +46,7 @@ type Props = {
   simWarmStatus: "idle" | "warming" | "warm" | "error";
   simWarmMeta: { status: string; buildMs: number; maxGames: number } | null;
   depthRemaining: number | null;
-  lastOpponentMove: { uci: string; san: string | null } | null;
+  lastOpponentMove: { fen: string; uci: string; san: string | null } | null;
   opponentCommentary: string | null;
   simBusy: boolean;
   // Out of History options
@@ -497,6 +497,7 @@ export function SimulationRightSidebar(props: Props) {
             isOpponentTurn={isOpponentsTurn}
             currentFen={state.fen}
             predictionFen={scoutPredictionFen}
+            playedMove={lastOpponentMove}
           />
         ) : null}
         </div>

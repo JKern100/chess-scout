@@ -460,6 +460,7 @@ export const ScoutPanelContent = memo(function ScoutPanelContent({
   isOpponentTurn = true,
   currentFen,
   predictionFen,
+  playedMove,
   totalGamesInFilter,
   filtersLimited,
 }: {
@@ -475,6 +476,7 @@ export const ScoutPanelContent = memo(function ScoutPanelContent({
   isOpponentTurn?: boolean;
   currentFen?: string;
   predictionFen?: string | null;
+  playedMove?: { fen: string; uci: string; san: string | null } | null;
   totalGamesInFilter?: number;
   filtersLimited?: boolean;
 }) {
@@ -487,6 +489,16 @@ export const ScoutPanelContent = memo(function ScoutPanelContent({
       currentFen.trim() === predictionFen.trim()
   );
   const title = isShowingCurrent ? "Opponent's Next Move" : "Opponent's Previous Move";
+
+  const selectedMoveOverride =
+    prediction &&
+    playedMove &&
+    typeof predictionFen === "string" &&
+    playedMove.fen.trim() === predictionFen.trim()
+      ? (playedMove.san ?? playedMove.uci)
+      : null;
+
+  const selectedMoveForDisplay = selectedMoveOverride ?? prediction?.selected_move ?? "";
   
   return (
     <div className="grid gap-3">
@@ -629,7 +641,7 @@ export const ScoutPanelContent = memo(function ScoutPanelContent({
             )}
             <div className="flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[9px] font-medium text-zinc-700">
               <Target className="h-2.5 w-2.5" />
-              {prediction.selected_move}
+              {selectedMoveForDisplay}
             </div>
           </div>
 
@@ -656,11 +668,11 @@ export const ScoutPanelContent = memo(function ScoutPanelContent({
           <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-2">
             <div className="mb-2 text-[9px] font-medium text-zinc-700">Top Candidates</div>
             <div className="grid gap-1">
-              {prediction.candidates.slice(0, 4).map((c) => (
+              {prediction.candidates.slice(0, 5).map((c) => (
                 <div
                   key={c.move}
                   className={`flex items-center justify-between rounded-lg px-2 py-1 text-[10px] ${
-                    c.move === prediction.selected_move ? "bg-amber-50 ring-1 ring-amber-200" : "bg-white"
+                    c.move === selectedMoveForDisplay ? "bg-amber-50 ring-1 ring-amber-200" : "bg-white"
                   }`}
                 >
                   <div className="flex items-center gap-2">

@@ -21,7 +21,7 @@ type Props = {
   filtersKey: string;
   simBusy: boolean;
   opponentCommentary: string | null;
-  lastOpponentMove: { uci: string; san: string | null } | null;
+  lastOpponentMove: { fen: string; uci: string; san: string | null } | null;
   depthRemaining: number | null;
   onOpponentMoveNow: () => void;
   engineTakeover: boolean;
