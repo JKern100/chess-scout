@@ -22,68 +22,50 @@ function StyleMarkersHelpModal({ onClose }: { onClose: () => void }) {
             ✕
           </button>
         </div>
-        
-        <div className="text-[13px] leading-relaxed space-y-4">
-          <section>
-            <h4 className="font-semibold text-zinc-800 mb-1">What are Style Markers?</h4>
-            <p className="text-zinc-600">
-              Style Markers are behavioral fingerprints computed from your opponent&apos;s historical games. 
-              They quantify <strong>how</strong> someone plays—their tendencies, preferences, and patterns.
-            </p>
-          </section>
 
-          <section>
-            <h4 className="font-semibold text-zinc-800 mb-1">How are they calculated?</h4>
-            <p className="text-zinc-600 mb-2">
-              Each marker analyzes the opponent&apos;s games matching your current filters:
-            </p>
-            <ul className="text-zinc-600 text-[12px] space-y-1 list-disc list-inside">
-              <li><strong>Queen Trades:</strong> % of games with both queens off by move 20</li>
-              <li><strong>Aggression:</strong> Captures + checks in the first 15 moves</li>
-              <li><strong>Game Length:</strong> Average game length in full moves</li>
-              <li><strong>Opposite Castling:</strong> % of games with opposite-side castling</li>
-              <li><strong>Castling Timing:</strong> Average ply when opponent castles</li>
-            </ul>
-          </section>
+        <article className="prose prose-sm max-w-none text-zinc-700">
+          <h3 className="text-base font-semibold text-zinc-800">Style Markers</h3>
+          <p>
+            Style Markers are behavioral fingerprints computed from your opponent&apos;s historical games.
+            They describe <strong>how</strong> someone tends to play (not just their rating).
+          </p>
 
-          <section>
-            <h4 className="font-semibold text-zinc-800 mb-1">Opening & Color Context</h4>
-            <p className="text-zinc-600">
-              Style varies by opening type and color. Once generated, you can filter markers by:
-            </p>
-            <ul className="text-zinc-600 text-[12px] space-y-1 mt-2 list-disc list-inside">
-              <li><strong>Open:</strong> 1.e4 e5 — tactical, open lines</li>
-              <li><strong>Semi-Open:</strong> 1.e4 (c5, e6, etc.) — asymmetric tension</li>
-              <li><strong>Closed:</strong> 1.d4 d5 — positional, slow builds</li>
-              <li><strong>Indian:</strong> 1.d4 Nf6 — hypermodern systems</li>
-              <li><strong>Flank:</strong> 1.c4, 1.Nf3, etc. — flexible setups</li>
-            </ul>
-          </section>
+          <h4 className="mt-4 text-sm font-semibold text-zinc-800">What each marker measures</h4>
+          <ul className="text-xs">
+            <li><strong>Queen Trades</strong>: % of games with both queens off the board by move 20</li>
+            <li><strong>Aggression</strong>: captures + checks in the first 15 moves</li>
+            <li><strong>Game Length</strong>: average game length in full moves</li>
+            <li><strong>Opposite Castling</strong>: % of games with opposite-side castling</li>
+            <li><strong>Castling Timing</strong>: average ply when the opponent castles</li>
+          </ul>
 
-          <section>
-            <h4 className="font-semibold text-zinc-800 mb-1">How Scout Uses Style Markers</h4>
-            <p className="text-zinc-600">
-              The Scout prediction engine (🧠) combines three factors:
-            </p>
-            <ul className="text-zinc-600 text-[12px] space-y-1 mt-2 list-disc list-inside">
-              <li><strong>History (α):</strong> Moves the opponent has actually played here</li>
-              <li><strong>Engine (β):</strong> Objectively best moves (Stockfish)</li>
-              <li><strong>Style (γ):</strong> Moves fitting the opponent&apos;s behavioral profile</li>
-            </ul>
-            <p className="text-zinc-600 mt-2">
-              Weights shift by phase: <strong>opening</strong> (history 70%), 
-              <strong> middlegame</strong> (style 50%), <strong>endgame</strong> (engine 80%).
-            </p>
-          </section>
+          <h4 className="mt-4 text-sm font-semibold text-zinc-800">Opening & color context</h4>
+          <p className="text-xs">
+            Style often changes with opening type and side. Once markers are generated, you can filter by:
+          </p>
+          <ul className="text-xs">
+            <li><strong>Open</strong>: 1.e4 e5 — tactical, open lines</li>
+            <li><strong>Semi-Open</strong>: 1.e4 (c5, e6, c6, d6, etc.) — asymmetric tension</li>
+            <li><strong>Closed</strong>: 1.d4 d5 — positional, slow builds</li>
+            <li><strong>Indian</strong>: 1.d4 Nf6 — hypermodern systems</li>
+            <li><strong>Flank</strong>: 1.c4, 1.Nf3, etc. — flexible setups</li>
+          </ul>
 
-          <div className="p-3 bg-amber-50 rounded-lg border border-amber-100">
-            <p className="text-[11px] text-amber-800 font-medium mb-1">⚠️ Performance Note</p>
-            <p className="text-[11px] text-amber-700">
-              Generating style markers requires processing game data and adds ~1-2s to filter changes. 
-              Disable this option if you don&apos;t need behavioral analysis for move predictions.
-            </p>
+          <h4 className="mt-4 text-sm font-semibold text-zinc-800">How Scout uses Style Markers</h4>
+          <p className="text-xs">
+            Scout combines three signals: <strong>History</strong> (what they played here), <strong>Engine</strong> (best moves),
+            and <strong>Style</strong> (what fits their profile). Weights shift by phase: opening (history-heavy),
+            middlegame (style becomes more important), endgame (engine accuracy dominates).
+          </p>
+
+          <div className="mt-3 rounded-lg border border-amber-100 bg-amber-50 p-3">
+            <div className="text-[11px] font-medium text-amber-800">Performance note</div>
+            <div className="mt-1 text-[11px] text-amber-700">
+              Generating style markers requires extra computation and can add a small delay to filter changes.
+              Turn it off if you don&apos;t need behavior-based analysis.
+            </div>
           </div>
-        </div>
+        </article>
       </div>
     </div>
   );

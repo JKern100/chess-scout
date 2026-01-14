@@ -36,6 +36,7 @@ import { fetchLichessStats, type LichessExplorerMove, type ExplorerSource } from
 import { useImportQueue } from "@/context/ImportQueueContext";
 import { useActiveOpponent } from "@/context/ActiveOpponentContext";
 import { sanToFigurine } from "@/components/chess/FigurineIcon";
+import { PlayModeToggle } from "@/components/chess/PlayModeToggle";
 import { trackActivity } from "@/lib/trackActivity";
 
 type Props = {
@@ -2491,76 +2492,64 @@ export function PlayBoardModes({ initialFen }: Props) {
               </button>
             </div>
             
-            <div className="prose prose-sm prose-zinc max-w-none text-[13px] leading-relaxed">
-              <h4 className="text-sm font-semibold text-zinc-800 mt-0">What are Style Markers?</h4>
-              <p className="text-zinc-600">
-                Style Markers are behavioral fingerprints computed from your opponent's historical games. 
-                They quantify <strong>how</strong> someone plays chess—not just their rating or results, 
-                but their tendencies, preferences, and patterns.
+            <article className="prose prose-sm max-w-none text-zinc-700">
+              <h3 className="text-base font-semibold text-zinc-800">Style Markers</h3>
+              <p>
+                Style Markers are behavioral fingerprints computed from your opponent&apos;s historical games.
+                They describe <strong>how</strong> someone tends to play (not just their rating).
               </p>
 
-              <h4 className="text-sm font-semibold text-zinc-800 mt-4">How are they calculated?</h4>
-              <p className="text-zinc-600">
-                Each marker is computed by analyzing the opponent's games that match your current filters 
-                (time control, rated/casual, date range):
-              </p>
-              <ul className="text-zinc-600 text-[12px] space-y-1 mt-2">
-                <li><strong>Queen Trades:</strong> Percentage of games where both queens are off the board by move 20</li>
-                <li><strong>Aggression:</strong> Average number of captures + checks in the first 15 moves</li>
-                <li><strong>Game Length:</strong> Average game length in full moves (excludes very short games)</li>
-                <li><strong>Opposite Castling:</strong> Percentage of games with opposite-side castling</li>
-                <li><strong>Castling Timing:</strong> Average ply when opponent castles</li>
+              <h4 className="mt-4 text-sm font-semibold text-zinc-800">What each marker measures</h4>
+              <ul className="text-xs">
+                <li><strong>Queen Trades</strong>: % of games with both queens off the board by move 20</li>
+                <li><strong>Aggression</strong>: captures + checks in the first 15 moves</li>
+                <li><strong>Game Length</strong>: average game length in full moves</li>
+                <li><strong>Opposite Castling</strong>: % of games with opposite-side castling</li>
+                <li><strong>Castling Timing</strong>: average ply when the opponent castles</li>
               </ul>
 
-              <h4 className="text-sm font-semibold text-zinc-800 mt-4">Opening Category & Color Filters</h4>
-              <p className="text-zinc-600">
-                Style can vary dramatically based on opening type and color. Use the filters to see how your 
-                opponent plays differently in:
+              <h4 className="mt-4 text-sm font-semibold text-zinc-800">Opening & color context</h4>
+              <p className="text-xs">
+                Style often changes with opening type and side. Once markers are generated, you can filter by:
               </p>
-              <ul className="text-zinc-600 text-[12px] space-y-1 mt-2">
-                <li><strong>Open:</strong> 1.e4 e5 — tactical, open lines</li>
-                <li><strong>Semi-Open:</strong> 1.e4 (c5, e6, c6, d6, etc.) — asymmetric tension</li>
-                <li><strong>Closed:</strong> 1.d4 d5 — positional, slow builds</li>
-                <li><strong>Indian:</strong> 1.d4 Nf6 — hypermodern systems</li>
-                <li><strong>Flank:</strong> 1.c4, 1.Nf3, 1.g3, etc. — flexible setups</li>
+              <ul className="text-xs">
+                <li><strong>Open</strong>: 1.e4 e5 — tactical, open lines</li>
+                <li><strong>Semi-Open</strong>: 1.e4 (c5, e6, c6, d6, etc.) — asymmetric tension</li>
+                <li><strong>Closed</strong>: 1.d4 d5 — positional, slow builds</li>
+                <li><strong>Indian</strong>: 1.d4 Nf6 — hypermodern systems</li>
+                <li><strong>Flank</strong>: 1.c4, 1.Nf3, 1.g3, etc. — flexible setups</li>
               </ul>
 
-              <h4 className="text-sm font-semibold text-zinc-800 mt-4">How Scout Uses Style Markers</h4>
-              <p className="text-zinc-600">
-                The Scout prediction engine (🧠) combines three factors to predict opponent moves:
-              </p>
-              <ul className="text-zinc-600 text-[12px] space-y-1 mt-2">
-                <li><strong>History (α):</strong> What moves has the opponent actually played in this position?</li>
-                <li><strong>Engine (β):</strong> What are the objectively best moves according to Stockfish?</li>
-                <li><strong>Style (γ):</strong> Which moves fit the opponent's behavioral profile?</li>
-              </ul>
-              <p className="text-zinc-600 mt-2">
-                Weights shift by game phase: in the <strong>opening</strong>, history dominates (70%); 
-                in the <strong>middlegame</strong>, style becomes crucial (50%); in the <strong>endgame</strong>, 
-                engine accuracy takes over (80%).
-              </p>
-
-              <p className="text-zinc-600 mt-2">
-                When it's <strong>not</strong> the opponent's turn, Scout switches into a planning mode:
-                style is disabled (γ=0). Opening: α=0.8, β=0.2. Middlegame/Endgame: α=0.3, β=0.7.
-              </p>
-
-              <h4 className="text-sm font-semibold text-zinc-800 mt-4">Reading the Spectrum Bars</h4>
-              <ul className="text-zinc-600 text-[12px] space-y-1 mt-2">
-                <li><strong>Yellow dot:</strong> Opponent's actual value on an absolute 0–100% scale</li>
-                <li><strong>Vertical tick:</strong> Global benchmark for comparison</li>
-                <li><strong>Hover:</strong> Shows exact values and sample size</li>
+              <h4 className="mt-4 text-sm font-semibold text-zinc-800">How to read the spectrum</h4>
+              <ul className="text-xs">
+                <li><strong>Yellow dot</strong>: opponent&apos;s measured value</li>
+                <li><strong>Tick mark</strong>: benchmark for comparison</li>
+                <li><strong>Hover</strong>: exact values + sample size</li>
               </ul>
 
-              <div className="mt-4 p-3 bg-blue-50 rounded-lg border border-blue-100">
-                <p className="text-[11px] text-blue-800 font-medium mb-1">💡 Pro Tip</p>
-                <p className="text-[11px] text-blue-700">
-                  If you're preparing against a specific opening (e.g., the Sicilian as White), 
-                  filter to "Semi-Open × Black" to see exactly how aggressive they play in that context. 
-                  Their style in the King's Indian might be completely different!
-                </p>
+              <h4 className="mt-4 text-sm font-semibold text-zinc-800">How Scout uses Style Markers</h4>
+              <p className="text-xs">
+                Scout combines three signals: <strong>History</strong> (what they played here), <strong>Engine</strong> (best moves),
+                and <strong>Style</strong> (what fits their profile). The weights shift by phase: opening (history-heavy),
+                middlegame (style becomes more important), endgame (engine accuracy dominates).
+              </p>
+
+              <div className="mt-3 rounded-lg border border-blue-100 bg-blue-50 p-3">
+                <div className="text-[11px] font-medium text-blue-800">Pro tip</div>
+                <div className="mt-1 text-[11px] text-blue-700">
+                  If you&apos;re preparing against a specific opening, filter to that opening type and the opponent&apos;s color
+                  (e.g. <strong>Semi-Open × Black</strong>) to see how their tendencies change in that context.
+                </div>
               </div>
-            </div>
+
+              <div className="mt-3 rounded-lg border border-amber-100 bg-amber-50 p-3">
+                <div className="text-[11px] font-medium text-amber-800">Performance note</div>
+                <div className="mt-1 text-[11px] text-amber-700">
+                  Generating style markers requires extra computation and can add a small delay to filter changes.
+                  Turn it off if you don&apos;t need behavior-based analysis.
+                </div>
+              </div>
+            </article>
           </div>
         </div>
       )}
@@ -2596,6 +2585,7 @@ export function PlayBoardModes({ initialFen }: Props) {
   return (
     <ChessBoardCore
       initialFen={initialFen}
+      leftHeader={<PlayModeToggle />}
       onFenChange={(fen, ctx) => {
         const trimmedOpp = opponentUsername.trim();
         if (!trimmedOpp) return;

@@ -31,7 +31,7 @@ export function PlayModeToggle() {
         }`}
         onClick={() => setMode("analysis")}
       >
-        Analysis
+        Analyze
       </button>
       <button
         type="button"
@@ -40,7 +40,7 @@ export function PlayModeToggle() {
         }`}
         onClick={() => setMode("simulation")}
       >
-        Game Simulation
+        Play
       </button>
     </div>
   );

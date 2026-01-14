@@ -39,6 +39,7 @@ type Props = {
   specialArrow?:
     | { startSquare: string; endSquare: string; intensity?: number }
     | ((state: ChessBoardCoreState) => { startSquare: string; endSquare: string; intensity?: number } | null);
+  leftHeader?: React.ReactNode | ((state: ChessBoardCoreState) => React.ReactNode);
   leftPanel?: React.ReactNode | ((state: ChessBoardCoreState) => React.ReactNode);
   aboveBoard?: React.ReactNode | ((state: ChessBoardCoreState) => React.ReactNode);
   belowBoard?: React.ReactNode | ((state: ChessBoardCoreState) => React.ReactNode);
@@ -53,7 +54,7 @@ const BOARD_HEIGHT_STORAGE_KEY = "chessscout_analysis_board_height_px";
 const LEFT_PANEL_HEIGHT_STORAGE_KEY = "chessscout_left_panel_height_px";
 const RIGHT_PANEL_HEIGHT_STORAGE_KEY = "chessscout_right_panel_height_px";
 
-export function ChessBoardCore({ initialFen, soundEnabled = true, onFenChange, arrows, squareStyles, specialArrow, leftPanel, aboveBoard, belowBoard, onPieceDrop, underBoard, children }: Props) {
+export function ChessBoardCore({ initialFen, soundEnabled = true, onFenChange, arrows, squareStyles, specialArrow, leftHeader, leftPanel, aboveBoard, belowBoard, onPieceDrop, underBoard, children }: Props) {
   const initialGame = useMemo(() => {
     const g = new Chess();
     if (initialFen) {
@@ -462,6 +463,7 @@ export function ChessBoardCore({ initialFen, soundEnabled = true, onFenChange, a
   const resolvedSquareStyles = typeof squareStyles === "function" ? squareStyles(state) : (squareStyles ?? {});
   const resolvedSpecialArrow =
     typeof specialArrow === "function" ? specialArrow(state) : (specialArrow ?? null);
+  const resolvedLeftHeader = typeof leftHeader === "function" ? leftHeader(state) : (leftHeader ?? null);
   const resolvedLeftPanel = typeof leftPanel === "function" ? leftPanel(state) : (leftPanel ?? null);
   const resolvedAboveBoard = typeof aboveBoard === "function" ? aboveBoard(state) : (aboveBoard ?? null);
   const resolvedBelowBoard = typeof belowBoard === "function" ? belowBoard(state) : (belowBoard ?? null);
@@ -485,7 +487,13 @@ export function ChessBoardCore({ initialFen, soundEnabled = true, onFenChange, a
     <div className="min-w-0">
       {isLg ? (
         <div className="flex h-[calc(100vh-80px)] min-w-0 flex-col gap-3 px-6 lg:flex-row lg:items-stretch lg:justify-center">
-          <div ref={desktopRowRef} className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-start lg:justify-center">
+          <div ref={desktopRowRef} className="relative flex min-w-0 flex-col gap-3 pt-12 lg:flex-row lg:items-start lg:justify-center">
+            {resolvedLeftHeader ? (
+              <div className="absolute left-0 top-0 z-10">
+                {resolvedLeftHeader}
+              </div>
+            ) : null}
+
             <div className="relative flex w-[260px] min-w-0 flex-none flex-col">
               <div
                 className="flex min-w-0 flex-col overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm"
@@ -733,6 +741,7 @@ export function ChessBoardCore({ initialFen, soundEnabled = true, onFenChange, a
       ) : (
         <div className="grid gap-4">
           <div className="flex flex-col gap-3">
+            {resolvedLeftHeader ? <div className="flex items-center">{resolvedLeftHeader}</div> : null}
             {resolvedAboveBoard ? <div>{resolvedAboveBoard}</div> : null}
             <div className="flex items-center justify-center">
               <div ref={boardSlotRef} className="inline-flex max-w-full items-center justify-center rounded-2xl bg-neutral-900 p-3 shadow-2xl">

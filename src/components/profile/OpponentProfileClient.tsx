@@ -636,6 +636,7 @@ export function OpponentProfileClient({ platform, username, isSelfAnalysis = fal
   const [resultsOpen, setResultsOpen] = useState(false);
   const [datasetOpen, setDatasetOpen] = useState(false);
   const [styleMarkersOpen, setStyleMarkersOpen] = useState(true);
+  const [styleMarkersHelpOpen, setStyleMarkersHelpOpen] = useState(false);
   const [generateStyleMarkers, setGenerateStyleMarkers] = useState(true);
   const [narrativeMode, setNarrativeMode] = useState<"quick" | "comprehensive">("quick");
   const [narrativeOpen, setNarrativeOpen] = useState(true);
@@ -1090,6 +1091,77 @@ export function OpponentProfileClient({ platform, username, isSelfAnalysis = fal
                 </div>
               </div>
             </BentoCard>
+
+            {styleMarkersHelpOpen ? (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setStyleMarkersHelpOpen(false)}>
+                <div
+                  className="max-h-[80vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-5 shadow-xl"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="mb-4 flex items-center justify-between">
+                    <h3 className="text-base font-semibold text-zinc-900">ChessScout Style Markers</h3>
+                    <button
+                      type="button"
+                      onClick={() => setStyleMarkersHelpOpen(false)}
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100"
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  <article className="prose prose-sm max-w-none text-zinc-700">
+                    <h3 className="text-base font-semibold text-zinc-800">Style Markers</h3>
+                    <p>
+                      Style Markers are behavioral fingerprints computed from your opponent&apos;s historical games.
+                      They describe <strong>how</strong> someone tends to play (not just their rating).
+                    </p>
+
+                    <h4 className="mt-4 text-sm font-semibold text-zinc-800">What each marker measures</h4>
+                    <ul className="text-xs">
+                      <li><strong>Queen Trades</strong>: % of games with both queens off the board by move 20</li>
+                      <li><strong>Aggression</strong>: captures + checks in the first 15 moves</li>
+                      <li><strong>Game Length</strong>: average game length in full moves</li>
+                      <li><strong>Opposite Castling</strong>: % of games with opposite-side castling</li>
+                      <li><strong>Castling Timing</strong>: average ply when the opponent castles</li>
+                    </ul>
+
+                    <h4 className="mt-4 text-sm font-semibold text-zinc-800">Opening & color context</h4>
+                    <p className="text-xs">
+                      Style often changes with opening type and side. Once markers are generated, you can filter by:
+                    </p>
+                    <ul className="text-xs">
+                      <li><strong>Open</strong>: 1.e4 e5 — tactical, open lines</li>
+                      <li><strong>Semi-Open</strong>: 1.e4 (c5, e6, c6, d6, etc.) — asymmetric tension</li>
+                      <li><strong>Closed</strong>: 1.d4 d5 — positional, slow builds</li>
+                      <li><strong>Indian</strong>: 1.d4 Nf6 — hypermodern systems</li>
+                      <li><strong>Flank</strong>: 1.c4, 1.Nf3, 1.g3, etc. — flexible setups</li>
+                    </ul>
+
+                    <h4 className="mt-4 text-sm font-semibold text-zinc-800">How to read the spectrum</h4>
+                    <ul className="text-xs">
+                      <li><strong>Yellow dot</strong>: opponent&apos;s measured value</li>
+                      <li><strong>Tick mark</strong>: benchmark for comparison</li>
+                      <li><strong>Hover</strong>: exact values + sample size</li>
+                    </ul>
+
+                    <h4 className="mt-4 text-sm font-semibold text-zinc-800">How Scout uses Style Markers</h4>
+                    <p className="text-xs">
+                      Scout combines three signals: <strong>History</strong> (what they played here), <strong>Engine</strong> (best moves),
+                      and <strong>Style</strong> (what fits their profile). The weights shift by phase: opening (history-heavy),
+                      middlegame (style becomes more important), endgame (engine accuracy dominates).
+                    </p>
+
+                    <div className="mt-3 rounded-lg border border-amber-100 bg-amber-50 p-3">
+                      <div className="text-[11px] font-medium text-amber-800">Performance note</div>
+                      <div className="mt-1 text-[11px] text-amber-700">
+                        Generating style markers requires extra computation and can add a small delay to filter changes.
+                        Turn it off if you don&apos;t need behavior-based analysis.
+                      </div>
+                    </div>
+                  </article>
+                </div>
+              </div>
+            ) : null}
           </div>
 
           <div className="md:col-span-2">
@@ -1363,19 +1435,18 @@ export function OpponentProfileClient({ platform, username, isSelfAnalysis = fal
                 )}
               </BentoCard>
             </div>
-
             <BentoCard
               title={"Style Markers"}
               headerRight={
                 <div className="flex items-center gap-2">
-                  <span
-                    title={
-                      "Style Markers — Scoring Methodology\n\nWhat you’re seeing\n- Each bar is an axis-based style metric computed from your opponent’s games (not from engine evaluation).\n- The yellow dot = opponent’s value on an absolute scale.\n- The gray tick = benchmark (category baseline).\n- Left/right labels are the two chess-style extremes for that axis.\n\nHow the 0–100 scale is computed\n- We compute a raw metric (e.g., queen-trade rate, opposite-castling rate, aggression events/game).\n- We map raw values to an absolute 0–100 position using a fixed maximum for that axis (example: rates use max=1.0, aggression uses a larger cap).\n  position = clamp(100 * raw / max).\n\nBenchmarks (the gray tick)\n- Benchmarks are opening-category baselines (Open, Semi-Open, Closed, Indian, Flank).\n- For each selected category, we compare opponent raw vs benchmark raw.\n- The tooltip also shows the multiplicative ratio (opponent ÷ benchmark) to quantify how many times above/below baseline they are.\n\nChess definitions of each axis\n- Queen Trades: fraction of games where BOTH queens are off the board by move 20 (ply 40).\n- Aggression: opponent captures + checks by move 15 (from their perspective).\n- Game Length: average full-move length, excluding very short games (<10 full moves).\n- Opposite Castling: rate of opposite-side castling (O-O vs O-O-O), excluding very short games (<10 full moves).\n- Castling Timing: average ply when the opponent castles (O-O or O-O-O).\n\nContext Matrix (Opening × Color)\n- The Opening pills choose the cluster (category). The Color pills choose the side (opponent as White or as Black).\n- If a category+color has fewer than 5 games, it’s hidden to avoid noisy conclusions.\n\nInterpretation tips\n- Large dot–tick gaps indicate a meaningful deviation from baseline for that opening family.\n- Use category+color contexts to spot repertoire-dependent “personality shifts” (e.g., sharp in Open as Black, quiet in Closed as White)."
-                    }
-                    className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-neutral-200 bg-white text-[10px] font-semibold text-neutral-700 shadow-sm"
+                  <button
+                    type="button"
+                    onClick={() => setStyleMarkersHelpOpen(true)}
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-neutral-200 bg-white text-[10px] font-semibold text-neutral-700 shadow-sm hover:bg-neutral-50"
+                    aria-label="Style markers help"
                   >
                     ?
-                  </span>
+                  </button>
                   <button
                     type="button"
                     onClick={() => setStyleMarkersOpen((v) => !v)}
