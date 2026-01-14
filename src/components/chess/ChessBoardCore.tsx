@@ -50,6 +50,8 @@ type Props = {
 const PLAYER_SIDE_STORAGE_KEY = "chessscout_player_side";
 
 const BOARD_HEIGHT_STORAGE_KEY = "chessscout_analysis_board_height_px";
+const LEFT_PANEL_HEIGHT_STORAGE_KEY = "chessscout_left_panel_height_px";
+const RIGHT_PANEL_HEIGHT_STORAGE_KEY = "chessscout_right_panel_height_px";
 
 export function ChessBoardCore({ initialFen, soundEnabled = true, onFenChange, arrows, squareStyles, specialArrow, leftPanel, aboveBoard, belowBoard, onPieceDrop, underBoard, children }: Props) {
   const initialGame = useMemo(() => {
@@ -84,7 +86,13 @@ export function ChessBoardCore({ initialFen, soundEnabled = true, onFenChange, a
   const [boardContainerSizePx, setBoardContainerSizePx] = useState<number>(600);
 
   const [boardHeightPx, setBoardHeightPx] = useState<number>(() => 550);
+  const [initialBoardHeightPx, setInitialBoardHeightPx] = useState<number>(550);
   const resizeDragRef = useRef<{ startY: number; startHeight: number; pointerId: number } | null>(null);
+
+  const [leftPanelHeightPx, setLeftPanelHeightPx] = useState<number>(() => 550);
+  const [rightPanelHeightPx, setRightPanelHeightPx] = useState<number>(() => 550);
+  const leftResizeDragRef = useRef<{ startY: number; startHeight: number; pointerId: number } | null>(null);
+  const rightResizeDragRef = useRef<{ startY: number; startHeight: number; pointerId: number } | null>(null);
 
   const fen = game.fen();
 
@@ -102,6 +110,16 @@ export function ChessBoardCore({ initialFen, soundEnabled = true, onFenChange, a
       if (Number.isFinite(n) && n > 0) {
         setBoardHeightPx(Math.round(n));
       }
+      const leftRaw = window.localStorage.getItem(LEFT_PANEL_HEIGHT_STORAGE_KEY);
+      const leftN = Number(leftRaw);
+      if (Number.isFinite(leftN) && leftN > 0) {
+        setLeftPanelHeightPx(Math.round(leftN));
+      }
+      const rightRaw = window.localStorage.getItem(RIGHT_PANEL_HEIGHT_STORAGE_KEY);
+      const rightN = Number(rightRaw);
+      if (Number.isFinite(rightN) && rightN > 0) {
+        setRightPanelHeightPx(Math.round(rightN));
+      }
     } catch {
       // ignore
     }
@@ -115,6 +133,24 @@ export function ChessBoardCore({ initialFen, soundEnabled = true, onFenChange, a
       // ignore
     }
   }, [boardHeightPx]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(LEFT_PANEL_HEIGHT_STORAGE_KEY, String(Math.round(leftPanelHeightPx)));
+    } catch {
+      // ignore
+    }
+  }, [leftPanelHeightPx]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(RIGHT_PANEL_HEIGHT_STORAGE_KEY, String(Math.round(rightPanelHeightPx)));
+    } catch {
+      // ignore
+    }
+  }, [rightPanelHeightPx]);
 
   useEffect(() => {
     try {
@@ -205,17 +241,28 @@ export function ChessBoardCore({ initialFen, soundEnabled = true, onFenChange, a
   }, [desktopRowWidth, isMounted]);
 
   useEffect(() => {
+    if (maxBoardHeightPx > initialBoardHeightPx) {
+      setInitialBoardHeightPx(maxBoardHeightPx);
+    }
+  }, [maxBoardHeightPx, initialBoardHeightPx]);
+
+  const minBoardHeightPx = useMemo(() => {
+    return Math.max(280, Math.floor(initialBoardHeightPx * 0.5));
+  }, [initialBoardHeightPx]);
+
+  useEffect(() => {
     setBoardHeightPx((prev) => {
-      const MIN_PX = 340;
-      return Math.max(MIN_PX, Math.min(prev, maxBoardHeightPx));
+      return Math.max(minBoardHeightPx, Math.min(prev, maxBoardHeightPx));
     });
-  }, [maxBoardHeightPx]);
+  }, [maxBoardHeightPx, minBoardHeightPx]);
 
   const effectiveBoardSizePx = useMemo(() => {
-    const raw = Math.max(300, Math.floor(boardContainerSizePx));
+    // Board size is driven by boardHeightPx minus padding for the frame (p-3 = 12px each side)
+    const FRAME_PAD_PX = 12;
+    const raw = Math.max(300, Math.floor(boardHeightPx - FRAME_PAD_PX * 2));
     const square = Math.max(1, Math.floor(raw / 8));
     return square * 8;
-  }, [boardContainerSizePx]);
+  }, [boardHeightPx]);
 
   const boardWidth = effectiveBoardSizePx;
   const squareSize = Math.max(1, Math.floor(boardWidth / 8));
@@ -419,11 +466,56 @@ export function ChessBoardCore({ initialFen, soundEnabled = true, onFenChange, a
       {isLg ? (
         <div className="flex h-[calc(100vh-80px)] min-w-0 flex-col gap-3 px-6 lg:flex-row lg:items-stretch lg:justify-center">
           <div ref={desktopRowRef} className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-start lg:justify-center">
-            <div
-              className="flex w-[260px] min-w-0 flex-none flex-col overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm"
-              style={{ maxHeight: boardHeightPx, height: "fit-content" }}
-            >
-              <div className="min-w-0 overflow-y-auto overflow-x-hidden p-0">{resolvedLeftPanel}</div>
+            <div className="relative flex w-[260px] min-w-0 flex-none flex-col">
+              <div
+                className="flex min-w-0 flex-col overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm"
+                style={{ height: leftPanelHeightPx }}
+              >
+                <div className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-0">{resolvedLeftPanel}</div>
+              </div>
+              <div
+                className="absolute bottom-0 left-0 right-0 h-3 cursor-ns-resize flex items-center justify-center"
+                style={{ transform: "translateY(50%)" }}
+                onPointerDown={(e) => {
+                  if (typeof window === "undefined") return;
+                  const pointerId = e.pointerId;
+                  leftResizeDragRef.current = { startY: e.clientY, startHeight: leftPanelHeightPx, pointerId };
+                  try {
+                    (e.currentTarget as HTMLDivElement).setPointerCapture(pointerId);
+                  } catch {
+                    // ignore
+                  }
+                }}
+                onPointerMove={(e) => {
+                  const drag = leftResizeDragRef.current;
+                  if (!drag || drag.pointerId !== e.pointerId) return;
+                  const dy = e.clientY - drag.startY;
+                  const next = drag.startHeight + dy;
+                  setLeftPanelHeightPx(Math.max(150, Math.min(next, maxBoardHeightPx + 200)));
+                }}
+                onPointerUp={(e) => {
+                  const drag = leftResizeDragRef.current;
+                  if (!drag || drag.pointerId !== e.pointerId) return;
+                  leftResizeDragRef.current = null;
+                  try {
+                    (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId);
+                  } catch {
+                    // ignore
+                  }
+                }}
+                onPointerCancel={(e) => {
+                  const drag = leftResizeDragRef.current;
+                  if (!drag || drag.pointerId !== e.pointerId) return;
+                  leftResizeDragRef.current = null;
+                  try {
+                    (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId);
+                  } catch {
+                    // ignore
+                  }
+                }}
+              >
+                <div className="h-1 w-8 rounded-full bg-zinc-300 hover:bg-zinc-400 transition-colors" />
+              </div>
             </div>
 
             <div className="flex min-w-0 flex-1 flex-col items-stretch justify-start lg:max-w-[calc(100vh-100px)]">
@@ -486,7 +578,7 @@ export function ChessBoardCore({ initialFen, soundEnabled = true, onFenChange, a
                 </div>
 
                 <div
-                  className="absolute bottom-0 left-0 right-0 h-4 cursor-ns-resize"
+                  className="absolute bottom-0 left-0 right-0 h-4 cursor-ns-resize flex items-center justify-center"
                   onPointerDown={(e) => {
                     if (typeof window === "undefined") return;
                     const pointerId = e.pointerId;
@@ -502,7 +594,7 @@ export function ChessBoardCore({ initialFen, soundEnabled = true, onFenChange, a
                     if (!drag || drag.pointerId !== e.pointerId) return;
                     const dy = e.clientY - drag.startY;
                     const next = drag.startHeight + dy;
-                    setBoardHeightPx(Math.max(340, Math.min(next, maxBoardHeightPx)));
+                    setBoardHeightPx(Math.max(minBoardHeightPx, Math.min(next, maxBoardHeightPx)));
                   }}
                   onPointerUp={(e) => {
                     const drag = resizeDragRef.current;
@@ -524,18 +616,65 @@ export function ChessBoardCore({ initialFen, soundEnabled = true, onFenChange, a
                       // ignore
                     }
                   }}
-                />
+                >
+                  <div className="h-1 w-12 rounded-full bg-zinc-400 hover:bg-zinc-500 transition-colors" />
+                </div>
               </div>
 
               {resolvedBelowBoard ? <div className="w-full min-w-0">{resolvedBelowBoard}</div> : null}
               {underBoard}
             </div>
 
-            <div
-              className="flex w-[432px] min-w-0 flex-none flex-col overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm"
-              style={{ maxHeight: boardHeightPx, height: "fit-content" }}
-            >
-              <div className="min-w-0 flex-col gap-4 overflow-y-auto overflow-x-hidden p-3">{children(state)}</div>
+            <div className="relative flex w-[432px] min-w-0 flex-none flex-col">
+              <div
+                className="flex min-w-0 flex-col overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm"
+                style={{ height: rightPanelHeightPx }}
+              >
+                <div className="min-w-0 flex-1 flex-col gap-4 overflow-y-auto overflow-x-hidden p-3">{children(state)}</div>
+              </div>
+              <div
+                className="absolute bottom-0 left-0 right-0 h-3 cursor-ns-resize flex items-center justify-center"
+                style={{ transform: "translateY(50%)" }}
+                onPointerDown={(e) => {
+                  if (typeof window === "undefined") return;
+                  const pointerId = e.pointerId;
+                  rightResizeDragRef.current = { startY: e.clientY, startHeight: rightPanelHeightPx, pointerId };
+                  try {
+                    (e.currentTarget as HTMLDivElement).setPointerCapture(pointerId);
+                  } catch {
+                    // ignore
+                  }
+                }}
+                onPointerMove={(e) => {
+                  const drag = rightResizeDragRef.current;
+                  if (!drag || drag.pointerId !== e.pointerId) return;
+                  const dy = e.clientY - drag.startY;
+                  const next = drag.startHeight + dy;
+                  setRightPanelHeightPx(Math.max(150, Math.min(next, maxBoardHeightPx + 200)));
+                }}
+                onPointerUp={(e) => {
+                  const drag = rightResizeDragRef.current;
+                  if (!drag || drag.pointerId !== e.pointerId) return;
+                  rightResizeDragRef.current = null;
+                  try {
+                    (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId);
+                  } catch {
+                    // ignore
+                  }
+                }}
+                onPointerCancel={(e) => {
+                  const drag = rightResizeDragRef.current;
+                  if (!drag || drag.pointerId !== e.pointerId) return;
+                  rightResizeDragRef.current = null;
+                  try {
+                    (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId);
+                  } catch {
+                    // ignore
+                  }
+                }}
+              >
+                <div className="h-1 w-8 rounded-full bg-zinc-300 hover:bg-zinc-400 transition-colors" />
+              </div>
             </div>
           </div>
         </div>

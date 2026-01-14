@@ -51,6 +51,30 @@ export function GlobalNavBar() {
   const { isImporting } = useImportQueue();
   const { isAdmin } = useAdminGuard();
 
+  const [simThinking, setSimThinking] = useState(false);
+  const [thinkingDots, setThinkingDots] = useState(1);
+
+  useEffect(() => {
+    function handleSimThinking(e: Event) {
+      const detail = (e as CustomEvent<{ thinking?: boolean }>).detail;
+      setSimThinking(Boolean(detail?.thinking));
+    }
+
+    window.addEventListener("chessscout:sim-thinking", handleSimThinking);
+    return () => window.removeEventListener("chessscout:sim-thinking", handleSimThinking);
+  }, []);
+
+  useEffect(() => {
+    if (!simThinking) {
+      setThinkingDots(1);
+      return;
+    }
+    const id = window.setInterval(() => {
+      setThinkingDots((d) => (d >= 3 ? 1 : d + 1));
+    }, 350);
+    return () => window.clearInterval(id);
+  }, [simThinking]);
+
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -151,6 +175,9 @@ export function GlobalNavBar() {
           <div className="flex items-center gap-6">
             <Link href="/dashboard" className="flex items-center gap-1.5">
               <span className="text-sm font-semibold text-zinc-900">ChessScout</span>
+              {simThinking ? (
+                <span className="text-sm font-medium text-zinc-600">Thinking{".".repeat(thinkingDots)}</span>
+              ) : null}
               <span className="text-sm font-normal text-zinc-700">V1.01</span>
               <span className="text-sm italic text-zinc-500">Beta</span>
             </Link>

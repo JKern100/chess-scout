@@ -488,6 +488,7 @@ export function SimulationRightSidebar(props: Props) {
             prediction={scoutPrediction}
             loading={scoutLoading}
             error={scoutError}
+            simThinking={simBusy}
             mode={scoutMode}
             onModeChange={onScoutModeChange}
             opponentUsername={opponentUsername}
