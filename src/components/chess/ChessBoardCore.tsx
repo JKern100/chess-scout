@@ -267,6 +267,26 @@ export function ChessBoardCore({ initialFen, soundEnabled = true, onFenChange, a
   const boardWidth = effectiveBoardSizePx;
   const squareSize = Math.max(1, Math.floor(boardWidth / 8));
 
+  const files = useMemo(() => {
+    const base = ["a", "b", "c", "d", "e", "f", "g", "h"];
+    return playerSide === "white" ? base : [...base].reverse();
+  }, [playerSide]);
+
+  const ranks = useMemo(() => {
+    const base = ["1", "2", "3", "4", "5", "6", "7", "8"];
+    return playerSide === "white" ? base : [...base].reverse();
+  }, [playerSide]);
+
+  const notationClassForSquare = useMemo(() => {
+    const fileBase = ["a", "b", "c", "d", "e", "f", "g", "h"] as const;
+    return (file: string, rank: string) => {
+      const fi = fileBase.indexOf(file as any);
+      const ri = Math.max(0, Math.min(7, Number(rank) - 1));
+      const isDark = fi >= 0 ? (fi + ri) % 2 === 0 : false;
+      return isDark ? "text-white/85" : "text-zinc-900/70";
+    };
+  }, []);
+
   function loadGameFromFen(fenValue: string) {
     const g = new Chess();
     try {
@@ -525,7 +545,7 @@ export function ChessBoardCore({ initialFen, soundEnabled = true, onFenChange, a
                 <div ref={boardSlotRef} className="flex h-full w-full min-w-0 items-center justify-center overflow-hidden">
                   <div className="inline-flex max-h-full max-w-full items-center justify-center rounded-lg bg-neutral-900 p-3 shadow-2xl">
                     <div className="flex min-w-0 items-center justify-center" style={{ width: boardWidth, height: boardWidth }}>
-                      <div data-chessscout-board={boardId} className="overflow-hidden" style={{ width: boardWidth, height: boardWidth }}>
+                      <div data-chessscout-board={boardId} className="relative overflow-visible" style={{ width: boardWidth, height: boardWidth }}>
                       {specialMarkerEnd ? (
                         <style>{`
                           [data-chessscout-board="${boardId}"] svg path[marker-end="${specialMarkerEnd}"] {
@@ -572,6 +592,38 @@ export function ChessBoardCore({ initialFen, soundEnabled = true, onFenChange, a
                           },
                         }}
                       />
+
+                      <div className="pointer-events-none absolute inset-0 select-none">
+                        <div className="absolute bottom-0 left-0 right-0 grid grid-cols-8" style={{ height: squareSize }}>
+                          {files.map((f) => (
+                            <div key={f} className="relative">
+                              <div
+                                className={`absolute bottom-[3px] left-[4px] font-mono text-[0.85em] leading-none ${notationClassForSquare(
+                                  f,
+                                  playerSide === "white" ? "1" : "8"
+                                )}`}
+                              >
+                                {f}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="absolute bottom-0 right-0 top-0 grid grid-rows-8" style={{ width: squareSize }}>
+                          {[...ranks].reverse().map((r) => (
+                            <div key={r} className="relative">
+                              <div
+                                className={`absolute right-[4px] top-[3px] font-mono text-[0.85em] leading-none ${notationClassForSquare(
+                                  playerSide === "white" ? "h" : "a",
+                                  r
+                                )}`}
+                              >
+                                {r}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
                       </div>
                     </div>
                   </div>
@@ -685,7 +737,7 @@ export function ChessBoardCore({ initialFen, soundEnabled = true, onFenChange, a
             <div className="flex items-center justify-center">
               <div ref={boardSlotRef} className="inline-flex max-w-full items-center justify-center rounded-2xl bg-neutral-900 p-3 shadow-2xl">
                 <div className="flex items-center justify-center" style={{ width: boardWidth, height: boardWidth }}>
-                  <div data-chessscout-board={boardId} style={{ width: boardWidth, height: boardWidth }}>
+                  <div data-chessscout-board={boardId} className="relative overflow-visible" style={{ width: boardWidth, height: boardWidth }}>
                   {specialMarkerEnd ? (
                     <style>{`
                       [data-chessscout-board="${boardId}"] svg path[marker-end="${specialMarkerEnd}"] {
@@ -732,6 +784,38 @@ export function ChessBoardCore({ initialFen, soundEnabled = true, onFenChange, a
                       },
                     }}
                   />
+
+                  <div className="pointer-events-none absolute inset-0 select-none">
+                    <div className="absolute bottom-0 left-0 right-0 grid grid-cols-8" style={{ height: squareSize }}>
+                      {files.map((f) => (
+                        <div key={f} className="relative">
+                          <div
+                            className={`absolute bottom-[3px] left-[4px] font-mono text-[0.85em] leading-none ${notationClassForSquare(
+                              f,
+                              playerSide === "white" ? "1" : "8"
+                            )}`}
+                          >
+                            {f}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="absolute bottom-0 right-0 top-0 grid grid-rows-8" style={{ width: squareSize }}>
+                      {[...ranks].reverse().map((r) => (
+                        <div key={r} className="relative">
+                          <div
+                            className={`absolute right-[4px] top-[3px] font-mono text-[0.85em] leading-none ${notationClassForSquare(
+                              playerSide === "white" ? "h" : "a",
+                              r
+                            )}`}
+                          >
+                            {r}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                   </div>
                 </div>
               </div>
