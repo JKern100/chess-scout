@@ -468,6 +468,39 @@ export function ChessBoardCore({ initialFen, soundEnabled = true, onFenChange, a
   const resolvedAboveBoard = typeof aboveBoard === "function" ? aboveBoard(state) : (aboveBoard ?? null);
   const resolvedBelowBoard = typeof belowBoard === "function" ? belowBoard(state) : (belowBoard ?? null);
 
+  const checkmatedKingSquare = useMemo(() => {
+    if (!game.isCheckmate()) return null;
+    const matedColor = game.turn();
+    const files = "abcdefgh";
+    const board = game.board();
+    for (let r = 0; r < board.length; r++) {
+      for (let c = 0; c < board[r].length; c++) {
+        const p = board[r][c];
+        if (!p) continue;
+        if (p.type === "k" && p.color === matedColor) {
+          const file = files[c] ?? null;
+          const rank = 8 - r;
+          if (!file) return null;
+          return `${file}${rank}`;
+        }
+      }
+    }
+    return null;
+  }, [fen, game]);
+
+  const resolvedSquareStylesWithCheckmate = useMemo(() => {
+    if (!checkmatedKingSquare) return resolvedSquareStyles;
+    const base = resolvedSquareStyles[checkmatedKingSquare] ?? {};
+    return {
+      ...resolvedSquareStyles,
+      [checkmatedKingSquare]: {
+        ...base,
+        background:
+          "radial-gradient(circle, rgba(239, 68, 68, 0.65) 0%, rgba(239, 68, 68, 0.25) 60%, rgba(239, 68, 68, 0) 75%)",
+      },
+    };
+  }, [checkmatedKingSquare, resolvedSquareStyles]);
+
   const boardId = "chessscout-board";
   const specialMarkerEnd = resolvedSpecialArrow
     ? `url(#${boardId}-arrowhead-0-${resolvedSpecialArrow.startSquare}-${resolvedSpecialArrow.endSquare})`
@@ -583,7 +616,7 @@ export function ChessBoardCore({ initialFen, soundEnabled = true, onFenChange, a
                           showNotation: false,
                           allowDrawingArrows: false,
                           arrows: resolvedArrows,
-                          squareStyles: resolvedSquareStyles,
+                          squareStyles: resolvedSquareStylesWithCheckmate,
                           boardStyle: {
                             width: boardWidth,
                             height: boardWidth,
@@ -776,7 +809,7 @@ export function ChessBoardCore({ initialFen, soundEnabled = true, onFenChange, a
                       showNotation: false,
                       allowDrawingArrows: false,
                       arrows: resolvedArrows,
-                      squareStyles: resolvedSquareStyles,
+                      squareStyles: resolvedSquareStylesWithCheckmate,
                       boardStyle: {
                         width: boardWidth,
                         height: boardWidth,
