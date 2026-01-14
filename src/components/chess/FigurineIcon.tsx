@@ -69,12 +69,31 @@ export function sanToFigurine(san: string, isWhiteMove: boolean): React.ReactNod
   const pieceLetters = ["N", "B", "R", "Q", "K"] as const;
   const color: PieceColor = isWhiteMove ? "white" : "black";
 
+  const unicodeByColor: Record<PieceColor, Record<PieceType, string>> = {
+    white: {
+      K: "♔",
+      Q: "♕",
+      R: "♖",
+      B: "♗",
+      N: "♘",
+    },
+    black: {
+      K: "♚",
+      Q: "♛",
+      R: "♜",
+      B: "♝",
+      N: "♞",
+    },
+  };
+
+  const pieceToUnicode = (p: PieceType) => unicodeByColor[color][p];
+
   // Check if the first character is a piece letter
   const firstChar = san.charAt(0);
   if (pieceLetters.includes(firstChar as PieceType)) {
     return (
       <span className="inline-flex items-baseline gap-0">
-        <FigurineIcon piece={firstChar as PieceType} color={color} />
+        <span>{pieceToUnicode(firstChar as PieceType)}</span>
         <span>{san.slice(1)}</span>
       </span>
     );
@@ -87,12 +106,12 @@ export function sanToFigurine(san: string, isWhiteMove: boolean): React.ReactNod
     return (
       <span className="inline-flex items-baseline gap-0">
         <span>{before}=</span>
-        <FigurineIcon piece={promoPiece as PieceType} color={color} />
+        <span>{pieceToUnicode(promoPiece as PieceType)}</span>
         <span>{after}</span>
       </span>
     );
   }
 
-  // No piece letter, return as-is (pawn moves)
+  // No piece letter, return as-is (pawn moves, castling)
   return san;
 }
