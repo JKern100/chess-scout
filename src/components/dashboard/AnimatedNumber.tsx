@@ -10,9 +10,14 @@ type Props = {
 };
 
 export function AnimatedNumber({ value, duration = 500, className = "", formatFn }: Props) {
+  const [mounted, setMounted] = useState(false);
   const [displayValue, setDisplayValue] = useState(value);
   const prevValueRef = useRef(value);
   const animationRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     const startValue = prevValueRef.current;
@@ -60,7 +65,13 @@ export function AnimatedNumber({ value, duration = 500, className = "", formatFn
     prevValueRef.current = value;
   }, [value]);
 
-  const formatted = formatFn ? formatFn(displayValue) : displayValue.toLocaleString();
+  const formatted = formatFn
+    ? formatFn(displayValue)
+    : new Intl.NumberFormat("en-US").format(displayValue);
+
+  if (!mounted) {
+    return <span className={`tabular-nums ${className}`}>0</span>;
+  }
 
   return <span className={`tabular-nums ${className}`}>{formatted}</span>;
 }

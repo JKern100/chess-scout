@@ -476,6 +476,7 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
     
     // Query the ACTUAL database count - localStorage might be stale from failed syncs
     let actualDbCount = 0;
+    let latestPlayedAtMs: number | null = null;
     try {
       const client = createSupabaseBrowserClient();
       const { data: { user } } = await client.auth.getUser();
@@ -487,6 +488,23 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
           .eq("platform", parsed.platform)
           .ilike("username", parsed.username.toLowerCase());
         actualDbCount = typeof count === "number" ? count : 0;
+
+        // Prefer DB-derived incremental anchor (latest played_at) so refresh works across browsers/sessions.
+        const { data: latestRow } = await client
+          .from("games")
+          .select("played_at")
+          .eq("profile_id", user.id)
+          .eq("platform", parsed.platform)
+          .ilike("username", parsed.username.toLowerCase())
+          .order("played_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        const latestIso = (latestRow as any)?.played_at as string | null | undefined;
+        if (latestIso) {
+          const ms = new Date(latestIso).getTime();
+          latestPlayedAtMs = Number.isFinite(ms) ? ms : null;
+        }
       }
     } catch (e) {
       console.warn("[ImportQueue] Failed to query actual DB count:", e);
@@ -495,31 +513,37 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
     console.log("[ImportQueue] Actual DB count for", nextKey, ":", actualDbCount);
     baseCountRef.current = actualDbCount;
     
-    // For incremental sync (refresh): use lastSyncTimestamp if we have games
-    // For initial import: no sinceMs filter, just cap at MAX_GAMES_PER_IMPORT
+    // For incremental sync (refresh): prefer DB latest played_at.
+    // For initial import: no sinceMs filter, just cap at MAX_GAMES_PER_IMPORT.
     let sinceMs: number | undefined = undefined;
-    
-    const lastTs = lastSyncTimestampRef.current[nextKey];
-    if (actualDbCount > 0 && typeof lastTs === "number" && lastTs > 0) {
-      // Incremental sync: fetch games newer than last sync
-      sinceMs = lastTs + 1;
-      console.log("[ImportQueue] Using incremental sync from", new Date(sinceMs).toISOString());
-    } else if (lastTs) {
-      // Clear stale timestamp if no games are in the database
-      console.log("[ImportQueue] Clearing stale lastSyncTimestamp for", nextKey, "(DB has 0 games)");
-      delete lastSyncTimestampRef.current[nextKey];
+
+    if (actualDbCount > 0 && typeof latestPlayedAtMs === "number" && latestPlayedAtMs > 0) {
+      // Small overlap to avoid missing games around the boundary.
+      sinceMs = Math.max(0, latestPlayedAtMs - 60_000) + 1;
+      console.log("[ImportQueue] Using DB incremental sync from", new Date(sinceMs).toISOString());
       setLastSyncTimestamp((prev) => {
-        const next = { ...prev };
-        delete next[nextKey];
-        return next;
+        const before = prev[nextKey] ?? 0;
+        if (latestPlayedAtMs! <= before) return prev;
+        return { ...prev, [nextKey]: latestPlayedAtMs! };
       });
-      // Also clear stale progress from localStorage
-      delete progressByOpponentRef.current[nextKey];
-      setProgressByOpponent((prev) => {
-        const next = { ...prev };
-        delete next[nextKey];
-        return next;
-      });
+    } else {
+      const lastTs = lastSyncTimestampRef.current[nextKey];
+      if (lastTs) {
+        console.log("[ImportQueue] Clearing stale lastSyncTimestamp for", nextKey, "(no DB anchor)");
+        delete lastSyncTimestampRef.current[nextKey];
+        setLastSyncTimestamp((prev) => {
+          const next = { ...prev };
+          delete next[nextKey];
+          return next;
+        });
+        // Also clear stale progress from localStorage
+        delete progressByOpponentRef.current[nextKey];
+        setProgressByOpponent((prev) => {
+          const next = { ...prev };
+          delete next[nextKey];
+          return next;
+        });
+      }
     }
     
     const maxGamesOverride = maxGamesByOpponentRef.current[nextKey];

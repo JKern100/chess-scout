@@ -247,6 +247,114 @@ export async function fetchLichessUserRatingsSnapshot(params: {
   return out;
 }
 
+export type LichessGameHeader = {
+  id: string;
+  createdAt: number | null;
+  lastMoveAt: number | null;
+  speed: string | null;
+  rated: boolean;
+  variant: string | null;
+  status: string | null;
+  white: {
+    username: string | null;
+    rating: number | null;
+  };
+  black: {
+    username: string | null;
+    rating: number | null;
+  };
+};
+
+export type LichessGameHeadersResult = {
+  games: LichessGameHeader[];
+  oldestGameAtMs: number | null;
+  newestGameAtMs: number | null;
+};
+
+export async function fetchLichessGameHeadersSince(params: {
+  username: string;
+  sinceMs: number;
+  max?: number;
+}): Promise<LichessGameHeadersResult> {
+  const { username, sinceMs, max = 200 } = params;
+
+  const url = new URL(`https://lichess.org/api/games/user/${encodeURIComponent(username)}`);
+  url.searchParams.set("since", String(sinceMs));
+  url.searchParams.set("max", String(max));
+  url.searchParams.set("moves", "false");
+  url.searchParams.set("pgnInJson", "true");
+  url.searchParams.set("clocks", "false");
+  url.searchParams.set("evals", "false");
+  url.searchParams.set("opening", "false");
+
+  const res = await fetch(url.toString(), {
+    headers: {
+      accept: "application/x-ndjson",
+    },
+    cache: "no-store",
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Lichess API error (${res.status}): ${text || res.statusText}`);
+  }
+
+  const body = await res.text();
+  const lines = body
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  let oldest: number | null = null;
+  let newest: number | null = null;
+
+  const games: LichessGameHeader[] = [];
+
+  for (const line of lines) {
+    let parsed: any;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      continue;
+    }
+
+    if (!parsed?.id) continue;
+
+    const createdAt = typeof parsed.createdAt === "number" ? parsed.createdAt : null;
+    const lastMoveAt = typeof parsed.lastMoveAt === "number" ? parsed.lastMoveAt : null;
+    const ts = lastMoveAt ?? createdAt;
+
+    if (typeof ts === "number") {
+      oldest = oldest === null ? ts : Math.min(oldest, ts);
+      newest = newest === null ? ts : Math.max(newest, ts);
+    }
+
+    games.push({
+      id: parsed.id,
+      createdAt,
+      lastMoveAt,
+      speed: typeof parsed.speed === "string" ? parsed.speed : null,
+      rated: Boolean(parsed.rated),
+      variant: typeof parsed.variant === "string" ? parsed.variant : null,
+      status: typeof parsed.status === "string" ? parsed.status : null,
+      white: {
+        username: parsed.players?.white?.user?.name ?? parsed.players?.white?.user?.id ?? null,
+        rating: typeof parsed.players?.white?.rating === "number" ? parsed.players.white.rating : null,
+      },
+      black: {
+        username: parsed.players?.black?.user?.name ?? parsed.players?.black?.user?.id ?? null,
+        rating: typeof parsed.players?.black?.rating === "number" ? parsed.players.black.rating : null,
+      },
+    });
+  }
+
+  return {
+    games,
+    oldestGameAtMs: oldest,
+    newestGameAtMs: newest,
+  };
+}
+
 export async function fetchLichessUserTotalGames(params: { username: string }): Promise<number | null> {
   const { username } = params;
 

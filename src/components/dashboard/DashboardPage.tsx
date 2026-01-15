@@ -11,6 +11,7 @@ import { useImportQueue } from "@/context/ImportQueueContext";
 import { AddOpponentBar } from "./AddOpponentBar";
 import { AddPlayerModal } from "./AddPlayerModal";
 import { AnimatedNumber } from "./AnimatedNumber";
+import { OpponentCard, type ActivitySummary } from "./OpponentCard";
 
 type ChessPlatform = "lichess" | "chesscom";
 
@@ -114,6 +115,59 @@ export function DashboardPage({ initialOpponents, initialSelfPlayer }: Props) {
   const [lichessActivity, setLichessActivity] = useState<Map<string, LichessActivity>>(new Map());
   const activityFetchedRef = useRef<Set<string>>(new Set());
 
+  // Quick refresh summaries
+  const [activitySummaries, setActivitySummaries] = useState<Map<string, ActivitySummary>>(new Map());
+  const quickRefreshRunningRef = useRef(false);
+
+  const runQuickRefresh = useCallback(async () => {
+    if (quickRefreshRunningRef.current) return;
+    quickRefreshRunningRef.current = true;
+    try {
+      const res = await fetch("/api/opponents/quick-refresh", { method: "POST" });
+      const json = await res.json().catch(() => null);
+      if (!res.ok) {
+        console.error("Quick refresh failed:", res.status, json);
+        return;
+      }
+      if (!json?.summaries) return;
+
+      const summaries = json.summaries as Array<{
+        platform: string;
+        username: string;
+        newGamesCount: number;
+        speedCounts: Record<string, number>;
+        ratedCount: number;
+        casualCount: number;
+        variants: Record<string, number>;
+        ratingDeltas: Record<string, number>;
+        currentRatings: Record<string, number>;
+        notes: string[];
+        sinceMs: number | null;
+      }>;
+
+      const map = new Map<string, ActivitySummary>();
+      for (const s of summaries) {
+        const key = `${s.platform}:${s.username.toLowerCase()}`;
+        map.set(key, {
+          newGamesCount: s.newGamesCount,
+          speedCounts: s.speedCounts,
+          ratedCount: s.ratedCount,
+          casualCount: s.casualCount,
+          variants: s.variants,
+          ratingDeltas: s.ratingDeltas,
+          currentRatings: s.currentRatings,
+          notes: s.notes,
+          sinceMs: s.sinceMs,
+        });
+      }
+      setActivitySummaries(map);
+    } catch {
+      // ignore
+    } finally {
+      quickRefreshRunningRef.current = false;
+    }
+  }, []);
+
   useEffect(() => {
     setIsMounted(true);
   }, []);
@@ -185,6 +239,18 @@ export function DashboardPage({ initialOpponents, initialSelfPlayer }: Props) {
     return m;
   }, [opponents]);
 
+  const orderedOpponents = useMemo(() => {
+    if (!selfPlayer) return opponents;
+    const selfKey = `${selfPlayer.platform}:${selfPlayer.username.toLowerCase()}`;
+    return opponents.slice().sort((a, b) => {
+      const ak = `${a.platform}:${a.username.toLowerCase()}`;
+      const bk = `${b.platform}:${b.username.toLowerCase()}`;
+      if (ak === selfKey) return -1;
+      if (bk === selfKey) return 1;
+      return 0;
+    });
+  }, [opponents, selfPlayer]);
+
   // Fetch Lichess online status and ratings on page load
   const fetchLichessStatus = useCallback(async () => {
     const lichessUsers = opponents.filter((o) => o.platform === "lichess").map((o) => o.username);
@@ -244,6 +310,13 @@ export function DashboardPage({ initialOpponents, initialSelfPlayer }: Props) {
     }
   }, [isMounted, opponents, fetchActivity]);
 
+  // Quick refresh on mount - fetch lightweight activity summaries
+  useEffect(() => {
+    if (!isMounted) return;
+    if (opponents.length === 0) return;
+    void runQuickRefresh();
+  }, [isMounted, opponents.length, runQuickRefresh]);
+
   async function reloadOpponents() {
     const res = await fetch("/api/opponents", { cache: "no-store" });
     const json = await res.json();
@@ -262,9 +335,13 @@ export function DashboardPage({ initialOpponents, initialSelfPlayer }: Props) {
     prevIsImportingRef.current = isImporting;
 
     if (wasImporting && !isImporting) {
-      void reloadOpponents().catch(() => null);
+      void reloadOpponents()
+        .catch(() => null)
+        .finally(() => {
+          void runQuickRefresh();
+        });
     }
-  }, [isImporting]);
+  }, [isImporting, runQuickRefresh]);
 
   useEffect(() => {
     if (!isMounted) return;
@@ -568,10 +645,7 @@ export function DashboardPage({ initialOpponents, initialSelfPlayer }: Props) {
         />
 
         {/* View Toggle */}
-        <div className="flex items-center justify-between">
-          <div className="text-sm font-medium text-zinc-700">
-            {opponents.length} opponent{opponents.length !== 1 ? "s" : ""}
-          </div>
+        <div className="flex items-center justify-end">
           <div className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white p-1">
             <button
               type="button"
@@ -897,419 +971,90 @@ export function DashboardPage({ initialOpponents, initialSelfPlayer }: Props) {
               </table>
             </div>
           ) : (
-            /* Card View */
             <div className="mt-6 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
-            {opponents.map((o) => {
-              const key = `${o.platform}:${o.username.trim().toLowerCase()}`;
-              const latest = byKey.get(key) ?? o;
-              const isActive = Boolean(
-                activeImport &&
-                  activeImport.platform === latest.platform &&
-                  activeImport.username.toLowerCase() === latest.username.toLowerCase()
-              );
+              {/* Card View */}
+              {orderedOpponents.map((o) => {
+                const key = `${o.platform}:${o.username.trim().toLowerCase()}`;
+                const latest = byKey.get(key) ?? o;
+                const summary = activitySummaries.get(key) ?? null;
+                const isActive = Boolean(
+                  activeImport &&
+                    activeImport.platform === latest.platform &&
+                    activeImport.username.toLowerCase() === latest.username.toLowerCase()
+                );
 
-              const importRow = importsByKey.get(key) ?? null;
-              const tieredStatus = formatTieredStatus(importRow as any, isActive);
-              const downloadedCount = typeof (importRow as any)?.imported_count === "number" ? (importRow as any).imported_count : 0;
-              const scoutBaseCount = typeof (importRow as any)?.scout_base_count === "number" ? Number((importRow as any).scout_base_count) : null;
-              // games_count from server = actual games in DB (source of truth)
-              const dbGamesCount = typeof (latest as any)?.games_count === "number" ? (latest as any).games_count : 0;
-              const currentKey = latest.platform === "lichess" ? `lichess:${latest.username.toLowerCase()}` : null;
-              const isGlobalCurrent = Boolean(isImporting && currentKey && currentOpponent === currentKey);
-              // "Synced" should reflect realtime imported_count during active import, otherwise DB count
-              const realtimeImportedCount = typeof (importRow as any)?.imported_count === "number" ? (importRow as any).imported_count : 0;
-              const localImportedCount = currentKey ? Number(progressByOpponent[currentKey] ?? 0) : 0;
-              const effectiveImportedCount = Math.max(realtimeImportedCount, localImportedCount);
-              const syncedGamesCount = effectiveImportedCount > 0 ? Math.max(dbGamesCount, effectiveImportedCount) : dbGamesCount;
-              // Use scout_base_count (up to 1000 games) as the total, not all-time total_games
-              const scoutBaseTotal = scoutBaseCount ?? 0;
-              const canUseScout = syncedGamesCount >= MIN_GAMES_FOR_ANALYSIS || isActive;
+                const importRow = importsByKey.get(key) ?? null;
+                const scoutBaseCount = typeof (importRow as any)?.scout_base_count === "number" ? Number((importRow as any).scout_base_count) : null;
+                const archivedCount = typeof (importRow as any)?.archived_count === "number" ? Number((importRow as any).archived_count) : null;
+                const importReady = Boolean((importRow as any)?.ready);
+                const importStage = typeof (importRow as any)?.stage === "string" ? String((importRow as any).stage) : "";
+                const importStatus = typeof (importRow as any)?.status === "string" ? String((importRow as any).status) : "";
+                // games_count from server = actual games in DB (source of truth)
+                const dbGamesCount = typeof (latest as any)?.games_count === "number" ? (latest as any).games_count : 0;
+                const currentKey = latest.platform === "lichess" ? `lichess:${latest.username.toLowerCase()}` : null;
+                const isGlobalCurrent = Boolean(isImporting && currentKey && currentOpponent === currentKey);
+                // "Synced" should reflect realtime imported_count during active import, otherwise DB count
+                const realtimeImportedCount = typeof (importRow as any)?.imported_count === "number" ? (importRow as any).imported_count : 0;
+                const localImportedCount = currentKey ? Number(progressByOpponent[currentKey] ?? 0) : 0;
+                const effectiveImportedCount = Math.max(realtimeImportedCount, localImportedCount);
+                const syncedGamesCount = effectiveImportedCount > 0 ? Math.max(dbGamesCount, effectiveImportedCount) : dbGamesCount;
+                // Use scout_base_count (up to 1000 games) as the total, not all-time total_games
+                const scoutBaseTotal = scoutBaseCount ?? 0;
+                const isFastRunning = isGlobalCurrent;
+                const isFastQueued = currentKey ? queue.includes(currentKey) && !isGlobalCurrent : false;
+                const menuOpen = openMenuKey === key;
+                const isSelf = Boolean(
+                  selfPlayer &&
+                    selfPlayer.platform === latest.platform &&
+                    selfPlayer.username.toLowerCase() === latest.username.toLowerCase()
+                );
 
-              const isFastRunning = isGlobalCurrent;
-              const isFastQueued = currentKey ? queue.includes(currentKey) && !isGlobalCurrent : false;
-              const markerBadges = Array.isArray((latest as any)?.style_markers) ? (((latest as any).style_markers as any[]) ?? []) : [];
+                const isActiveImport =
+                  !importReady &&
+                  (importStatus === "running" || importStage === "indexing" || importStage === "archiving") &&
+                  Boolean(archivedCount !== null);
 
-              // Check if this is the user's own card
-              const isSelf = selfPlayer
-                ? selfPlayer.platform === latest.platform && selfPlayer.username.toLowerCase() === latest.username.toLowerCase()
-                : false;
-
-              // Rich data for card view
-              const userStatus = latest.platform === "lichess" ? lichessStatus.get(latest.username.toLowerCase()) : null;
-              const userActivity = latest.platform === "lichess" ? lichessActivity.get(latest.username.toLowerCase()) : null;
-              const isOnline = userStatus?.online ?? false;
-              const blitzRating = userStatus?.ratings?.blitz;
-              const rapidRating = userStatus?.ratings?.rapid;
-              const bulletRating = userStatus?.ratings?.bullet;
-              const displayRating = blitzRating ?? rapidRating ?? bulletRating ?? null;
-              const activityLevel = userActivity?.activityLevel ?? null;
-
-              const menuOpen = openMenuKey === key;
-              const primaryLabel = canUseScout ? "Analyze" : "Prepare";
-              const primaryEnabled = !loading && (primaryLabel === "Prepare" || canUseScout);
-
-              const isSavedOpen = Boolean(savedLinesOpen[key]);
-              const savedLines = savedLinesByOpponent[key] ?? null;
-              const isSavedBusy = Boolean(savedLinesBusy[key]);
-              const savedErr = savedLinesError[key] ?? null;
-
-              async function toggleSavedLines() {
-                const next = !Boolean(savedLinesOpen[key]);
-                setSavedLinesOpen((prev) => ({ ...prev, [key]: next }));
-                if (!next) return;
-                if (savedLinesByOpponent[key]) return;
-
-                setSavedLinesBusy((prev) => ({ ...prev, [key]: true }));
-                setSavedLinesError((prev) => ({ ...prev, [key]: null }));
-                try {
-                  const qs = new URLSearchParams({
-                    opponent_platform: latest.platform,
-                    opponent_username: latest.username,
-                  });
-                  const res = await fetch(`/api/saved-lines?${qs.toString()}`, { cache: "no-store" });
-                  const json = await res.json().catch(() => ({}));
-                  if (!res.ok) throw new Error(String((json as any)?.error ?? "Failed to load saved lines"));
-                  const lines = Array.isArray((json as any)?.saved_lines)
-                    ? ((json as any).saved_lines as SavedLineRow[])
-                    : [];
-                  setSavedLinesByOpponent((prev) => ({ ...prev, [key]: lines }));
-                } catch (e) {
-                  setSavedLinesError((prev) => ({ ...prev, [key]: e instanceof Error ? e.message : "Failed to load" }));
-                } finally {
-                  setSavedLinesBusy((prev) => ({ ...prev, [key]: false }));
-                }
-              }
-
-              return (
-                <div key={key} className="rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-3">
-                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-zinc-100 text-base font-semibold text-zinc-900">
-                          {latest.username.slice(0, 1).toUpperCase()}
-                        </div>
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span
-                              className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${isOnline ? "bg-[#4CAF50]" : "bg-[#9E9E9E]"}`}
-                              title={isOnline ? "Online" : "Offline"}
-                            />
-                            <span className="truncate text-base font-semibold text-zinc-900">
-                              {latest.username}
-                              {isSelf && <span className="ml-1 text-zinc-500">(self)</span>}
-                            </span>
-                            {displayRating ? (
-                              <span className="shrink-0 text-xs tabular-nums text-zinc-500">{displayRating}</span>
-                            ) : null}
-                          </div>
-                          <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                            {markerBadges.length ? (
-                              markerBadges.slice(0, 2).map((m: any) => (
-                                <span
-                                  key={String(m?.marker_key ?? m?.label ?? "")}
-                                  title={String(m?.tooltip ?? "") || undefined}
-                                  className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${badgeClass(String(m?.strength ?? ""))}`}
-                                >
-                                  {String(m?.label ?? "")}
-                                </span>
-                              ))
-                            ) : (
-                              <span className="inline-flex items-center rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[10px] font-semibold text-zinc-700">
-                                No style markers yet
-                              </span>
-                            )}
-                            {isFastRunning ? (
-                              <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
-                                importPhase === "streaming" ? "border-blue-200 bg-blue-50 text-blue-700" :
-                                importPhase === "saving" ? "border-amber-200 bg-amber-50 text-amber-700" :
-                                importPhase === "error" ? "border-red-200 bg-red-50 text-red-700" :
-                                "border-zinc-200 bg-white text-zinc-700"
-                              }`}>
-                                {importPhase === "streaming" ? "Downloading" :
-                                 importPhase === "saving" ? "Saving" :
-                                 importPhase === "error" ? "Error" : "Syncing"}
-                              </span>
-                            ) : isFastQueued ? (
-                              <span className="inline-flex items-center rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-zinc-700">
-                                Queued
-                              </span>
-                            ) : null}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Synced Games Count - games usable for analysis */}
-                      <div className="mt-3 flex items-center justify-between rounded-lg bg-neutral-50 px-3 py-2">
-                        <div className="flex items-center gap-2 text-xs">
-                          <span className="text-neutral-500">Synced:</span>
-                          <AnimatedNumber value={syncedGamesCount} className="font-semibold text-neutral-900" />
-                        </div>
-                        <div className="flex items-center gap-2 text-xs text-neutral-500">
-                          {scoutBaseTotal > 0 ? (
-                            <>
-                              <span className="text-neutral-400">/</span>
-                              <span className="tabular-nums">{scoutBaseTotal}</span>
-                            </>
-                          ) : null}
-                          {/* Refresh button for syncing new games */}
-                          {!isFastRunning && !isFastQueued && syncedGamesCount > 0 && (
-                            <button
-                              type="button"
-                              className="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700 hover:bg-blue-100"
-                              title="Sync new games since last import"
-                              disabled={loading}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (latest.platform !== "lichess") return;
-                                addToQueue(`lichess:${latest.username.toLowerCase()}`);
-                                startImport();
-                              }}
-                            >
-                              <RefreshCw className="h-3 w-3" />
-                              Refresh
-                            </button>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="mt-3 flex flex-wrap items-center gap-2">
-                        {isFastRunning ? (
-                          <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-medium ${
-                            importPhase === "streaming" ? "bg-blue-100 text-blue-700" :
-                            importPhase === "saving" ? "bg-amber-100 text-amber-700" :
-                            importPhase === "error" ? "bg-red-100 text-red-700" :
-                            "bg-blue-100 text-blue-700"
-                          }`}>
-                            <RefreshCw className={`h-3 w-3 ${importPhase !== "error" ? "animate-spin" : ""}`} />
-                            {importPhase === "streaming" ? "Downloading" :
-                             importPhase === "saving" ? "Saving" :
-                             importPhase === "error" ? "Error" : "Syncing"}
-                          </span>
-                        ) : isFastQueued ? (
-                          <span className="inline-flex items-center rounded-full bg-neutral-200 px-2.5 py-1 text-[10px] font-medium text-neutral-600">
-                            Queued
-                          </span>
-                        ) : syncedGamesCount > 0 && scoutBaseTotal > 0 && syncedGamesCount >= scoutBaseTotal ? (
-                          <span className="inline-flex items-center gap-1.5 rounded-full bg-green-100 px-2.5 py-1 text-[10px] font-medium text-green-700">
-                            <Check className="h-3 w-3" />
-                            Complete
-                          </span>
-                        ) : syncedGamesCount > 0 && scoutBaseTotal > 0 ? (
-                          <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-1 text-[10px] font-medium text-amber-700">
-                            Partial
-                          </span>
-                        ) : syncedGamesCount > 0 ? (
-                          <span className="inline-flex items-center gap-1.5 rounded-full bg-zinc-100 px-2.5 py-1 text-[10px] font-medium text-zinc-700">
-                            Synced
-                          </span>
-                        ) : null}
-
-                        {activityLevel ? (
-                          <span
-                            className={`inline-flex cursor-help items-center rounded-full px-2.5 py-1 text-[10px] font-medium ${
-                              activityLevel === "very_active"
-                                ? "bg-amber-100 text-amber-700"
-                                : activityLevel === "active"
-                                  ? "bg-zinc-100 text-zinc-700"
-                                  : "bg-zinc-50 text-zinc-400"
-                            }`}
-                            title={
-                              activityLevel === "very_active"
-                                ? "Played multiple games in the past week"
-                                : activityLevel === "active"
-                                  ? "Played at least one game in the past month"
-                                  : "No games played in the past month"
-                            }
-                          >
-                            {activityLevel === "very_active" ? "Very Active" : activityLevel === "active" ? "Active" : "Inactive"}
-                          </span>
-                        ) : null}
-                      </div>
-                    </div>
-
-                    <div className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
-                      <button
-                        type="button"
-                        className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-neutral-200 bg-white text-zinc-700 hover:bg-zinc-50"
-                        title="Actions"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setOpenMenuKey((prev) => (prev === key ? null : key));
-                        }}
-                      >
-                        <MoreVertical className="h-4 w-4" />
-                      </button>
-
-                      {menuOpen ? (
-                        <div className="absolute right-0 top-10 z-20 w-44 overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-lg">
-                          <button
-                            type="button"
-                            className="flex w-full items-center px-3 py-2 text-left text-sm text-zinc-800 hover:bg-zinc-50 disabled:opacity-60"
-                            disabled={
-                              loading ||
-                              latest.platform !== "lichess" ||
-                              (latest.platform === "lichess" && queue.includes(`lichess:${latest.username.toLowerCase()}`))
-                            }
-                            onClick={() => {
-                              if (latest.platform !== "lichess") return;
-                              addToQueue(`lichess:${latest.username.toLowerCase()}`);
-                              startImport();
-                              setOpenMenuKey(null);
-                            }}
-                            title={latest.platform !== "lichess" ? "Sync Games currently supports Lichess only" : "Sync Games (beta): streams from Lichess and writes aggregated opening graph"}
-                          >
-                            Sync Games
-                          </button>
-
-                          {isFastRunning ? (
-                            <>
-                              <div className="h-px bg-neutral-100" />
-                              <button
-                                type="button"
-                                className="flex w-full items-center px-3 py-2 text-left text-sm text-rose-700 hover:bg-rose-50 disabled:opacity-60"
-                                disabled={loading}
-                                onClick={() => {
-                                  stopSync();
-                                  setOpenMenuKey(null);
-                                }}
-                              >
-                                Stop Sync
-                              </button>
-                            </>
-                          ) : isFastQueued ? (
-                            <>
-                              <div className="h-px bg-neutral-100" />
-                              <button
-                                type="button"
-                                className="flex w-full items-center px-3 py-2 text-left text-sm text-zinc-800 hover:bg-zinc-50 disabled:opacity-60"
-                                disabled={loading}
-                                onClick={() => {
-                                  removeFromQueue(`lichess:${latest.username.toLowerCase()}`);
-                                  setOpenMenuKey(null);
-                                }}
-                              >
-                                Remove from Queue
-                              </button>
-                            </>
-                          ) : null}
-
-                          <div className="h-px bg-neutral-100" />
-                          <button
-                            type="button"
-                            className="flex w-full items-center px-3 py-2 text-left text-sm text-rose-700 hover:bg-rose-50 disabled:opacity-60"
-                            disabled={loading || isActive}
-                            onClick={() => void archiveOpponent(latest)}
-                            title={isActive ? "Stop import before archiving" : undefined}
-                          >
-                            Archive
-                          </button>
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-
-                  <div className="mt-4 grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      className="inline-flex h-10 w-full items-center justify-center rounded-xl bg-zinc-900 px-4 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-60"
-                      disabled={!primaryEnabled}
-                      title={primaryLabel === "Analyze" && !canUseScout ? `Waiting for ${MIN_GAMES_FOR_ANALYSIS} games to download...` : undefined}
-                      onClick={() => prepare(latest)}
-                    >
-                      {primaryLabel}
-                    </button>
-                    <Link
-                      href={`/opponents/${encodeURIComponent(latest.platform)}/${encodeURIComponent(latest.username)}/profile`}
-                      className="inline-flex h-10 w-full items-center justify-center rounded-xl border border-neutral-200 bg-white px-4 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
-                    >
-                      Profile
-                    </Link>
-                  </div>
-
-                  <div className="mt-3 border-t border-zinc-100 pt-3">
-                    <button
-                      type="button"
-                      className="inline-flex items-center gap-2 text-xs font-medium text-zinc-900"
-                      onClick={() => void toggleSavedLines()}
-                    >
-                      <span className="rounded-md bg-zinc-100 px-2 py-1 text-xs font-semibold text-zinc-700">
-                        Saved Lines
-                      </span>
-                      <span className="text-zinc-500">{isSavedOpen ? "Hide" : "Show"}</span>
-                    </button>
-
-                    {isSavedOpen ? (
-                      <div className="mt-3 grid gap-2">
-                        {isSavedBusy ? (
-                          <div className="text-xs text-zinc-600">Loading…</div>
-                        ) : savedErr ? (
-                          <div className="text-xs text-zinc-600">{savedErr}</div>
-                        ) : savedLines && savedLines.length === 0 ? (
-                          <div className="text-xs text-zinc-600">No saved lines yet.</div>
-                        ) : savedLines ? (
-                          <div className="grid gap-2">
-                            {savedLines.map((sl) => (
-                              <div
-                                key={sl.id}
-                                className="flex items-start gap-3 rounded-lg border border-zinc-200 bg-zinc-50 p-2"
-                              >
-                                <div className="w-[56px] shrink-0 overflow-hidden rounded-md border border-zinc-200 bg-white">
-                                  <Chessboard
-                                    options={{
-                                      position: sl.final_fen,
-                                      allowDrawingArrows: false,
-                                      showNotation: false,
-                                      boardOrientation: "white",
-                                      animationDurationInMs: 0,
-                                      boardStyle: {
-                                        width: 56,
-                                        height: 56,
-                                        display: "grid",
-                                        gridTemplateColumns: "repeat(8, 7px)",
-                                        gridTemplateRows: "repeat(8, 7px)",
-                                        gap: 0,
-                                        lineHeight: 0,
-                                        borderRadius: 0,
-                                      },
-                                      squareStyle: {
-                                        width: 7,
-                                        height: 7,
-                                        lineHeight: 0,
-                                      },
-                                    }}
-                                  />
-                                </div>
-
-                                <div className="min-w-0 flex-1">
-                                  <div className="flex items-baseline justify-between gap-2">
-                                    <div className="truncate text-xs font-medium text-zinc-900">{sl.name}</div>
-                                    <div className="shrink-0 text-[10px] text-zinc-500" suppressHydrationWarning>
-                                      {formatSavedLineDate(sl.saved_at)}
-                                    </div>
-                                  </div>
-                                  {sl.notes ? (
-                                    <div className="mt-1 text-xs text-zinc-600 line-clamp-2">{sl.notes}</div>
-                                  ) : null}
-
-                                  <div className="mt-2 flex items-center gap-2">
-                                    <Link
-                                      href={`/play?mode=analysis&saved_line_id=${encodeURIComponent(sl.id)}`}
-                                      className="inline-flex h-7 items-center justify-center rounded-lg bg-zinc-900 px-2.5 text-[10px] font-semibold text-white hover:bg-zinc-800"
-                                    >
-                                      Analyze
-                                    </Link>
-                                  </div>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-              );
-            })}
+                return (
+                  <OpponentCard
+                    key={key}
+                    platform={latest.platform}
+                    username={latest.username}
+                    importedCount={syncedGamesCount}
+                    indexedCount={typeof archivedCount === "number" ? archivedCount : undefined}
+                    totalGames={scoutBaseTotal}
+                    isSelf={isSelf}
+                    isActiveImport={isActiveImport}
+                    isSyncing={isFastRunning}
+                    isQueued={isFastQueued}
+                    hasNewGames={Boolean((summary?.newGamesCount ?? 0) > 0)}
+                    importPhase={importPhase}
+                    syncError={null}
+                    onSyncGames={() => {
+                      if (latest.platform !== "lichess") return;
+                      addToQueue(`lichess:${latest.username.toLowerCase()}`);
+                      startImport();
+                      setOpenMenuKey(null);
+                    }}
+                    onStopSync={() => {
+                      stopSync();
+                      setOpenMenuKey(null);
+                    }}
+                    onRemoveFromQueue={() => {
+                      removeFromQueue(`lichess:${latest.username.toLowerCase()}`);
+                      setOpenMenuKey(null);
+                    }}
+                    onArchive={() => {
+                      void archiveOpponent(latest);
+                      setOpenMenuKey(null);
+                    }}
+                    onAnalyze={() => prepare(latest)}
+                    loading={loading}
+                    menuOpen={menuOpen}
+                    onMenuToggle={() => setOpenMenuKey((prev) => (prev === key ? null : key))}
+                    activitySummary={summary}
+                  />
+                );
+              })}
             </div>
           )}
         </section>
