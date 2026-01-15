@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { User } from "@supabase/supabase-js";
+import { PlatformLogo } from "@/components/PlatformLogo";
 
 type Platform = "lichess" | "chesscom";
 
@@ -186,7 +187,10 @@ export function AccountSettings({ user }: { user: User }) {
                     : "text-zinc-600 hover:bg-zinc-50"
                 }`}
               >
-                Lichess
+                <span className="inline-flex items-center justify-center gap-2">
+                  <PlatformLogo platform="lichess" size={16} className={primaryPlatform === "lichess" ? "opacity-90" : "opacity-70"} />
+                  <span>Lichess</span>
+                </span>
               </button>
               <button
                 type="button"
@@ -197,7 +201,10 @@ export function AccountSettings({ user }: { user: User }) {
                     : "text-zinc-600 hover:bg-zinc-50"
                 }`}
               >
-                Chess.com
+                <span className="inline-flex items-center justify-center gap-2">
+                  <PlatformLogo platform="chesscom" size={16} className={primaryPlatform === "chesscom" ? "opacity-90" : "opacity-70"} />
+                  <span>Chess.com</span>
+                </span>
               </button>
             </div>
           </div>
@@ -205,7 +212,10 @@ export function AccountSettings({ user }: { user: User }) {
           {/* Platform Username */}
           <div>
             <label htmlFor="platform-username" className="mb-2 block text-xs font-medium text-zinc-700">
-              {primaryPlatform === "lichess" ? "Lichess" : "Chess.com"} Username
+              <span className="inline-flex items-center gap-2">
+                <PlatformLogo platform={primaryPlatform} size={16} className="opacity-80" />
+                <span>{primaryPlatform === "lichess" ? "Lichess" : "Chess.com"} Username</span>
+              </span>
             </label>
             <input
               id="platform-username"
