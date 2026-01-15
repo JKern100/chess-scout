@@ -112,8 +112,11 @@ export default function GuidePage() {
                   <div>
                     <h3 className="font-semibold text-zinc-900 mb-1">Connect Your Chess Account</h3>
                     <p className="text-sm text-zinc-600">
-                      Link your Lichess account to import your game history. We analyze your most recent
-                      1,000 games to build your personal Scout profile.
+                      On your first visit to the Dashboard, ChessScout will prompt you to set your
+                      <strong> primary chess identity</strong> (Lichess or Chess.com). This identity is used
+                      to generate your personal Self-Scout report. Platform choices are shown as
+                      logo+label buttons, and you can update your primary identity later in
+                      <strong> Account Settings</strong>.
                     </p>
                   </div>
                 </div>
@@ -357,8 +360,8 @@ export default function GuidePage() {
           </div>
 
           <p className="text-zinc-600 mb-6 leading-relaxed">
-            Scout any Lichess player to analyze their playing style before your match. The Fast Import
-            system makes opponent analysis quick and efficient.
+            Scout any <strong>Lichess</strong> player to analyze their playing style before your match.
+            The Fast Import system makes opponent analysis quick and efficient.
           </p>
 
           <div className="space-y-4">
@@ -371,7 +374,7 @@ export default function GuidePage() {
                 </li>
                 <li className="flex items-start gap-3">
                   <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-purple-100 text-xs font-semibold text-purple-600">2</span>
-                  <span>Enter your opponent&apos;s Lichess username</span>
+                  <span>Select <strong>Lichess</strong> and enter your opponent&apos;s username</span>
                 </li>
                 <li className="flex items-start gap-3">
                   <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-purple-100 text-xs font-semibold text-purple-600">3</span>
@@ -382,6 +385,14 @@ export default function GuidePage() {
                   <span>View their Scout Report and practice with Shadow Boxer</span>
                 </li>
               </ol>
+            </div>
+
+            <div className="rounded-xl border border-zinc-200 bg-white p-5">
+              <h3 className="font-semibold text-zinc-900 mb-3">Saved Lines (Quick Drilldowns)</h3>
+              <p className="text-sm text-zinc-600">
+                From any opponent card on the Dashboard, use <strong>Show Saved Lines</strong> to view your
+                saved prep lines for that player. Selecting a line opens it directly in the Analysis Board.
+              </p>
             </div>
 
             <div className="rounded-xl border border-zinc-200 bg-white p-5">
@@ -499,8 +510,9 @@ export default function GuidePage() {
                 <ChevronRight className="h-5 w-5 text-zinc-400 transition-transform group-open:rotate-90" />
               </summary>
               <div className="px-5 pb-5 text-sm text-zinc-600">
-                Chess.com support is coming soon! Currently, ChessScout supports Lichess players.
-                We&apos;re working on Chess.com integration and will announce when it&apos;s available.
+                You can set your <strong>primary identity</strong> as either Lichess or Chess.com, but
+                <strong> opponent scouting/import currently supports Lichess only</strong>. We&apos;re working
+                on Chess.com opponent imports and will announce when it&apos;s available.
               </div>
             </details>
 

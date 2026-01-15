@@ -127,7 +127,11 @@ function computeSummaryFromGames(
       const [topSpeed, topCount] = sortedSpeeds[0];
       const pct = Math.round((topCount / games.length) * 100);
       if (pct >= 50) {
-        notes.push(`Mostly ${topSpeed} (${pct}%)`);
+        if (pct === 100) {
+          notes.push(`All ${topSpeed} (${pct}%)`);
+        } else {
+          notes.push(`Mostly ${topSpeed} (${pct}%)`);
+        }
       }
     }
 
