@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { useImportQueue } from "@/context/ImportQueueContext";
 import { useOpponentFilters } from "@/components/chess/useOpponentFilters";
+import { PlatformLogo } from "@/components/PlatformLogo";
 
 type Platform = "lichess" | "chesscom";
 
@@ -484,7 +485,10 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
                           : "text-zinc-600 hover:bg-zinc-50"
                       }`}
                     >
-                      Lichess
+                      <span className="inline-flex items-center justify-center gap-2">
+                        <PlatformLogo platform="lichess" size={16} className={primaryPlatform === "lichess" ? "opacity-90" : "opacity-70"} />
+                        <span>Lichess</span>
+                      </span>
                     </button>
                     <button
                       type="button"
@@ -495,7 +499,10 @@ export function AccountOnboardingModal({ isOpen, onClose, onComplete, initialPro
                           : "text-zinc-600 hover:bg-zinc-50"
                       }`}
                     >
-                      Chess.com
+                      <span className="inline-flex items-center justify-center gap-2">
+                        <PlatformLogo platform="chesscom" size={16} className={primaryPlatform === "chesscom" ? "opacity-90" : "opacity-70"} />
+                        <span>Chess.com</span>
+                      </span>
                     </button>
                   </div>
                 </div>

@@ -8,7 +8,17 @@ export async function GET() {
     const {
       data: { user },
       error: userError,
-    } = await supabase.auth.getUser();
+    } = await (async () => {
+      try {
+        return await supabase.auth.getUser();
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (e instanceof SyntaxError || msg.toLowerCase().includes("unexpected end of json")) {
+          return { data: { user: null }, error: new Error("Unauthorized") } as any;
+        }
+        throw e;
+      }
+    })();
 
     if (userError || !user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

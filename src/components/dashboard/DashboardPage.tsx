@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Chessboard } from "react-chessboard";
-import { MoreVertical, Check, RefreshCw, LayoutGrid, List } from "lucide-react";
+import { MoreVertical, Check, RefreshCw, LayoutGrid, List, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useImportsRealtime } from "@/lib/hooks/useImportsRealtime";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -12,6 +12,7 @@ import { AddOpponentBar } from "./AddOpponentBar";
 import { AddPlayerModal } from "./AddPlayerModal";
 import { AnimatedNumber } from "./AnimatedNumber";
 import { OpponentCard, type ActivitySummary } from "./OpponentCard";
+import { PlatformLogo } from "@/components/PlatformLogo";
 
 type ChessPlatform = "lichess" | "chesscom";
 
@@ -185,6 +186,13 @@ export function DashboardPage({ initialOpponents, initialSelfPlayer }: Props) {
   const [savedLinesByOpponent, setSavedLinesByOpponent] = useState<Record<string, SavedLineRow[]>>({});
   const [savedLinesBusy, setSavedLinesBusy] = useState<Record<string, boolean>>({});
   const [savedLinesError, setSavedLinesError] = useState<Record<string, string | null>>({});
+
+  const activeSavedLinesKey = useMemo(() => {
+    for (const k of Object.keys(savedLinesOpen)) {
+      if (savedLinesOpen[k]) return k;
+    }
+    return null;
+  }, [savedLinesOpen]);
 
   const [platform, setPlatform] = useState<ChessPlatform>("lichess");
   const [username, setUsername] = useState<string>("");
@@ -555,6 +563,55 @@ export function DashboardPage({ initialOpponents, initialSelfPlayer }: Props) {
     router.push("/play?mode=analysis");
   }
 
+  const openSavedLinesForOpponent = useCallback(async (o: { platform: ChessPlatform; username: string }) => {
+    const usernameKey = String(o.username ?? "").trim().toLowerCase();
+    const key = `${o.platform}:${usernameKey}`;
+    if (!usernameKey) return;
+
+    setSavedLinesOpen((prev) => ({ ...prev, [key]: true }));
+
+    if (savedLinesBusy[key]) return;
+    if (Array.isArray(savedLinesByOpponent[key])) return;
+
+    setSavedLinesBusy((prev) => ({ ...prev, [key]: true }));
+    setSavedLinesError((prev) => ({ ...prev, [key]: null }));
+    try {
+      const res = await fetch(
+        `/api/saved-lines?opponent_platform=${encodeURIComponent(o.platform)}&opponent_username=${encodeURIComponent(usernameKey)}`,
+        { cache: "no-store" }
+      );
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(String((json as any)?.error ?? "Failed to load saved lines"));
+      const rows = Array.isArray((json as any)?.saved_lines) ? ((json as any).saved_lines as SavedLineRow[]) : [];
+      setSavedLinesByOpponent((prev) => ({ ...prev, [key]: rows }));
+    } catch (e) {
+      setSavedLinesError((prev) => ({
+        ...prev,
+        [key]: e instanceof Error ? e.message : "Failed to load saved lines",
+      }));
+      setSavedLinesByOpponent((prev) => ({ ...prev, [key]: [] }));
+    } finally {
+      setSavedLinesBusy((prev) => ({ ...prev, [key]: false }));
+    }
+  }, [router, savedLinesBusy, savedLinesByOpponent]);
+
+  const closeSavedLines = useCallback(() => {
+    if (!activeSavedLinesKey) return;
+    setSavedLinesOpen((prev) => ({ ...prev, [activeSavedLinesKey]: false }));
+  }, [activeSavedLinesKey]);
+
+  const openSavedLineInAnalysis = useCallback((params: { platform: ChessPlatform; username: string; savedLineId: string }) => {
+    try {
+      window.localStorage.setItem(
+        "chessscout.activeOpponent",
+        JSON.stringify({ platform: params.platform, username: params.username })
+      );
+    } catch {
+      // ignore
+    }
+    router.push(`/play?mode=analysis&saved_line_id=${encodeURIComponent(params.savedLineId)}`);
+  }, [router]);
+
   const activeReady = Boolean(activeImport?.ready);
   const activeStage = String(activeImport?.stage ?? "");
   const activeStatus = String(activeImport?.status ?? "");
@@ -897,11 +954,7 @@ export function DashboardPage({ initialOpponents, initialSelfPlayer }: Props) {
                               {latest.username}
                               {isSelf && <span className="ml-1 text-zinc-500">(self)</span>}
                             </span>
-                            {latest.platform === "lichess" ? (
-                              <span className="text-[10px] text-zinc-400">lichess</span>
-                            ) : (
-                              <span className="text-[10px] text-zinc-400">chess.com</span>
-                            )}
+                            <PlatformLogo platform={latest.platform} size={14} className="opacity-80" />
                           </div>
                         </td>
                         {/* Rating */}
@@ -1048,6 +1101,7 @@ export function DashboardPage({ initialOpponents, initialSelfPlayer }: Props) {
                       setOpenMenuKey(null);
                     }}
                     onAnalyze={() => prepare(latest)}
+                    onShowSavedLines={() => void openSavedLinesForOpponent({ platform: latest.platform, username: latest.username })}
                     loading={loading}
                     menuOpen={menuOpen}
                     onMenuToggle={() => setOpenMenuKey((prev) => (prev === key ? null : key))}
@@ -1058,6 +1112,84 @@ export function DashboardPage({ initialOpponents, initialSelfPlayer }: Props) {
             </div>
           )}
         </section>
+
+        {activeSavedLinesKey ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+            <div className="w-full max-w-lg rounded-2xl border border-zinc-200 bg-white p-5 shadow-xl">
+              <div className="flex items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="text-base font-semibold text-zinc-900">Saved Lines</div>
+                  <div className="mt-0.5 text-xs text-zinc-600">Choose a saved line to load in Analysis.</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeSavedLines}
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50"
+                  aria-label="Close"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="mt-4">
+                {(() => {
+                  const [platform, username] = activeSavedLinesKey.split(":");
+                  const rows = savedLinesByOpponent[activeSavedLinesKey] ?? [];
+                  const busy = Boolean(savedLinesBusy[activeSavedLinesKey]);
+                  const err = savedLinesError[activeSavedLinesKey];
+
+                  return (
+                    <div className="grid gap-2">
+                      <div className="flex items-center gap-2 text-xs text-zinc-700">
+                        {(platform === "lichess" || platform === "chesscom") ? (
+                          <PlatformLogo platform={platform as ChessPlatform} size={16} className="opacity-90" />
+                        ) : null}
+                        <span className="font-medium text-zinc-900">{username}</span>
+                      </div>
+
+                      {busy ? <div className="text-sm text-zinc-600">Loading…</div> : null}
+                      {err ? <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{err}</div> : null}
+
+                      {!busy && !err && rows.length === 0 ? (
+                        <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-3 text-sm text-zinc-600">
+                          No saved lines yet.
+                        </div>
+                      ) : null}
+
+                      <div className="max-h-[50vh] overflow-y-auto rounded-xl border border-zinc-200">
+                        {rows.map((r) => {
+                          const when = r.saved_at ? formatSavedLineDate(r.saved_at) : "";
+                          return (
+                            <button
+                              key={r.id}
+                              type="button"
+                              className="flex w-full items-start justify-between gap-3 border-b border-zinc-100 px-4 py-3 text-left hover:bg-zinc-50"
+                              onClick={() =>
+                                openSavedLineInAnalysis({
+                                  platform: (platform === "chesscom" ? "chesscom" : "lichess") as ChessPlatform,
+                                  username,
+                                  savedLineId: r.id,
+                                })
+                              }
+                            >
+                              <div className="min-w-0">
+                                <div className="truncate text-sm font-medium text-zinc-900">{r.name}</div>
+                                {r.notes ? (
+                                  <div className="mt-1 line-clamp-2 text-xs text-zinc-600">{r.notes}</div>
+                                ) : null}
+                              </div>
+                              <div className="shrink-0 text-xs text-zinc-500">{when}</div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+          </div>
+        ) : null}
       </main>
     </div>
   );

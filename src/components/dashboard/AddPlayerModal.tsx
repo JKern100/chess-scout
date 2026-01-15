@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { X, Search } from "lucide-react";
+import { PlatformLogo } from "@/components/PlatformLogo";
 
 type ChessPlatform = "lichess" | "chesscom";
 
@@ -72,7 +73,10 @@ export function AddPlayerModal({ open, onClose, onAdd, loading }: Props) {
                 }`}
                 onClick={() => setPlatform("lichess")}
               >
-                Lichess
+                <span className="inline-flex items-center justify-center gap-2">
+                  <PlatformLogo platform="lichess" size={16} className={platform === "lichess" ? "opacity-90" : "opacity-70"} />
+                  <span>Lichess</span>
+                </span>
               </button>
               <button
                 type="button"
@@ -83,7 +87,10 @@ export function AddPlayerModal({ open, onClose, onAdd, loading }: Props) {
                 }`}
                 onClick={() => setPlatform("chesscom")}
               >
-                Chess.com
+                <span className="inline-flex items-center justify-center gap-2">
+                  <PlatformLogo platform="chesscom" size={16} className={platform === "chesscom" ? "opacity-90" : "opacity-70"} />
+                  <span>Chess.com</span>
+                </span>
               </button>
             </div>
           </div>

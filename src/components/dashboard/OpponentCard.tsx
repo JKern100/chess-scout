@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { MoreVertical, RefreshCw, Clock, TrendingUp, TrendingDown, Minus, ChevronRight, Zap, Timer, Hourglass } from "lucide-react";
+import { MoreVertical, RefreshCw, Clock, TrendingUp, TrendingDown, Minus, ChevronRight, Zap, Timer, Hourglass, BookOpen } from "lucide-react";
 import { AnimatedNumber } from "./AnimatedNumber";
+import { PlatformLogo } from "@/components/PlatformLogo";
 
 type ChessPlatform = "lichess" | "chesscom";
 
@@ -61,6 +62,7 @@ type Props = {
   onRemoveFromQueue: () => void;
   onArchive: () => void;
   onAnalyze: () => void;
+  onShowSavedLines?: () => void;
   loading: boolean;
   menuOpen: boolean;
   onMenuToggle: () => void;
@@ -144,6 +146,7 @@ export function OpponentCard({
   onRemoveFromQueue,
   onArchive,
   onAnalyze,
+  onShowSavedLines,
   loading,
   menuOpen,
   onMenuToggle,
@@ -253,6 +256,7 @@ export function OpponentCard({
               <div className="flex items-center gap-2">
                 <span className="truncate text-base font-semibold text-zinc-900">{username}</span>
                 {isSelf ? <span className="text-xs font-medium text-emerald-700">(self)</span> : null}
+                <PlatformLogo platform={platform} size={14} className="opacity-90" />
                 {flag && <span className="text-sm" title={country ?? undefined}>{flag}</span>}
               </div>
               <div className="flex items-center gap-1.5 text-xs text-zinc-500">
@@ -494,6 +498,17 @@ export function OpponentCard({
             ) : null}
           </div>
         )}
+
+        {onShowSavedLines ? (
+          <button
+            type="button"
+            onClick={onShowSavedLines}
+            className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition-colors hover:bg-zinc-50"
+          >
+            <BookOpen className="h-4 w-4 text-zinc-400" />
+            <span>Show Saved Lines</span>
+          </button>
+        ) : null}
 
         {/* Action Buttons */}
         <div className="mt-5 grid grid-cols-2 gap-3">

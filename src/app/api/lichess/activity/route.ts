@@ -48,10 +48,11 @@ export async function GET(req: NextRequest) {
         });
       }
       console.error(`Lichess activity API error: ${res.status}`);
-      return NextResponse.json(
-        { error: "Failed to fetch activity from Lichess" },
-        { status: 502 }
-      );
+      return NextResponse.json({
+        username,
+        gamesLast7Days: 0,
+        activityLevel: "inactive" as const,
+      });
     }
 
     // Count lines in NDJSON response (each line = 1 game)
