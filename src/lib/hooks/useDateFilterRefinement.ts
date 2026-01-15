@@ -93,6 +93,10 @@ export function useDateFilterRefinement(
   const hasDateFilter = Boolean(from || to);
   const featureEnabled = isFeatureEnabled('analysis_v2_date_refine');
   
+  // Always use IndexedDB when available - it's more reliable than opening_graph_nodes
+  // which can have stale data. This ensures "all games" filter works correctly.
+  const shouldUseIndexedDB = featureEnabled;
+  
   // Generate a key for the current params to detect changes
   const paramsKey = `${visitorId}_${platform}_${opponent}_${positionKey}_${side}_${from}_${to}_${speeds?.join(',')}_${rated}`;
   
@@ -106,7 +110,7 @@ export function useDateFilterRefinement(
   }, [paramsKey]);
   
   const startRefinement: () => Promise<void> = useCallback(async () => {
-    if (!visitorId || !opponent || !hasDateFilter || !featureEnabled || !enabled) {
+    if (!visitorId || !opponent || !shouldUseIndexedDB || !enabled) {
       setState(prev => ({ ...prev, status: 'unavailable' }));
       return;
     }
@@ -180,7 +184,7 @@ export function useDateFilterRefinement(
         error: e instanceof Error ? e.message : 'Refinement failed',
       }));
     }
-  }, [visitorId, platform, opponent, positionKey, side, from, to, speeds, rated, hasDateFilter, featureEnabled, enabled]);
+  }, [visitorId, platform, opponent, positionKey, side, from, to, speeds, rated, shouldUseIndexedDB, enabled]);
   
   const cancelRefinement = useCallback(() => {
     abortRef.current = true;
@@ -190,12 +194,13 @@ export function useDateFilterRefinement(
     }));
   }, []);
   
-  // Auto-start refinement when date filter is active and feature is enabled
+  // Auto-start refinement when feature is enabled (for all filters, not just date filters)
+  // This ensures IndexedDB data is used which is more reliable than opening_graph_nodes
   useEffect(() => {
-    if (hasDateFilter && featureEnabled && enabled && visitorId && opponent && state.status === 'idle') {
+    if (shouldUseIndexedDB && enabled && visitorId && opponent && state.status === 'idle') {
       startRefinement();
     }
-  }, [hasDateFilter, featureEnabled, enabled, visitorId, opponent, state.status, startRefinement]);
+  }, [shouldUseIndexedDB, enabled, visitorId, opponent, state.status, startRefinement]);
   
   return {
     state,
