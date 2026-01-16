@@ -205,6 +205,7 @@ type OpponentProfileRow = {
   id: string;
   platform: ChessPlatform;
   username: string;
+  ratings?: Record<string, number> | null;
   filters_json: any | null;
   profile_version?: number | null;
   profile_json?: OpponentProfileV2 | null;
@@ -747,6 +748,9 @@ export function OpponentProfileClient({ platform, username, isSelfAnalysis = fal
 
       setProgressStatus("completed");
       
+      // Re-open modal to show completion (even if user dismissed to browse)
+      setProgressModalOpen(true);
+      
       // Track report generation for admin metrics
       void trackActivity("report_generated", { platform, username });
     } catch (e) {
@@ -757,6 +761,7 @@ export function OpponentProfileClient({ platform, username, isSelfAnalysis = fal
         setActionMessage(errorMsg);
         setProgressStatus("error");
         setProgressError(errorMsg);
+        setProgressModalOpen(true);
       }
     } finally {
       if (progressInterval) clearInterval(progressInterval);
@@ -915,7 +920,29 @@ export function OpponentProfileClient({ platform, username, isSelfAnalysis = fal
     return "—";
   }, [hasV2, segment, stats]);
 
-  const kpiRating = "—";
+  const kpiRating = useMemo(() => {
+    const ratings = profileRow?.ratings;
+    if (!ratings || typeof ratings !== "object") return "—";
+    
+    const dominantSpeed = segment?.dataset?.dominant_speed ?? kpiTopTimeControl;
+    if (dominantSpeed && dominantSpeed !== "—" && ratings[dominantSpeed]) {
+      return `${ratings[dominantSpeed]} (${dominantSpeed})`;
+    }
+    
+    const speedPriority = ["blitz", "rapid", "bullet", "classical"];
+    for (const speed of speedPriority) {
+      if (ratings[speed]) {
+        return `${ratings[speed]} (${speed})`;
+      }
+    }
+    
+    const firstRating = Object.entries(ratings)[0];
+    if (firstRating) {
+      return `${firstRating[1]} (${firstRating[0]})`;
+    }
+    
+    return "—";
+  }, [profileRow?.ratings, segment?.dataset?.dominant_speed, kpiTopTimeControl]);
 
   const onOpenFilters = useCallback(() => {
     if (generateBusy) return;
@@ -1057,17 +1084,41 @@ export function OpponentProfileClient({ platform, username, isSelfAnalysis = fal
     );
   }
 
+  const isGeneratingInBackground = generateBusy && !progressModalOpen;
+
   return (
     <div className="text-neutral-900">
       <div className="mx-auto w-full max-w-6xl">
+        {/* Background generation indicator */}
+        {isGeneratingInBackground && (
+          <div className="mb-4 flex items-center justify-between rounded-xl border border-yellow-200 bg-yellow-50 px-4 py-3">
+            <div className="flex items-center gap-3">
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-yellow-500 border-t-transparent" />
+              <span className="text-sm font-medium text-yellow-800">Generating report in background...</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setProgressModalOpen(true)}
+              className="text-xs font-medium text-yellow-700 hover:text-yellow-900 underline"
+            >
+              View Progress
+            </button>
+          </div>
+        )}
+
         <div className="flex items-center justify-end">
           <button
             type="button"
             onClick={onOpenFilters}
             disabled={generateBusy}
-            className="inline-flex h-10 items-center justify-center rounded-xl border border-neutral-200 bg-white px-4 text-xs font-semibold text-neutral-900 shadow-sm hover:bg-neutral-50 disabled:opacity-60"
+            className={`inline-flex h-10 items-center justify-center gap-2 rounded-xl border px-4 text-xs font-semibold shadow-sm transition-colors ${
+              generateBusy
+                ? "border-yellow-300 bg-yellow-50 text-yellow-700 cursor-not-allowed"
+                : "border-neutral-200 bg-white text-neutral-900 hover:bg-neutral-50"
+            }`}
           >
-            {hasProfile ? "Regenerate Report" : "Generate Report"}
+            {generateBusy && <div className="h-3 w-3 animate-spin rounded-full border-2 border-yellow-500 border-t-transparent" />}
+            {generateBusy ? "Generating..." : hasProfile ? "Regenerate Report" : "Generate Report"}
           </button>
         </div>
 

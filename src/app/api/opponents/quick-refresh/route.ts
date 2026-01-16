@@ -86,6 +86,51 @@ function computeSummaryFromGames(
 
   const targetLower = targetUsername.toLowerCase();
 
+
+
+  function computeGameBasedRatingDeltas(): Record<string, number> {
+    const perSpeed: Record<string, Array<{ ts: number; rating: number }>> = {};
+
+    for (const g of games) {
+      const speed = g.speed;
+      if (!speed) continue;
+
+      const whiteName = (g.white.username ?? "").toLowerCase();
+      const blackName = (g.black.username ?? "").toLowerCase();
+
+      const rating =
+        whiteName === targetLower
+          ? g.white.rating
+          : blackName === targetLower
+            ? g.black.rating
+            : null;
+      if (typeof rating !== "number" || !Number.isFinite(rating)) continue;
+
+      const tsRaw = g.lastMoveAt ?? g.createdAt ?? 0;
+      const ts = typeof tsRaw === "number" && Number.isFinite(tsRaw) ? tsRaw : 0;
+
+      (perSpeed[speed] ??= []).push({ ts, rating });
+    }
+
+    const out: Record<string, number> = {};
+    for (const [speed, entries] of Object.entries(perSpeed)) {
+      if (!entries || entries.length === 0) continue;
+      const sorted = entries.slice().sort((a, b) => a.ts - b.ts);
+      const first = sorted[0];
+      const last = sorted[sorted.length - 1];
+      if (!first || !last) continue;
+
+      const current = currentRatings[speed];
+      if (typeof current === "number" && Number.isFinite(current)) {
+        out[speed] = Math.trunc(current - first.rating);
+      } else {
+        out[speed] = Math.trunc(last.rating - first.rating);
+      }
+    }
+
+    return out;
+  }
+
   for (const g of games) {
     // Count by speed
     if (g.speed) {
@@ -105,16 +150,19 @@ function computeSummaryFromGames(
     }
   }
 
-  // Compute rating deltas from snapshot comparison
   const ratingDeltas: Record<string, number> = {};
-  if (previousRatings) {
+  const gameBasedDeltas = computeGameBasedRatingDeltas();
+
+  if (Object.keys(gameBasedDeltas).length > 0) {
+    for (const [speed, delta] of Object.entries(gameBasedDeltas)) {
+      ratingDeltas[speed] = delta;
+    }
+  } else if (previousRatings) {
     for (const [speed, currentRating] of Object.entries(currentRatings)) {
+      if (!speedCounts[speed]) continue;
       const prevRating = previousRatings[speed];
       if (typeof prevRating === "number") {
-        const delta = currentRating - prevRating;
-        if (delta !== 0) {
-          ratingDeltas[speed] = delta;
-        }
+        ratingDeltas[speed] = Math.trunc(currentRating - prevRating);
       }
     }
   }
@@ -132,6 +180,9 @@ function computeSummaryFromGames(
         } else {
           notes.push(`Mostly ${topSpeed} (${pct}%)`);
         }
+      }
+      if (Object.keys(ratingDeltas).length === 0) {
+        ratingDeltas[topSpeed] = 0;
       }
     }
 
@@ -196,6 +247,7 @@ async function fetchLatestSyncedPlayedAtMs(params: {
     .eq("profile_id", userId)
     .eq("platform", platform)
     .ilike("username", username.toLowerCase())
+    .not("played_at", "is", null)
     .order("played_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -204,7 +256,9 @@ async function fetchLatestSyncedPlayedAtMs(params: {
   const iso = (data as any)?.played_at as string | null | undefined;
   if (!iso) return null;
   const ms = new Date(iso).getTime();
-  return Number.isFinite(ms) ? ms : null;
+  if (!Number.isFinite(ms)) return null;
+  if (ms > Date.now() + 5 * 60 * 1000) return null;
+  return ms;
 }
 
 async function processOpponent(
@@ -233,8 +287,7 @@ async function processOpponent(
   const fallbackIso = last_refreshed_at ?? created_at;
   const fallbackMs = new Date(fallbackIso).getTime();
   const baseMs = latestSyncedMs ?? (Number.isFinite(fallbackMs) ? fallbackMs : Date.now());
-  // Small overlap to avoid missing games around the boundary.
-  const sinceMs = Math.max(0, baseMs - 60 * 60 * 1000);
+  const sinceMs = Math.max(0, baseMs - 48 * 60 * 60 * 1000);
 
   try {
     if (platform !== "lichess") {

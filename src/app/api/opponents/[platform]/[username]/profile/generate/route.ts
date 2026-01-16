@@ -6,6 +6,29 @@ import { buildOpponentProfileV3Addon } from "@/server/opponentProfileV3";
 import { calculateAndStoreMarkers } from "@/server/styleMarkerService";
 import { generateNarrativeWithRetry, type SubjectType } from "@/server/geminiNarrativeService";
 
+async function fetchLichessRatings(username: string): Promise<Record<string, number> | null> {
+  try {
+    const res = await fetch(`https://lichess.org/api/user/${encodeURIComponent(username)}`, {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const perfs = data?.perfs;
+    if (!perfs || typeof perfs !== "object") return null;
+    const ratings: Record<string, number> = {};
+    for (const [key, perf] of Object.entries(perfs)) {
+      const p = perf as { rating?: number };
+      if (typeof p?.rating === "number") {
+        ratings[key] = p.rating;
+      }
+    }
+    return Object.keys(ratings).length > 0 ? ratings : null;
+  } catch {
+    return null;
+  }
+}
+
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
@@ -66,7 +89,7 @@ export async function POST(request: Request, context: { params: Promise<Params> 
     // Fixed cap of 5000 games for all date ranges (consistent with Session route)
     const maxGamesCap = 5000;
 
-    const [{ profile: profileV2, normalized, filtersUsed }, statsV1Result] = await Promise.all([
+    const [{ profile: profileV2, normalized, filtersUsed }, statsV1Result, currentRatings] = await Promise.all([
       buildOpponentProfileV2({
         supabase,
         profileId: user.id,
@@ -98,6 +121,7 @@ export async function POST(request: Request, context: { params: Promise<Params> 
           return { profile: null, filtersUsed: { speeds, rated, from, to } } as any;
         }
       })(),
+      platform === "lichess" ? fetchLichessRatings(username) : Promise.resolve(null),
     ]);
 
     const statsV1 = (statsV1Result as any)?.profile ?? null;
@@ -168,6 +192,7 @@ export async function POST(request: Request, context: { params: Promise<Params> 
           profile_id: user.id,
           platform,
           username,
+          ratings: currentRatings,
           filters_json: filtersUsed,
           profile_version: 3,
           profile_json: profile,
