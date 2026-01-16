@@ -15,10 +15,11 @@ type ImportQueueContextValue = {
   importPhase: ImportPhase;
   pendingWrites: number;
   lastError: string | null;
-  addToQueue: (opponentId: string, opts?: { maxGames?: number | null }) => void;
+  addToQueue: (opponentId: string, opts?: { maxGames?: number | null; forceFullImport?: boolean }) => void;
   removeFromQueue: (opponentId: string) => void;
   startImport: () => void;
   stopSync: () => void;
+  forceFullImportFor: (opponentId: string) => void;
 };
 
 const ImportQueueContext = createContext<ImportQueueContextValue | null>(null);
@@ -27,6 +28,7 @@ const PROGRESS_STORAGE_KEY = "chessscout.fastImport.progressByOpponent.v2";
 const LAST_SYNC_STORAGE_KEY = "chessscout.fastImport.lastSyncTimestamp.v1";
 const QUEUE_STORAGE_KEY = "chessscout.fastImport.queue.v1";
 const MAX_GAMES_BY_OPPONENT_STORAGE_KEY = "chessscout.fastImport.maxGamesByOpponent.v1";
+const FORCE_FULL_IMPORT_STORAGE_KEY = "chessscout.fastImport.forceFullImport.v1";
 
 function normalizeOpponentId(opponentId: string) {
   const raw = String(opponentId ?? "").trim();
@@ -137,6 +139,21 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
     }
   });
 
+  // Track opponents that need a forced full import (to repair corrupted data)
+  const [forceFullImportSet, setForceFullImportSet] = useState<Set<string>>(() => {
+    try {
+      if (typeof window === "undefined") return new Set();
+      const raw = window.localStorage.getItem(FORCE_FULL_IMPORT_STORAGE_KEY);
+      if (!raw) return new Set();
+      const parsed = JSON.parse(raw) as unknown;
+      if (!Array.isArray(parsed)) return new Set();
+      return new Set(parsed.filter((x) => typeof x === "string"));
+    } catch {
+      return new Set();
+    }
+  });
+  const forceFullImportSetRef = useRef<Set<string>>(forceFullImportSet);
+
   // Track the base count (games synced before this session) for cumulative display
   const baseCountRef = useRef<number>(0);
 
@@ -207,6 +224,10 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
   useEffect(() => {
     lastSyncTimestampRef.current = lastSyncTimestamp;
   }, [lastSyncTimestamp]);
+
+  useEffect(() => {
+    forceFullImportSetRef.current = forceFullImportSet;
+  }, [forceFullImportSet]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -513,11 +534,58 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
     console.log("[ImportQueue] Actual DB count for", nextKey, ":", actualDbCount);
     baseCountRef.current = actualDbCount;
     
+    // Check if this opponent is marked for forced full import (to repair corrupted data)
+    const needsForceFullImport = forceFullImportSetRef.current.has(nextKey);
+    if (needsForceFullImport) {
+      console.log("[ImportQueue] Forced full import requested for", nextKey, "- clearing existing data");
+      try {
+        const client = createSupabaseBrowserClient();
+        const { data: { user } } = await client.auth.getUser();
+        if (user?.id) {
+          // Delete existing opening_graph_nodes for this opponent
+          await client
+            .from("opening_graph_nodes")
+            .delete()
+            .eq("profile_id", user.id)
+            .eq("platform", parsed.platform)
+            .ilike("username", parsed.username.toLowerCase());
+          
+          // Delete existing games for this opponent
+          await client
+            .from("games")
+            .delete()
+            .eq("profile_id", user.id)
+            .eq("platform", parsed.platform)
+            .ilike("username", parsed.username.toLowerCase());
+          
+          console.log("[ImportQueue] Cleared existing data for", nextKey);
+        }
+        
+        // Clear from forceFullImportSet after successful deletion
+        setForceFullImportSet((prev) => {
+          if (!prev.has(nextKey)) return prev;
+          const next = new Set(prev);
+          next.delete(nextKey);
+          try {
+            window.localStorage.setItem(FORCE_FULL_IMPORT_STORAGE_KEY, JSON.stringify([...next]));
+          } catch {}
+          return next;
+        });
+        
+        // Reset counts since we deleted everything
+        actualDbCount = 0;
+        latestPlayedAtMs = null;
+        baseCountRef.current = 0;
+      } catch (e) {
+        console.warn("[ImportQueue] Failed to clear data for forced full import:", e);
+      }
+    }
+    
     // For incremental sync (refresh): prefer DB latest played_at.
     // For initial import: no sinceMs filter, just cap at MAX_GAMES_PER_IMPORT.
     let sinceMs: number | undefined = undefined;
 
-    if (actualDbCount > 0 && typeof latestPlayedAtMs === "number" && latestPlayedAtMs > 0) {
+    if (!needsForceFullImport && actualDbCount > 0 && typeof latestPlayedAtMs === "number" && latestPlayedAtMs > 0) {
       // Small overlap to avoid missing games around the boundary.
       sinceMs = Math.max(0, latestPlayedAtMs - 60_000) + 1;
       console.log("[ImportQueue] Using DB incremental sync from", new Date(sinceMs).toISOString());
@@ -652,6 +720,39 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
     void runNext();
   }, [runNext]);
 
+  const forceFullImportFor = useCallback((opponentId: string) => {
+    const norm = normalizeOpponentId(opponentId);
+    if (!norm) return;
+    
+    // Mark this opponent for forced full import
+    setForceFullImportSet((prev) => {
+      if (prev.has(norm)) return prev;
+      const next = new Set(prev);
+      next.add(norm);
+      // Persist to localStorage
+      try {
+        window.localStorage.setItem(FORCE_FULL_IMPORT_STORAGE_KEY, JSON.stringify([...next]));
+      } catch {}
+      return next;
+    });
+    
+    // Clear incremental sync anchor so next import is a full import
+    setLastSyncTimestamp((prev) => {
+      if (!(norm in prev)) return prev;
+      const next = { ...prev };
+      delete next[norm];
+      return next;
+    });
+    
+    // Clear progress count
+    setProgressByOpponent((prev) => {
+      if (!(norm in prev)) return prev;
+      const next = { ...prev };
+      delete next[norm];
+      return next;
+    });
+  }, []);
+
   const value = useMemo<ImportQueueContextValue>(
     () => ({
       isImporting,
@@ -666,8 +767,9 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
       removeFromQueue,
       startImport,
       stopSync,
+      forceFullImportFor,
     }),
-    [addToQueue, currentOpponent, importPhase, isImporting, lastError, pendingWrites, progress, progressByOpponent, queue, removeFromQueue, startImport, stopSync]
+    [addToQueue, currentOpponent, forceFullImportFor, importPhase, isImporting, lastError, pendingWrites, progress, progressByOpponent, queue, removeFromQueue, startImport, stopSync]
   );
 
   const pill = useMemo(() => {

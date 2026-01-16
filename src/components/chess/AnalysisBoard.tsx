@@ -832,7 +832,7 @@ export function AnalysisBoard(props: Props) {
                 <>
                   <span className="font-medium">All-time stats</span>
                   <span className="mx-1">•</span>
-                  <span className="text-blue-600">Re-sync opponent to enable date filtering</span>
+                  <span className="text-zinc-500">Date filtering requires a fresh sync</span>
                 </>
               ) : refinementState.status === 'error' ? (
                 <>

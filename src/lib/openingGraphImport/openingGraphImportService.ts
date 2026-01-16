@@ -77,42 +77,53 @@ export function createOpeningGraphImporter(params: {
     const usernameNormalized = username.trim().toLowerCase();
 
     const rows = nodes.map((n) => ({
-      profile_id: profileId,
       platform,
       username: usernameNormalized,
       filter_key: String((n as any)?.filter_key ?? "all"),
       fen: normalizeFen(n.fen),
       played_by: n.played_by,
-      updated_at: new Date().toISOString(),
     }));
 
-    // Use larger chunks and parallel writes for better performance
-    const chunkSize = 500;
+    // Use RPC function that merges played_by JSON instead of overwriting
+    // This fixes incremental imports which previously overwrote existing data
+    const chunkSize = 200; // Smaller chunks for RPC to avoid payload limits
     const chunks: typeof rows[] = [];
     for (let i = 0; i < rows.length; i += chunkSize) {
       chunks.push(rows.slice(i, i + chunkSize));
     }
     
-    // Write chunks in parallel (up to 3 at a time to avoid overwhelming the DB)
-    const batchSize = 3;
-    for (let i = 0; i < chunks.length; i += batchSize) {
-      const batch = chunks.slice(i, i + batchSize);
-      const results = await Promise.all(
-        batch.map(chunk => 
-          supabase.from("opening_graph_nodes").upsert(chunk, {
-            onConflict: "profile_id,platform,username,filter_key,fen",
-          })
-        )
-      );
+    // Write chunks sequentially to avoid race conditions in merge
+    for (const chunk of chunks) {
+      const { error } = await supabase.rpc("upsert_opening_graph_nodes_merge", {
+        nodes: chunk,
+      });
       
-      for (const { error } of results) {
-        if (error) {
-          const statusCode = (error as any)?.status;
-          if (statusCode === 401 || statusCode === 403) {
-            writeDisabled = true;
+      if (error) {
+        const statusCode = (error as any)?.status;
+        // If RPC doesn't exist yet, fall back to simple upsert (for backwards compatibility)
+        if (statusCode === 404 || (error.message && error.message.includes("function") && error.message.includes("does not exist"))) {
+          console.warn("[ImportService] Merge RPC not available, falling back to simple upsert");
+          const fallbackRows = chunk.map((r) => ({
+            profile_id: profileId,
+            ...r,
+            updated_at: new Date().toISOString(),
+          }));
+          const { error: fallbackError } = await supabase.from("opening_graph_nodes").upsert(fallbackRows, {
+            onConflict: "profile_id,platform,username,filter_key,fen",
+          });
+          if (fallbackError) {
+            const fallbackStatus = (fallbackError as any)?.status;
+            if (fallbackStatus === 401 || fallbackStatus === 403) {
+              writeDisabled = true;
+            }
+            throw fallbackError;
           }
-          throw error;
+          continue;
         }
+        if (statusCode === 401 || statusCode === 403) {
+          writeDisabled = true;
+        }
+        throw error;
       }
     }
   }
