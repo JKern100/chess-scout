@@ -690,8 +690,34 @@ export function DashboardPage({ initialOpponents, initialSelfPlayer }: Props) {
   return (
     <div className="min-h-screen">
       <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6">
-        {/* Add Opponent Bar */}
-        <AddOpponentBar onClick={() => setAddPlayerModalOpen(true)} loading={loading} />
+        <div className="flex items-start justify-between gap-3">
+          <AddOpponentBar onClick={() => setAddPlayerModalOpen(true)} loading={loading} />
+
+          <div className="flex items-center justify-end">
+            <div className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white p-1">
+              <button
+                type="button"
+                className={`inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors ${
+                  viewMode === "card" ? "bg-zinc-900 text-white" : "text-zinc-600 hover:bg-zinc-50"
+                }`}
+                title="Card view"
+                onClick={() => setViewMode("card")}
+              >
+                <LayoutGrid className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                className={`inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors ${
+                  viewMode === "list" ? "bg-zinc-900 text-white" : "text-zinc-600 hover:bg-zinc-50"
+                }`}
+                title="List view"
+                onClick={() => setViewMode("list")}
+              >
+                <List className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        </div>
 
         {/* Add Player Modal */}
         <AddPlayerModal
@@ -700,32 +726,6 @@ export function DashboardPage({ initialOpponents, initialSelfPlayer }: Props) {
           onAdd={handleAddOpponent}
           loading={loading}
         />
-
-        {/* View Toggle */}
-        <div className="flex items-center justify-end">
-          <div className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white p-1">
-            <button
-              type="button"
-              className={`inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors ${
-                viewMode === "card" ? "bg-zinc-900 text-white" : "text-zinc-600 hover:bg-zinc-50"
-              }`}
-              title="Card view"
-              onClick={() => setViewMode("card")}
-            >
-              <LayoutGrid className="h-4 w-4" />
-            </button>
-            <button
-              type="button"
-              className={`inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors ${
-                viewMode === "list" ? "bg-zinc-900 text-white" : "text-zinc-600 hover:bg-zinc-50"
-              }`}
-              title="List view"
-              onClick={() => setViewMode("list")}
-            >
-              <List className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
 
         {status ? <div className="text-sm text-neutral-600">{status}</div> : null}
 
