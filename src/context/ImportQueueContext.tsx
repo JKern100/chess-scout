@@ -828,6 +828,16 @@ export function ImportQueueProvider({ children }: { children: React.ReactNode })
     );
   }, [currentOpponent, importPhase, isImporting, lastError, pendingWrites, stopSync, syncedCount]);
 
+  // Expose to window for debugging/repair operations
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      (window as any).__importQueue = {
+        forceFullImportFor,
+        addToQueue,
+      };
+    }
+  }, [forceFullImportFor, addToQueue]);
+
   return (
     <ImportQueueContext.Provider value={value}>
       {children}

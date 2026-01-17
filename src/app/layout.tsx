@@ -7,6 +7,7 @@ import { ActiveOpponentProvider } from "@/context/ActiveOpponentContext";
 import { OnboardingProvider } from "@/context/OnboardingContext";
 import { GlobalNavBar } from "@/components/nav/GlobalNavBar";
 import { NavPaddingWrapper } from "@/components/nav/NavPaddingWrapper";
+import { ActivityTracker } from "@/components/ActivityTracker";
 import { MaintenanceScreen } from "@/components/maintenance/MaintenanceScreen";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseServiceClient } from "@/lib/supabase/service";
@@ -94,6 +95,7 @@ export default async function RootLayout({
           <MaintenanceScreen message={message} />
         ) : (
           <>
+            <ActivityTracker />
             <ImportSupervisor />
             <ImportQueueProvider>
               <ActiveOpponentProvider>

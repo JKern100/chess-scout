@@ -19,6 +19,8 @@ import {
   RefreshCw,
   ChevronDown,
   ChevronUp,
+  Trash2,
+  X,
 } from "lucide-react";
 import { useAdminRedirect } from "@/hooks/useAdminGuard";
 import Link from "next/link";
@@ -170,7 +172,94 @@ function StatusBadge({ status }: { status: AdminUser["status"] }) {
   );
 }
 
-function UserRow({ user }: { user: AdminUser }) {
+type DeleteConfirmModalProps = {
+  user: AdminUser | null;
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+  isDeleting: boolean;
+  relatedCounts: {
+    games: number;
+    imports: number;
+    opponentProfiles: number;
+    styleMarkers: number;
+    openingGraphNodes: number;
+    savedLines?: number;
+  } | null;
+};
+
+function DeleteConfirmModal({ user, isOpen, onClose, onConfirm, isDeleting, relatedCounts }: DeleteConfirmModalProps) {
+  if (!isOpen || !user) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="fixed inset-0 bg-black/50" onClick={onClose} />
+      <div className="relative z-10 w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute right-4 top-4 text-zinc-400 hover:text-zinc-600"
+        >
+          <X className="h-5 w-5" />
+        </button>
+
+        <div className="mb-4 flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-red-100">
+            <AlertTriangle className="h-5 w-5 text-red-600" />
+          </div>
+          <h3 className="text-lg font-semibold text-zinc-900">Delete User</h3>
+        </div>
+
+        <p className="mb-4 text-sm text-zinc-600">
+          Are you sure you want to delete <strong>{user.displayName}</strong>? This action cannot be undone.
+        </p>
+
+        {relatedCounts && (
+          <div className="mb-4 rounded-lg bg-zinc-50 p-3">
+            <p className="mb-2 text-xs font-medium text-zinc-700">The following data will be permanently deleted:</p>
+            <ul className="space-y-1 text-xs text-zinc-600">
+              <li>• {relatedCounts.games.toLocaleString()} games</li>
+              <li>• {relatedCounts.imports.toLocaleString()} import jobs</li>
+              <li>• {relatedCounts.opponentProfiles.toLocaleString()} opponent profiles</li>
+              <li>• {relatedCounts.styleMarkers.toLocaleString()} style markers</li>
+              <li>• {relatedCounts.openingGraphNodes.toLocaleString()} opening graph nodes</li>
+              {typeof relatedCounts.savedLines === "number" && (
+                <li>• {relatedCounts.savedLines.toLocaleString()} saved lines</li>
+              )}
+            </ul>
+          </div>
+        )}
+
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={isDeleting}
+            className="flex-1 rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={isDeleting}
+            className="flex-1 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+          >
+            {isDeleting ? "Deleting..." : "Delete User"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type UserRowProps = {
+  user: AdminUser;
+  onDeleteClick: (user: AdminUser) => void;
+  canDelete: boolean;
+};
+
+function UserRow({ user, onDeleteClick, canDelete }: UserRowProps) {
   return (
     <tr className="border-b border-zinc-100 hover:bg-zinc-50">
       <td className="px-4 py-3">
@@ -205,9 +294,36 @@ function UserRow({ user }: { user: AdminUser }) {
       <td className="px-4 py-3">
         <StatusBadge status={user.status} />
       </td>
+      <td className="px-4 py-3 text-right">
+        <button
+          type="button"
+          onClick={() => onDeleteClick(user)}
+          disabled={!canDelete}
+          className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+          title={canDelete ? "Delete user" : "Set SUPABASE_SERVICE_ROLE_KEY to enable admin deletion"}
+        >
+          <Trash2 className="h-4 w-4" />
+          Delete
+        </button>
+      </td>
     </tr>
   );
 }
+
+type RelatedDataCounts = {
+  games: number;
+  imports: number;
+  opponentProfiles: number;
+  styleMarkers: number;
+  openingGraphNodes: number;
+  savedLines?: number;
+};
+
+type OrphanCheckRow = {
+  table: string;
+  key: string;
+  orphanCount: number;
+};
 
 export function AdminDashboard() {
   const { isAdmin, isLoading } = useAdminRedirect();
@@ -220,6 +336,21 @@ export function AdminDashboard() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [dataLoaded, setDataLoaded] = useState(false);
+  const [apiWarning, setApiWarning] = useState<string | null>(null);
+  const [serviceRoleAvailable, setServiceRoleAvailable] = useState<boolean>(true);
+
+  // Orphan check state
+  const [orphansOpen, setOrphansOpen] = useState(false);
+  const [orphansLoading, setOrphansLoading] = useState(false);
+  const [orphansError, setOrphansError] = useState<string | null>(null);
+  const [orphans, setOrphans] = useState<OrphanCheckRow[] | null>(null);
+
+  // Delete user state
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [userToDelete, setUserToDelete] = useState<AdminUser | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [relatedCounts, setRelatedCounts] = useState<RelatedDataCounts | null>(null);
 
   // Fetch real data from API
   const fetchUsers = async () => {
@@ -234,6 +365,8 @@ export function AdminDashboard() {
       const data = await res.json();
       setUsers(data.users || []);
       setGlobalStats(data.globalStats || null);
+      setApiWarning(typeof data.warning === "string" ? data.warning : null);
+      setServiceRoleAvailable(Boolean(data.serviceRoleAvailable));
       setDataLoaded(true);
     } catch (err) {
       console.error("[AdminDashboard] Fetch error:", err);
@@ -300,6 +433,80 @@ export function AdminDashboard() {
     await fetchUsers();
   };
 
+  // Delete user handlers
+  const handleDeleteClick = async (user: AdminUser) => {
+    setUserToDelete(user);
+    setDeleteError(null);
+    setRelatedCounts(null);
+    setDeleteModalOpen(true);
+
+    // Fetch related data counts for the confirmation modal
+    try {
+      const res = await fetch(`/api/admin/users/${user.id}`);
+      if (res.ok) {
+        const data = await res.json();
+        setRelatedCounts(data.relatedDataCounts || null);
+      }
+    } catch {
+      // Proceed without counts if fetch fails
+    }
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!userToDelete) return;
+
+    setIsDeleting(true);
+    setDeleteError(null);
+
+    try {
+      const res = await fetch(`/api/admin/users/${userToDelete.id}`, {
+        method: "DELETE",
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to delete user");
+      }
+
+      // Remove user from local state
+      setUsers((prev) => prev.filter((u) => u.id !== userToDelete.id));
+      setDeleteModalOpen(false);
+      setUserToDelete(null);
+      setRelatedCounts(null);
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : "Failed to delete user");
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const handleDeleteCancel = () => {
+    setDeleteModalOpen(false);
+    setUserToDelete(null);
+    setRelatedCounts(null);
+    setDeleteError(null);
+  };
+
+  const runOrphanCheck = async () => {
+    setOrphansOpen(true);
+    setOrphansLoading(true);
+    setOrphansError(null);
+    setOrphans(null);
+    try {
+      const res = await fetch("/api/admin/orphans", { cache: "no-store" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || `Failed to run orphan check (${res.status})`);
+      }
+      setOrphans(Array.isArray(data.results) ? (data.results as OrphanCheckRow[]) : []);
+    } catch (err) {
+      setOrphansError(err instanceof Error ? err.message : "Failed to run orphan check");
+    } finally {
+      setOrphansLoading(false);
+    }
+  };
+
   const SortHeader = ({ field, label }: { field: SortField; label: string }) => (
     <button
       type="button"
@@ -355,6 +562,15 @@ export function AdminDashboard() {
               </Link>
               <button
                 type="button"
+                onClick={runOrphanCheck}
+                disabled={!serviceRoleAvailable}
+                className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+                title={serviceRoleAvailable ? "Check for orphan records" : "Requires SUPABASE_SERVICE_ROLE_KEY"}
+              >
+                Orphan Check
+              </button>
+              <button
+                type="button"
                 onClick={handleRefresh}
                 disabled={isRefreshing}
                 className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50 disabled:opacity-50"
@@ -366,6 +582,25 @@ export function AdminDashboard() {
           </div>
         </div>
       </div>
+
+      {(apiWarning || !serviceRoleAvailable) && (
+        <div className="mx-auto max-w-7xl px-6 pt-4">
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="mt-0.5 h-5 w-5 text-amber-700" />
+              <div className="min-w-0">
+                <div className="font-semibold">Admin user list may be incomplete</div>
+                <div className="mt-1 text-amber-800">
+                  {apiWarning ?? "Service role is unavailable. The dashboard cannot list all users due to RLS."}
+                </div>
+                <div className="mt-2 text-xs text-amber-800">
+                  To see all registered users locally, set <span className="font-mono">SUPABASE_SERVICE_ROLE_KEY</span> in <span className="font-mono">.env.local</span>.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="mx-auto max-w-7xl px-6 pt-6">
         {/* Global Stats Cards */}
@@ -441,11 +676,19 @@ export function AdminDashboard() {
                       <th className="px-4 py-3 text-left">
                         <span className="text-xs font-medium uppercase tracking-wider text-zinc-500">Status</span>
                       </th>
+                      <th className="px-4 py-3 text-right">
+                        <span className="text-xs font-medium uppercase tracking-wider text-zinc-500">Actions</span>
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredUsers.map((user) => (
-                      <UserRow key={user.id} user={user} />
+                      <UserRow
+                        key={user.id}
+                        user={user}
+                        onDeleteClick={handleDeleteClick}
+                        canDelete={serviceRoleAvailable}
+                      />
                     ))}
                   </tbody>
                 </table>
@@ -561,6 +804,90 @@ export function AdminDashboard() {
           </div>
         </div>
       </div>
+
+      {/* Delete Confirmation Modal */}
+      <DeleteConfirmModal
+        user={userToDelete}
+        isOpen={deleteModalOpen}
+        onClose={handleDeleteCancel}
+        onConfirm={handleDeleteConfirm}
+        isDeleting={isDeleting}
+        relatedCounts={relatedCounts}
+      />
+
+      {/* Delete Error Toast */}
+      {deleteError && (
+        <div className="fixed bottom-4 right-4 z-50 rounded-lg border border-red-200 bg-red-50 p-4 shadow-lg">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="h-5 w-5 text-red-600" />
+            <span className="text-sm font-medium text-red-800">{deleteError}</span>
+            <button
+              type="button"
+              onClick={() => setDeleteError(null)}
+              className="ml-2 text-red-600 hover:text-red-800"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {orphansOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="fixed inset-0 bg-black/50" onClick={() => setOrphansOpen(false)} />
+          <div className="relative z-10 w-full max-w-lg rounded-xl bg-white p-6 shadow-xl">
+            <button
+              type="button"
+              onClick={() => setOrphansOpen(false)}
+              className="absolute right-4 top-4 text-zinc-400 hover:text-zinc-600"
+            >
+              <X className="h-5 w-5" />
+            </button>
+
+            <h3 className="text-lg font-semibold text-zinc-900">Orphan Record Check</h3>
+            <p className="mt-1 text-sm text-zinc-500">
+              Counts rows whose user reference no longer exists in <span className="font-mono">auth.users</span>.
+            </p>
+
+            <div className="mt-4">
+              {orphansLoading && <div className="text-sm text-zinc-600">Running...</div>}
+              {orphansError && <div className="text-sm text-red-600">{orphansError}</div>}
+              {orphans && (
+                <div className="overflow-hidden rounded-lg border border-zinc-200">
+                  <table className="w-full text-sm">
+                    <thead className="bg-zinc-50">
+                      <tr>
+                        <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-zinc-500">Table</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-zinc-500">Key</th>
+                        <th className="px-3 py-2 text-right text-xs font-medium uppercase tracking-wider text-zinc-500">Orphans</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {orphans.map((r) => (
+                        <tr key={`${r.table}:${r.key}`} className="border-t border-zinc-100">
+                          <td className="px-3 py-2 font-mono text-xs text-zinc-700">{r.table}</td>
+                          <td className="px-3 py-2 font-mono text-xs text-zinc-700">{r.key}</td>
+                          <td className="px-3 py-2 text-right text-zinc-700">{r.orphanCount}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            <div className="mt-4 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setOrphansOpen(false)}
+                className="rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
