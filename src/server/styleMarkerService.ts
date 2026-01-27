@@ -614,6 +614,727 @@ function computeMetrics(games: StyleMarkerGame[]) {
   };
 }
 
+/** Count all pieces on the board */
+function countPieces(chess: Chess): number {
+  let count = 0;
+  for (const row of chess.board()) {
+    for (const p of row) {
+      if (p && p.type !== "k") count += 1; // Exclude kings
+    }
+  }
+  return count;
+}
+
+/**
+ * Compute extended style metrics for the 10 archetype system.
+ * These are Basic tier metrics that can be computed from PGN + existing eval data.
+ */
+export function computeExtendedStyleMetrics(games: StyleMarkerGame[]) {
+  // Quiet Move Ratio: non-forcing moves in first 20 opponent moves
+  let quietMoveSum = 0;
+  let quietMoveGames = 0;
+
+  // Sacrifice detection: games where opponent went down material without immediate recapture
+  let sacrificeSum = 0;
+  let sacrificeGames = 0;
+
+  // Piece count at move 30
+  let pieceCountAt30Sum = 0;
+  let pieceCountAt30Games = 0;
+
+  // Draw rate
+  let drawCount = 0;
+  let totalResultGames = 0;
+
+  // Short game rate (decisive games < 25 full moves)
+  let shortDecisiveCount = 0;
+  let decisiveGames = 0;
+
+  // Gambit frequency (material deficit in first 10 moves)
+  let gambitCount = 0;
+  let gambitCheckGames = 0;
+
+  // Opening variety tracking
+  const openingCategories = new Map<string, number>();
+
+  // Comeback rate (from eval data)
+  let comebackWins = 0;
+  let comebackDraws = 0;
+  let comebackOpportunities = 0;
+
+  // Early disadvantage tolerance (avg eval at move 15 in won/drawn games)
+  let earlyEvalSum = 0;
+  let earlyEvalGames = 0;
+
+  for (const g of games) {
+    const moves = Array.isArray(g.moves_san) ? g.moves_san : [];
+    const oppColor = g.opponent_color === "w" || g.opponent_color === "b" ? g.opponent_color : null;
+    if (moves.length === 0 || !oppColor) continue;
+
+    const fullMoves = Math.ceil(moves.length / 2);
+
+    // Track opening category
+    const cat = g.opening_category ?? classifyGameCategory(moves);
+    openingCategories.set(cat, (openingCategories.get(cat) ?? 0) + 1);
+
+    // Track result-based metrics
+    if (g.result === "win" || g.result === "loss" || g.result === "draw") {
+      totalResultGames += 1;
+      if (g.result === "draw") drawCount += 1;
+      if (g.result !== "draw") {
+        decisiveGames += 1;
+        if (fullMoves < 25) shortDecisiveCount += 1;
+      }
+    }
+
+    // Quiet Move Ratio: count non-forcing moves in first 20 opponent moves
+    {
+      const oppPlies = opponentMovePlies({ opponentColor: oppColor, maxFullMoves: 20 });
+      let quietCount = 0;
+      let totalChecked = 0;
+      for (const ply of oppPlies) {
+        const idx = ply - 1;
+        const mv = normalizeMove(moves[idx]);
+        if (!mv) break;
+        totalChecked += 1;
+        // A move is "quiet" if it doesn't capture (x), check (+), or checkmate (#)
+        const isForcing = mv.includes("x") || mv.endsWith("+") || mv.endsWith("#");
+        if (!isForcing) quietCount += 1;
+      }
+      if (totalChecked >= 10) {
+        quietMoveSum += quietCount / totalChecked;
+        quietMoveGames += 1;
+      }
+    }
+
+    // Piece count at move 30 (ply 60)
+    if (moves.length >= 60) {
+      const replay = new Chess();
+      let ok = true;
+      for (let i = 0; i < 60; i++) {
+        const mv = normalizeMove(moves[i]);
+        if (!mv) { ok = false; break; }
+        try {
+          replay.move(mv, { sloppy: true } as any);
+        } catch {
+          ok = false;
+          break;
+        }
+      }
+      if (ok) {
+        pieceCountAt30Sum += countPieces(replay);
+        pieceCountAt30Games += 1;
+      }
+    }
+
+    // Gambit detection: check if opponent is down material by ply 20
+    if (moves.length >= 20) {
+      const replay = new Chess();
+      let ok = true;
+      for (let i = 0; i < 20; i++) {
+        const mv = normalizeMove(moves[i]);
+        if (!mv) { ok = false; break; }
+        try {
+          replay.move(mv, { sloppy: true } as any);
+        } catch {
+          ok = false;
+          break;
+        }
+      }
+      if (ok) {
+        gambitCheckGames += 1;
+        // Count material for each side
+        let whiteMat = 0;
+        let blackMat = 0;
+        const pieceValues: Record<string, number> = { p: 1, n: 3, b: 3, r: 5, q: 9 };
+        for (const row of replay.board()) {
+          for (const p of row) {
+            if (!p || p.type === "k") continue;
+            const val = pieceValues[p.type] ?? 0;
+            if (p.color === "w") whiteMat += val;
+            else blackMat += val;
+          }
+        }
+        // Opponent is down material if their side has less
+        const oppMat = oppColor === "w" ? whiteMat : blackMat;
+        const userMat = oppColor === "w" ? blackMat : whiteMat;
+        if (oppMat < userMat) {
+          gambitCount += 1;
+        }
+      }
+    }
+
+    // Sacrifice detection: look for moves where opponent captures are not immediately recaptured
+    // Simplified: count pawn/piece sacs in first 30 moves
+    if (moves.length >= 30) {
+      sacrificeGames += 1;
+      const replay = new Chess();
+      let prevMaterialDiff = 0;
+      let sacCount = 0;
+      
+      for (let i = 0; i < Math.min(60, moves.length); i++) {
+        const mv = normalizeMove(moves[i]);
+        if (!mv) break;
+        try {
+          replay.move(mv, { sloppy: true } as any);
+        } catch {
+          break;
+        }
+        
+        // Calculate material difference
+        let whiteMat = 0;
+        let blackMat = 0;
+        const pieceValues: Record<string, number> = { p: 1, n: 3, b: 3, r: 5, q: 9 };
+        for (const row of replay.board()) {
+          for (const p of row) {
+            if (!p || p.type === "k") continue;
+            const val = pieceValues[p.type] ?? 0;
+            if (p.color === "w") whiteMat += val;
+            else blackMat += val;
+          }
+        }
+        
+        // Material diff from opponent's perspective
+        const currentDiff = oppColor === "w" ? whiteMat - blackMat : blackMat - whiteMat;
+        
+        // If opponent's move (odd ply for white, even for black) and they lost material
+        const isOppMove = i % 2 === (oppColor === "w" ? 0 : 1);
+        if (isOppMove && currentDiff < prevMaterialDiff - 0.5) {
+          // Opponent lost material on their move - possible sacrifice
+          // Check if it's recaptured in next 2 plies
+          const lostAmount = prevMaterialDiff - currentDiff;
+          if (lostAmount >= 1 && i + 2 < moves.length) {
+            // This is a simplification - just count as sacrifice if lost >= 1 pawn
+            sacCount += 1;
+          }
+        }
+        
+        prevMaterialDiff = currentDiff;
+      }
+      
+      sacrificeSum += sacCount;
+    }
+
+    // Comeback rate and early disadvantage (requires eval data)
+    if (g.evals && g.evals.length > 0) {
+      const isWhite = oppColor === "w";
+      let worstEval: number | null = null;
+      let evalAt30: number | null = null;
+      
+      for (let i = 0; i < g.evals.length; i++) {
+        const evalEntry = g.evals[i];
+        let cpEval = evalEntry.e;
+        if (evalEntry.m != null) {
+          cpEval = evalEntry.m > 0 ? 10000 : -10000;
+        }
+        if (cpEval == null) continue;
+        
+        // Eval from opponent's perspective
+        const oppEval = isWhite ? cpEval : -cpEval;
+        
+        // Track worst eval
+        if (worstEval === null || oppEval < worstEval) {
+          worstEval = oppEval;
+        }
+        
+        // Eval at ply 30
+        if (i === 29) {
+          evalAt30 = oppEval;
+        }
+      }
+      
+      // Comeback: was down < -150cp but got win/draw
+      if (worstEval !== null && worstEval < -150) {
+        comebackOpportunities += 1;
+        if (g.result === "win") comebackWins += 1;
+        else if (g.result === "draw") comebackDraws += 1;
+      }
+      
+      // Early disadvantage tolerance: avg eval at move 15 in won/drawn games
+      if (evalAt30 !== null && (g.result === "win" || g.result === "draw")) {
+        earlyEvalSum += evalAt30;
+        earlyEvalGames += 1;
+      }
+    }
+  }
+
+  // Calculate final metrics
+  const quietMoveRatio = quietMoveGames > 0 ? quietMoveSum / quietMoveGames : null;
+  const avgSacrificesPerGame = sacrificeGames > 0 ? sacrificeSum / sacrificeGames : null;
+  const avgPiecesAt30 = pieceCountAt30Games > 0 ? pieceCountAt30Sum / pieceCountAt30Games : null;
+  const drawRate = totalResultGames > 0 ? drawCount / totalResultGames : null;
+  const shortGameRate = decisiveGames > 0 ? shortDecisiveCount / decisiveGames : null;
+  const gambitFrequency = gambitCheckGames > 0 ? gambitCount / gambitCheckGames : null;
+  const comebackRate = comebackOpportunities > 0 
+    ? (comebackWins + comebackDraws) / comebackOpportunities 
+    : null;
+  const earlyDisadvantageTolerance = earlyEvalGames > 0 ? earlyEvalSum / earlyEvalGames : null;
+
+  // Opening variety: count categories with >= 10% of games
+  const totalGames = games.length;
+  let openingVarietyCount = 0;
+  for (const [, count] of openingCategories) {
+    if (count / totalGames >= 0.1) openingVarietyCount += 1;
+  }
+
+  return {
+    quietMoveRatio,
+    avgSacrificesPerGame,
+    avgPiecesAt30,
+    drawRate,
+    shortGameRate,
+    gambitFrequency,
+    comebackRate,
+    earlyDisadvantageTolerance,
+    openingVarietyCount,
+    counts: {
+      quiet_move_games: quietMoveGames,
+      sacrifice_games: sacrificeGames,
+      piece_count_games: pieceCountAt30Games,
+      result_games: totalResultGames,
+      decisive_games: decisiveGames,
+      gambit_check_games: gambitCheckGames,
+      comeback_opportunities: comebackOpportunities,
+      early_eval_games: earlyEvalGames,
+    },
+  };
+}
+
+/**
+ * Advanced tier metrics requiring deeper engine analysis.
+ * These are opt-in and computed on-demand due to higher computational cost.
+ */
+export type AdvancedStyleMetrics = {
+  evalVolatility: number | null; // Std dev of eval changes per game
+  evalSwingCount: number | null; // Avg # of 100cp+ swings per game
+  prophylacticMoveRatio: number | null; // Moves that prevent opponent's best continuation
+  counterThreatRatio: number | null; // Responding to threats with counter-threats
+  timeScrambleAccuracy: number | null; // Accuracy in low-time situations (if available)
+  criticalMomentAccuracy: number | null; // Accuracy when eval is close to 0
+  counts: {
+    games_with_evals: number;
+    prophylactic_check_games: number;
+    time_scramble_games: number;
+    critical_moment_games: number;
+  };
+};
+
+/**
+ * Compute Advanced tier style metrics from detailed engine analysis.
+ * Requires games with per-move eval data (evals array).
+ */
+export function computeAdvancedStyleMetrics(games: StyleMarkerGame[]): AdvancedStyleMetrics {
+  let evalVolatilitySum = 0;
+  let evalVolatilityGames = 0;
+
+  let evalSwingSum = 0;
+  let evalSwingGames = 0;
+
+  let prophylacticMoves = 0;
+  let prophylacticCheckMoves = 0;
+  let prophylacticCheckGames = 0;
+
+  let counterThreatMoves = 0;
+  let threatResponseMoves = 0;
+
+  let criticalMomentCorrect = 0;
+  let criticalMomentTotal = 0;
+  let criticalMomentGames = 0;
+
+  for (const g of games) {
+    const evals = g.evals;
+    if (!evals || evals.length < 10) continue;
+
+    const oppColor = g.opponent_color;
+    if (!oppColor) continue;
+
+    // Convert evals to centipawns, handling mate scores
+    const cpEvals: number[] = [];
+    for (const ev of evals) {
+      if (ev.m != null) {
+        // Mate score: convert to large cp value (sign indicates who's winning)
+        cpEvals.push(ev.m > 0 ? 10000 - ev.m * 100 : -10000 - ev.m * 100);
+      } else if (ev.e != null) {
+        cpEvals.push(ev.e);
+      } else {
+        cpEvals.push(0);
+      }
+    }
+
+    // Eval Volatility: standard deviation of eval changes between moves
+    const evalChanges: number[] = [];
+    for (let i = 1; i < cpEvals.length; i++) {
+      evalChanges.push(Math.abs(cpEvals[i] - cpEvals[i - 1]));
+    }
+    if (evalChanges.length > 0) {
+      const mean = evalChanges.reduce((a, b) => a + b, 0) / evalChanges.length;
+      const variance = evalChanges.reduce((sum, v) => sum + Math.pow(v - mean, 2), 0) / evalChanges.length;
+      evalVolatilitySum += Math.sqrt(variance);
+      evalVolatilityGames++;
+    }
+
+    // Eval Swing Count: number of 100cp+ swings in a game
+    let swingCount = 0;
+    for (let i = 1; i < cpEvals.length; i++) {
+      if (Math.abs(cpEvals[i] - cpEvals[i - 1]) >= 100) {
+        swingCount++;
+      }
+    }
+    evalSwingSum += swingCount;
+    evalSwingGames++;
+
+    // Prophylactic Move Detection (simplified heuristic):
+    // A move is prophylactic if: eval stayed stable or improved slightly
+    // after opponent had a clear plan (eval was drifting in their favor).
+    // We detect this by looking for moves that stabilize or reverse a trend.
+    const oppMoveIndices = oppColor === "w" ? 
+      Array.from({ length: Math.floor(cpEvals.length / 2) }, (_, i) => i * 2) :
+      Array.from({ length: Math.floor((cpEvals.length - 1) / 2) }, (_, i) => i * 2 + 1);
+    
+    for (let i = 2; i < oppMoveIndices.length; i++) {
+      const idx = oppMoveIndices[i];
+      if (idx >= cpEvals.length - 1) break;
+      
+      const prevTrend = cpEvals[idx - 2] - cpEvals[idx]; // Was eval trending against opponent?
+      const afterMove = cpEvals[idx + 1] - cpEvals[idx]; // Did opponent's move stabilize/improve?
+      
+      prophylacticCheckMoves++;
+      
+      // Prophylactic: opponent was losing ground but stopped the bleeding
+      if (prevTrend > 30 && afterMove >= -20 && afterMove <= 50) {
+        prophylacticMoves++;
+      }
+    }
+    if (prophylacticCheckMoves > 0) prophylacticCheckGames++;
+
+    // Counter-Threat Detection (simplified):
+    // When facing a threat (eval drops), respond with counter-play (eval recovers within 2 moves)
+    for (let i = 1; i < cpEvals.length - 2; i++) {
+      const drop = cpEvals[i] - cpEvals[i - 1];
+      // Significant threat: eval dropped 50+ cp
+      if (drop < -50) {
+        threatResponseMoves++;
+        // Check if recovered within next 2 moves
+        const recovery = cpEvals[i + 2] - cpEvals[i];
+        if (recovery > 30) {
+          counterThreatMoves++;
+        }
+      }
+    }
+
+    // Critical Moment Accuracy: accuracy when eval is close to 0 (±100cp)
+    for (let i = 0; i < cpEvals.length - 1; i++) {
+      const isOppMove = (oppColor === "w" && i % 2 === 0) || (oppColor === "b" && i % 2 === 1);
+      if (!isOppMove) continue;
+      
+      // Critical position: eval between -100 and +100
+      if (Math.abs(cpEvals[i]) <= 100) {
+        criticalMomentTotal++;
+        // Good move: didn't lose more than 30cp
+        const evalLoss = cpEvals[i] - cpEvals[i + 1];
+        if (oppColor === "w") {
+          if (evalLoss <= 30) criticalMomentCorrect++;
+        } else {
+          if (-evalLoss <= 30) criticalMomentCorrect++;
+        }
+      }
+    }
+    if (criticalMomentTotal > 0) criticalMomentGames++;
+  }
+
+  return {
+    evalVolatility: evalVolatilityGames > 0 ? evalVolatilitySum / evalVolatilityGames : null,
+    evalSwingCount: evalSwingGames > 0 ? evalSwingSum / evalSwingGames : null,
+    prophylacticMoveRatio: prophylacticCheckMoves > 0 ? prophylacticMoves / prophylacticCheckMoves : null,
+    counterThreatRatio: threatResponseMoves > 0 ? counterThreatMoves / threatResponseMoves : null,
+    timeScrambleAccuracy: null, // Would need clock data
+    criticalMomentAccuracy: criticalMomentTotal > 0 ? criticalMomentCorrect / criticalMomentTotal : null,
+    counts: {
+      games_with_evals: evalSwingGames,
+      prophylactic_check_games: prophylacticCheckGames,
+      time_scramble_games: 0,
+      critical_moment_games: criticalMomentGames,
+    },
+  };
+}
+
+/**
+ * Style archetype classification result
+ */
+export type StyleArchetypeResult = {
+  archetype: string;
+  label: string;
+  confidence: number; // 0-1
+  isPrimary: boolean;
+  supportingMetrics: Array<{
+    metric: string;
+    value: number | null;
+    threshold: number;
+    deviation: number; // positive = above threshold, negative = below
+  }>;
+  description: string;
+  preparationTip: string;
+};
+
+/**
+ * Full style classification result
+ */
+export type StyleClassificationResult = {
+  primaryStyles: StyleArchetypeResult[];
+  secondaryStyles: StyleArchetypeResult[];
+  tier: "basic" | "advanced";
+  sampleSize: number;
+  metricsComputed: Record<string, number | null>;
+};
+
+/**
+ * Classify a player into style archetypes based on computed metrics.
+ * Returns primary (strongest match) and secondary styles.
+ */
+export function classifyStyleArchetypes(
+  baseMetrics: ReturnType<typeof computeMetrics>,
+  extendedMetrics: ReturnType<typeof computeExtendedStyleMetrics>,
+  engineMetrics?: {
+    acpl: number | null;
+    blunderRate: number | null;
+    crumblePoint: number | null;
+    defensiveTenacity: number | null;
+  },
+  advancedMetrics?: AdvancedStyleMetrics | null
+): StyleClassificationResult {
+  const scores: Array<{ archetype: string; score: number; metrics: StyleArchetypeResult["supportingMetrics"] }> = [];
+
+  // Helper to calculate deviation from threshold
+  const calcDeviation = (value: number | null, threshold: number, higherIsBetter: boolean): number => {
+    if (value === null) return 0;
+    const diff = value - threshold;
+    return higherIsBetter ? diff / threshold : -diff / threshold;
+  };
+
+  // Combine all metrics into a single object
+  const allMetrics: Record<string, number | null> = {
+    queen_trade_rate: baseMetrics.queenTradeRate,
+    aggression_m15: baseMetrics.aggressionAvg,
+    castling_timing: baseMetrics.avgCastlePly,
+    opposite_castling_rate: baseMetrics.oppositeCastleRate,
+    avg_game_length: baseMetrics.avgGameLength,
+    quiet_move_ratio: extendedMetrics.quietMoveRatio,
+    sacrifice_count: extendedMetrics.avgSacrificesPerGame,
+    piece_trade_by_30: extendedMetrics.avgPiecesAt30,
+    draw_rate: extendedMetrics.drawRate,
+    short_game_rate: extendedMetrics.shortGameRate,
+    gambit_frequency: extendedMetrics.gambitFrequency,
+    comeback_rate: extendedMetrics.comebackRate,
+    early_disadvantage_tolerance: extendedMetrics.earlyDisadvantageTolerance,
+    opening_variety: extendedMetrics.openingVarietyCount,
+    acpl: engineMetrics?.acpl ?? null,
+    blunder_rate: engineMetrics?.blunderRate ?? null,
+    crumble_point: engineMetrics?.crumblePoint ?? null,
+    defensive_tenacity: engineMetrics?.defensiveTenacity ?? null,
+    // Advanced tier metrics (opt-in)
+    eval_volatility: advancedMetrics?.evalVolatility ?? null,
+    eval_swing_count: advancedMetrics?.evalSwingCount ?? null,
+    prophylactic_move_ratio: advancedMetrics?.prophylacticMoveRatio ?? null,
+    counter_threat_ratio: advancedMetrics?.counterThreatRatio ?? null,
+    critical_moment_accuracy: advancedMetrics?.criticalMomentAccuracy ?? null,
+  };
+
+  // Determine tier based on available advanced metrics
+  const hasAdvancedData = advancedMetrics && advancedMetrics.counts.games_with_evals >= 10;
+
+  // Style definitions with detection logic
+  const styleDefinitions: Array<{
+    archetype: string;
+    label: string;
+    description: string;
+    preparationTip: string;
+    metrics: Array<{ key: string; threshold: number; weight: number; higherIsBetter: boolean }>;
+  }> = [
+    {
+      archetype: "positional",
+      label: "Positional",
+      description: "Prefers quiet maneuvering, avoids tactical complications",
+      preparationTip: "Create imbalances early; don't let them control the tempo",
+      metrics: [
+        { key: "quiet_move_ratio", threshold: 0.7, weight: 2.0, higherIsBetter: true },
+        { key: "aggression_m15", threshold: 2.0, weight: 1.5, higherIsBetter: false },
+        { key: "sacrifice_count", threshold: 0.2, weight: 1.0, higherIsBetter: false },
+      ],
+    },
+    {
+      archetype: "tactical",
+      label: "Tactical",
+      description: "Thrives in complex positions with many threats",
+      preparationTip: "Simplify when possible; avoid sharp tactical melees",
+      metrics: [
+        { key: "aggression_m15", threshold: 3.0, weight: 2.0, higherIsBetter: true },
+        { key: "sacrifice_count", threshold: 0.3, weight: 1.5, higherIsBetter: true },
+        { key: "short_game_rate", threshold: 0.3, weight: 1.0, higherIsBetter: true },
+      ],
+    },
+    {
+      archetype: "aggressive",
+      label: "Aggressive",
+      description: "Launches direct attacks, willing to sacrifice for initiative",
+      preparationTip: "Prioritize king safety; be ready to defend accurately",
+      metrics: [
+        { key: "aggression_m15", threshold: 3.5, weight: 2.0, higherIsBetter: true },
+        { key: "opposite_castling_rate", threshold: 0.2, weight: 1.5, higherIsBetter: true },
+        { key: "castling_timing", threshold: 14, weight: 1.0, higherIsBetter: true }, // late castling
+        { key: "short_game_rate", threshold: 0.35, weight: 1.0, higherIsBetter: true },
+      ],
+    },
+    {
+      archetype: "defensive",
+      label: "Defensive",
+      description: "Prioritizes solidity, neutralizes threats, hard to beat",
+      preparationTip: "Prepare for long games; they won't crack under pressure",
+      metrics: [
+        { key: "defensive_tenacity", threshold: 10, weight: 2.0, higherIsBetter: true },
+        { key: "comeback_rate", threshold: 0.3, weight: 1.5, higherIsBetter: true },
+        { key: "draw_rate", threshold: 0.25, weight: 1.0, higherIsBetter: true },
+        { key: "crumble_point", threshold: -150, weight: 1.0, higherIsBetter: false }, // blunders only when already losing
+      ],
+    },
+    {
+      archetype: "counterattacking",
+      label: "Counterattacking",
+      description: "Accepts disadvantage to strike back when opponent overextends",
+      preparationTip: "Don't overextend; they're waiting for you to overreach",
+      metrics: [
+        { key: "early_disadvantage_tolerance", threshold: -30, weight: 2.0, higherIsBetter: false },
+        { key: "comeback_rate", threshold: 0.35, weight: 2.0, higherIsBetter: true },
+        { key: "defensive_tenacity", threshold: 12, weight: 1.0, higherIsBetter: true },
+      ],
+    },
+    {
+      archetype: "sacrificial",
+      label: "Sacrificial",
+      description: "Frequently gives up material for activity or attack",
+      preparationTip: "Accept their gambits if you can defend; they rely on initiative",
+      metrics: [
+        { key: "sacrifice_count", threshold: 0.4, weight: 2.5, higherIsBetter: true },
+        { key: "gambit_frequency", threshold: 0.15, weight: 2.0, higherIsBetter: true },
+        { key: "aggression_m15", threshold: 3.0, weight: 1.0, higherIsBetter: true },
+      ],
+    },
+    {
+      archetype: "materialistic",
+      label: "Materialistic",
+      description: "Prioritizes material gain, rarely sacrifices",
+      preparationTip: "Don't leave material en prise; they will grab everything",
+      metrics: [
+        { key: "sacrifice_count", threshold: 0.1, weight: 2.0, higherIsBetter: false },
+        { key: "gambit_frequency", threshold: 0.05, weight: 2.0, higherIsBetter: false },
+        { key: "avg_game_length", threshold: 40, weight: 1.0, higherIsBetter: true },
+      ],
+    },
+    {
+      archetype: "endgame_oriented",
+      label: "Endgame-Oriented",
+      description: "Steers toward simplified positions where technique prevails",
+      preparationTip: "Keep pieces on; avoid equal endgames unless you have technique",
+      metrics: [
+        { key: "queen_trade_rate", threshold: 0.5, weight: 2.0, higherIsBetter: true },
+        { key: "avg_game_length", threshold: 45, weight: 1.5, higherIsBetter: true },
+        { key: "piece_trade_by_30", threshold: 10, weight: 1.0, higherIsBetter: false }, // fewer pieces = more trades
+      ],
+    },
+    {
+      archetype: "universal",
+      label: "Universal",
+      description: "Adapts style to position; no single exploitable weakness",
+      preparationTip: "No obvious weakness to exploit; prepare broadly",
+      metrics: [
+        { key: "opening_variety", threshold: 3.5, weight: 2.0, higherIsBetter: true },
+        // Universal is also detected by having moderate values across all metrics
+      ],
+    },
+    {
+      archetype: "prophylactic",
+      label: "Prophylactic",
+      description: "Anticipates and prevents opponent's plans before they develop",
+      preparationTip: "Play actively; don't give them time to neutralize your ideas",
+      metrics: [
+        { key: "prophylactic_move_ratio", threshold: 0.25, weight: 3.0, higherIsBetter: true },
+        { key: "eval_volatility", threshold: 40, weight: 1.5, higherIsBetter: false }, // Low volatility = stable play
+        { key: "critical_moment_accuracy", threshold: 0.7, weight: 1.5, higherIsBetter: true },
+        { key: "quiet_move_ratio", threshold: 0.65, weight: 1.0, higherIsBetter: true },
+      ],
+    },
+  ];
+
+  // Calculate score for each style
+  for (const style of styleDefinitions) {
+    let totalScore = 0;
+    let totalWeight = 0;
+    const supportingMetrics: StyleArchetypeResult["supportingMetrics"] = [];
+
+    for (const m of style.metrics) {
+      const value = allMetrics[m.key];
+      if (value === null) continue;
+
+      const deviation = calcDeviation(value, m.threshold, m.higherIsBetter);
+      const contribution = Math.max(0, deviation) * m.weight;
+      totalScore += contribution;
+      totalWeight += m.weight;
+
+      supportingMetrics.push({
+        metric: m.key,
+        value,
+        threshold: m.threshold,
+        deviation,
+      });
+    }
+
+    // Normalize score
+    const normalizedScore = totalWeight > 0 ? totalScore / totalWeight : 0;
+
+    scores.push({
+      archetype: style.archetype,
+      score: normalizedScore,
+      metrics: supportingMetrics,
+    });
+  }
+
+  // Sort by score descending
+  scores.sort((a, b) => b.score - a.score);
+
+  // Map to results
+  const mapToResult = (item: typeof scores[0], isPrimary: boolean): StyleArchetypeResult => {
+    const def = styleDefinitions.find((d) => d.archetype === item.archetype)!;
+    return {
+      archetype: item.archetype,
+      label: def.label,
+      confidence: Math.min(1, item.score), // Cap at 1
+      isPrimary,
+      supportingMetrics: item.metrics,
+      description: def.description,
+      preparationTip: def.preparationTip,
+    };
+  };
+
+  // Primary styles: top 2 with score > 0.3
+  const primaryStyles = scores
+    .filter((s) => s.score > 0.3)
+    .slice(0, 2)
+    .map((s) => mapToResult(s, true));
+
+  // Secondary styles: next 3 with score > 0.15
+  const secondaryStyles = scores
+    .filter((s) => s.score > 0.15 && !primaryStyles.some((p) => p.archetype === s.archetype))
+    .slice(0, 3)
+    .map((s) => mapToResult(s, false));
+
+  return {
+    primaryStyles,
+    secondaryStyles,
+    tier: hasAdvancedData ? "advanced" : "basic",
+    sampleSize: extendedMetrics.counts.quiet_move_games,
+    metricsComputed: allMetrics,
+  };
+}
+
 /** Generate signature deviation narratives based on context matrix */
 function generateNarratives(
   contextMatrix: CategoryColorContext[],
@@ -1114,6 +1835,26 @@ export async function calculateAndStoreMarkers(params: {
 
   const metrics = computeMetrics(games);
 
+  // Compute extended style metrics for archetype classification
+  const extendedStyleMetrics = computeExtendedStyleMetrics(games);
+
+  // Compute advanced metrics if enough games have eval data (opt-in for Advanced tier)
+  const gamesWithEvals = games.filter((g) => g.evals && g.evals.length >= 10);
+  const advancedStyleMetrics = gamesWithEvals.length >= 10 ? computeAdvancedStyleMetrics(games) : null;
+
+  // Classify into style archetypes
+  const styleClassification = classifyStyleArchetypes(
+    metrics,
+    extendedStyleMetrics,
+    {
+      acpl: engineMetricsOverall.acpl,
+      blunderRate: engineMetricsOverall.blunder_rate,
+      crumblePoint: engineMetricsOverall.crumble_point,
+      defensiveTenacity: engineMetricsOverall.defensive_tenacity,
+    },
+    advancedStyleMetrics
+  );
+
   const markers: StyleMarkerRow[] = [];
 
   // Axis rows are always stored so the UI can render spectrum bars even when deviations are small.
@@ -1382,6 +2123,43 @@ export async function calculateAndStoreMarkers(params: {
     }
   }
 
+  // Add archetype markers for primary and secondary styles
+  for (const style of styleClassification.primaryStyles) {
+    markers.push({
+      marker_key: `archetype_${style.archetype}`,
+      label: style.label,
+      strength: style.confidence > 0.6 ? "Strong" : style.confidence > 0.4 ? "Medium" : "Light",
+      tooltip: style.preparationTip,
+      metrics_json: {
+        ...(sessionKey ? { session_key: sessionKey } : {}),
+        archetype: style.archetype,
+        confidence: style.confidence,
+        isPrimary: true,
+        description: style.description,
+        supportingMetrics: style.supportingMetrics,
+        tier: styleClassification.tier,
+      },
+    });
+  }
+
+  for (const style of styleClassification.secondaryStyles) {
+    markers.push({
+      marker_key: `archetype_${style.archetype}`,
+      label: style.label,
+      strength: "Light",
+      tooltip: style.preparationTip,
+      metrics_json: {
+        ...(sessionKey ? { session_key: sessionKey } : {}),
+        archetype: style.archetype,
+        confidence: style.confidence,
+        isPrimary: false,
+        description: style.description,
+        supportingMetrics: style.supportingMetrics,
+        tier: styleClassification.tier,
+      },
+    });
+  }
+
   await params.supabase
     .from("opponent_style_markers")
     .delete()
@@ -1418,5 +2196,17 @@ export async function calculateAndStoreMarkers(params: {
     },
     benchmark: bench,
     contextual: contextualData,
+    styleClassification,
+    extendedMetrics: {
+      quietMoveRatio: extendedStyleMetrics.quietMoveRatio,
+      avgSacrificesPerGame: extendedStyleMetrics.avgSacrificesPerGame,
+      avgPiecesAt30: extendedStyleMetrics.avgPiecesAt30,
+      drawRate: extendedStyleMetrics.drawRate,
+      shortGameRate: extendedStyleMetrics.shortGameRate,
+      gambitFrequency: extendedStyleMetrics.gambitFrequency,
+      comebackRate: extendedStyleMetrics.comebackRate,
+      earlyDisadvantageTolerance: extendedStyleMetrics.earlyDisadvantageTolerance,
+      openingVarietyCount: extendedStyleMetrics.openingVarietyCount,
+    },
   };
 }

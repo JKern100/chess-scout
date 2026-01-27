@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronDown, LayoutDashboard, LineChart, FileText, RefreshCw, Menu, X, Check, UserCircle, LogOut, History, Settings, Shield, BookOpen } from "lucide-react";
+import { ChevronDown, LayoutDashboard, LineChart, FileText, RefreshCw, Menu, X, Check, UserCircle, LogOut, History, Settings, Shield, BookOpen, Sparkles } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { useActiveOpponent } from "@/context/ActiveOpponentContext";
 import { useImportQueue } from "@/context/ImportQueueContext";
@@ -47,12 +47,35 @@ function isActivePath(pathname: string, link: NavLink): boolean {
 export function GlobalNavBar() {
   const pathname = usePathname();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { activeOpponent, setActiveOpponent, availableOpponents, isLoading } = useActiveOpponent();
   const { isImporting } = useImportQueue();
   const { isAdmin } = useAdminGuard();
 
   const [simThinking, setSimThinking] = useState(false);
   const [thinkingDots, setThinkingDots] = useState(1);
+
+  // Synthetic opponent support
+  const isSyntheticMode = searchParams.get("synthetic") === "true";
+  const [syntheticOpponent, setSyntheticOpponent] = useState<{ id: string; name: string; stylePreset: string } | null>(null);
+
+  useEffect(() => {
+    if (!isSyntheticMode) {
+      setSyntheticOpponent(null);
+      return;
+    }
+    try {
+      const stored = window.localStorage.getItem("chessscout.syntheticOpponent");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed?.id && parsed?.name) {
+          setSyntheticOpponent(parsed);
+        }
+      }
+    } catch {
+      // Ignore
+    }
+  }, [isSyntheticMode]);
 
   useEffect(() => {
     function handleSimThinking(e: Event) {
@@ -83,6 +106,25 @@ export function GlobalNavBar() {
   const dropdownRef = useRef<HTMLDivElement>(null);
   const profileDropdownRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Synthetic opponents list
+  const [syntheticOpponents, setSyntheticOpponents] = useState<Array<{ id: string; name: string; stylePreset: string; syncStatus: string }>>([]);
+
+  // Fetch synthetic opponents
+  useEffect(() => {
+    async function fetchSyntheticOpponents() {
+      try {
+        const res = await fetch("/api/synthetic-opponents");
+        if (res.ok) {
+          const data = await res.json();
+          setSyntheticOpponents(data.syntheticOpponents || []);
+        }
+      } catch {
+        // Ignore
+      }
+    }
+    fetchSyntheticOpponents();
+  }, []);
 
   // Close dropdowns when clicking outside
   useEffect(() => {
@@ -141,6 +183,10 @@ export function GlobalNavBar() {
   const filteredOpponents = availableOpponents.filter((o) =>
     o.username.toLowerCase().includes(searchQuery.toLowerCase())
   );
+  
+  const filteredSynthetic = syntheticOpponents.filter((o) =>
+    o.name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   const handleSelectOpponent = useCallback(
     (opponent: { platform: "lichess" | "chesscom"; username: string; rating?: number | null }) => {
@@ -154,6 +200,23 @@ export function GlobalNavBar() {
       }
     },
     [pathname, router, setActiveOpponent]
+  );
+
+  const handleSelectSyntheticOpponent = useCallback(
+    (synthetic: { id: string; name: string; stylePreset: string }) => {
+      // Store in localStorage and navigate to play page
+      try {
+        window.localStorage.setItem("chessscout.syntheticOpponent", JSON.stringify(synthetic));
+      } catch {
+        // Ignore
+      }
+      setDropdownOpen(false);
+      setSearchQuery("");
+      
+      // Navigate to play page with synthetic mode
+      router.push("/play?mode=simulation&synthetic=true");
+    },
+    [router]
   );
 
   const handleScoutReportClick = useCallback(() => {
@@ -214,6 +277,14 @@ export function GlobalNavBar() {
             >
               {isLoading ? (
                 <RefreshCw className="h-4 w-4 animate-spin text-zinc-400" />
+              ) : isSyntheticMode && syntheticOpponent ? (
+                <>
+                  <Sparkles className="h-4 w-4 text-amber-500" />
+                  <span className="max-w-[120px] truncate">{syntheticOpponent.name}</span>
+                  <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
+                    Simulated
+                  </span>
+                </>
               ) : activeOpponent ? (
                 <>
                   <span className="max-w-[120px] truncate">{activeOpponent.username}</span>
@@ -244,11 +315,54 @@ export function GlobalNavBar() {
 
                 {/* Player List */}
                 <div className="max-h-64 overflow-y-auto p-1">
-                  {filteredOpponents.length === 0 ? (
-                    <div className="px-3 py-4 text-center text-sm text-zinc-500">
-                      {availableOpponents.length === 0 ? "No players imported yet" : "No matches found"}
+                  {/* Synthetic Opponents Section */}
+                  {filteredSynthetic.length > 0 && (
+                    <>
+                      <div className="px-3 py-2 text-xs font-medium text-amber-700 bg-amber-50 rounded-md mx-1 mt-1">
+                        <Sparkles className="inline h-3 w-3 mr-1" />
+                        Simulated Opponents
+                      </div>
+                      {filteredSynthetic.map((o) => {
+                        const isSelected = isSyntheticMode && syntheticOpponent?.id === o.id;
+                        return (
+                          <button
+                            key={`synthetic:${o.id}`}
+                            type="button"
+                            onClick={() => handleSelectSyntheticOpponent(o)}
+                            className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition-colors ${
+                              isSelected ? "bg-amber-100 text-amber-900" : "text-amber-700 hover:bg-amber-50"
+                            }`}
+                          >
+                            <div className="flex items-center gap-2">
+                              <Sparkles className="h-3.5 w-3.5" />
+                              <span className="font-medium">{o.name}</span>
+                              <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 capitalize">
+                                {o.stylePreset}
+                              </span>
+                              {o.syncStatus === "syncing" && (
+                                <RefreshCw className="h-3 w-3 animate-spin text-amber-600" />
+                              )}
+                            </div>
+                            {isSelected && <Check className="h-4 w-4 text-amber-600" />}
+                          </button>
+                        );
+                      })}
+                    </>
+                  )}
+
+                  {/* Regular Players Section */}
+                  {filteredSynthetic.length > 0 && filteredOpponents.length > 0 && (
+                    <div className="px-3 py-2 text-xs font-medium text-zinc-500 mt-2">
+                      Players
                     </div>
-                  ) : (
+                  )}
+                  {filteredOpponents.length === 0 && filteredSynthetic.length === 0 ? (
+                    <div className="px-3 py-4 text-center text-sm text-zinc-500">
+                      {availableOpponents.length === 0 && syntheticOpponents.length === 0 
+                        ? "No opponents yet" 
+                        : "No matches found"}
+                    </div>
+                  ) : filteredOpponents.length > 0 ? (
                     filteredOpponents.map((o) => {
                       const isSelected =
                         activeOpponent?.platform === o.platform &&
@@ -275,7 +389,7 @@ export function GlobalNavBar() {
                         </button>
                       );
                     })
-                  )}
+                  ) : null}
                 </div>
               </div>
             )}

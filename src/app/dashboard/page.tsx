@@ -216,7 +216,38 @@ export default async function Dashboard() {
       }
     } catch {}
 
-    return <DashboardPage initialOpponents={opponentsWithCounts as any} initialSelfPlayer={selfPlayer} />;
+    // Fetch synthetic opponents
+    let syntheticOpponents: any[] = [];
+    try {
+      const { data: syntheticData } = await supabase
+        .from("synthetic_opponents")
+        .select("*")
+        .eq("profile_id", user.id)
+        .is("archived_at", null)
+        .order("created_at", { ascending: false });
+
+      if (Array.isArray(syntheticData)) {
+        syntheticOpponents = syntheticData.map((row: any) => ({
+          id: row.id,
+          name: row.name,
+          stylePreset: row.style_preset,
+          openingEco: row.opening_eco,
+          openingName: row.opening_name,
+          openingFen: row.opening_fen,
+          ratingTier: row.rating_tier,
+          syncStatus: row.sync_status,
+          syncError: row.sync_error,
+          gamesFetched: row.games_fetched ?? 0,
+          gamesScored: row.games_scored ?? 0,
+          styleMarkers: row.style_markers_json,
+          createdAt: row.created_at,
+        }));
+      }
+    } catch {
+      // Ignore errors - table might not exist yet
+    }
+
+    return <DashboardPage initialOpponents={opponentsWithCounts as any} initialSelfPlayer={selfPlayer} initialSyntheticOpponents={syntheticOpponents} />;
   } catch (e) {
     if (e && typeof e === "object") {
       const anyErr = e as any;

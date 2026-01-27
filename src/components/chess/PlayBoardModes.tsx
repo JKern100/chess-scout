@@ -660,18 +660,49 @@ export function PlayBoardModes({ initialFen }: Props) {
 
   const savedLineId = searchParams.get("saved_line_id");
   const modeParam = searchParams.get("mode");
+  const isSyntheticMode = searchParams.get("synthetic") === "true";
 
   const { activeOpponent, setActiveOpponent, availableOpponents: globalAvailableOpponents } = useActiveOpponent();
   const [opponentUsername, setOpponentUsernameLocal] = useState<string>("");
   const [availableOpponents, setAvailableOpponents] = useState<Array<{ platform: string; username: string }>>([]);
   const { imports } = useImportsRealtime();
 
-  // Sync local opponent username with global active opponent
+  // Synthetic opponent state
+  const [syntheticOpponent, setSyntheticOpponent] = useState<{
+    id: string;
+    name: string;
+    stylePreset: string;
+    openingFen: string;
+    styleMarkers: any;
+  } | null>(null);
+
+  // Load synthetic opponent from localStorage if in synthetic mode
   useEffect(() => {
+    if (!isSyntheticMode) {
+      setSyntheticOpponent(null);
+      return;
+    }
+    try {
+      const stored = window.localStorage.getItem("chessscout.syntheticOpponent");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed?.id && parsed?.name) {
+          setSyntheticOpponent(parsed);
+          setOpponentUsernameLocal(parsed.name);
+        }
+      }
+    } catch {
+      // Ignore
+    }
+  }, [isSyntheticMode]);
+
+  // Sync local opponent username with global active opponent (only if not in synthetic mode)
+  useEffect(() => {
+    if (isSyntheticMode) return;
     if (activeOpponent?.username) {
       setOpponentUsernameLocal(activeOpponent.username);
     }
-  }, [activeOpponent]);
+  }, [activeOpponent, isSyntheticMode]);
 
   // When local opponent changes, update global context
   const setOpponentUsername = useCallback((username: string) => {
@@ -1456,6 +1487,7 @@ export function PlayBoardModes({ initialFen }: Props) {
   const [analysisStats, setAnalysisStats] = useState<Stats | null>(null);
   const [analysisStatsBusy, setAnalysisStatsBusy] = useState(false);
   const [analysisRightTab, setAnalysisRightTab] = useState<AnalysisRightTab>("stats");
+  const [syntheticGamesCount, setSyntheticGamesCount] = useState<number | undefined>(undefined);
 
   const [analysisStatsReadyKey, setAnalysisStatsReadyKey] = useState<string | null>(null);
 
@@ -1857,6 +1889,7 @@ export function PlayBoardModes({ initialFen }: Props) {
         to: analysisAppliedFilters.toDate || null,
         prefetch: params.prefetch ?? false,
         force_rpc: params.force_rpc ?? false,
+        synthetic_opponent_id: isSyntheticMode && syntheticOpponent?.id ? syntheticOpponent.id : null,
       }),
     });
 
@@ -1878,6 +1911,11 @@ export function PlayBoardModes({ initialFen }: Props) {
         (text && text.trim() ? text.trim() : null) ??
         `Opponent simulation failed (${res.status})`;
       throw new Error(message);
+    }
+
+    // Track synthetic games count from API response
+    if (isSyntheticMode && json?.cache?.max_games != null) {
+      setSyntheticGamesCount(Number(json.cache.max_games));
     }
 
     return (json ?? {}) as any;
@@ -2923,6 +2961,8 @@ export function PlayBoardModes({ initialFen }: Props) {
               filterTo={analysisAppliedFilters.toDate || null}
               filterSpeeds={analysisAppliedFilters.speeds}
               filterRated={analysisAppliedFilters.rated}
+              isSyntheticMode={isSyntheticMode}
+              syntheticGamesCount={syntheticGamesCount}
             />
           );
         }
@@ -3060,6 +3100,9 @@ function AnalysisRightSidebar(props: {
   filterTo?: string | null;
   filterSpeeds?: string[] | null;
   filterRated?: 'any' | 'rated' | 'casual';
+  // Synthetic opponent props
+  isSyntheticMode?: boolean;
+  syntheticGamesCount?: number;
 }) {
   const {
     state,
@@ -3125,6 +3168,8 @@ function AnalysisRightSidebar(props: {
     filterTo,
     filterSpeeds,
     filterRated,
+    isSyntheticMode = false,
+    syntheticGamesCount,
   } = props;
 
   const active = analysisRightTab;
@@ -3402,6 +3447,8 @@ function AnalysisRightSidebar(props: {
               filterTo={filterTo}
               filterSpeeds={filterSpeeds}
               filterRated={filterRated}
+              isSyntheticMode={isSyntheticMode}
+              syntheticGamesCount={syntheticGamesCount}
             />
           </div>
 

@@ -55,6 +55,8 @@ type Props = {
   filterSpeeds?: string[] | null;
   filterRated?: 'any' | 'rated' | 'casual';
   engineDepth?: number;
+  isSyntheticMode?: boolean;
+  syntheticGamesCount?: number;
 };
 
 type MoveRow = {
@@ -209,6 +211,8 @@ export function AnalysisBoard(props: Props) {
     filterSpeeds,
     filterRated = 'any',
     engineDepth = 18,
+    isSyntheticMode = false,
+    syntheticGamesCount,
   } = props;
   
   // Compute position key for refinement
@@ -803,8 +807,21 @@ export function AnalysisBoard(props: Props) {
     <div className="flex flex-col gap-2">
       {state.status ? <div className="text-xs text-zinc-600">{state.status}</div> : null}
       
-      {/* Date filter status banner - show when date filter is active */}
-      {(filterFrom || filterTo) && enabled && nextMoveList.moves?.length > 0 ? (
+      {/* Synthetic opponent info banner */}
+      {isSyntheticMode && enabled && nextMoveList.moves?.length > 0 ? (
+        <div className="rounded-lg border border-purple-200 bg-purple-50 px-2 py-1.5 text-[10px] text-purple-800">
+          <div className="flex items-center gap-1">
+            <span className="font-medium text-purple-700">Simulated opponent</span>
+            <span className="mx-1">•</span>
+            <span className="text-purple-600">
+              {syntheticGamesCount != null ? `${syntheticGamesCount} style-matched games` : 'Loading games...'}
+            </span>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Date filter status banner - show when date filter is active (not for synthetic opponents) */}
+      {!isSyntheticMode && (filterFrom || filterTo) && enabled && nextMoveList.moves?.length > 0 ? (
         <div className={`rounded-lg border px-2 py-1.5 text-[10px] ${
           hasRefinedData 
             ? 'border-emerald-200 bg-emerald-50 text-emerald-800' 

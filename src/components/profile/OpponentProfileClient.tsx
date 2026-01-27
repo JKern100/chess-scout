@@ -515,7 +515,11 @@ export function OpponentProfileClient({ platform, username, isSelfAnalysis = fal
       if (!res.ok) throw new Error(String((json as any)?.error ?? "Failed to load report"));
       setNeedsMigration(Boolean((json as any)?.needs_migration));
       setProfileRow(((json as any)?.opponent_profile as OpponentProfileRow | null) ?? null);
-      // Note: We no longer use PROFILE markers here - SESSION markers are fetched separately
+      const profileMarkers = Array.isArray((json as any)?.style_markers)
+        ? (((json as any).style_markers as StoredStyleMarker[]) ?? []).filter(Boolean)
+        : [];
+      // Keep PROFILE archetypes available for display; SESSION markers are fetched separately for filter-scoped axes.
+      setStoredStyleMarkers(profileMarkers);
     } catch (e) {
       setProfileRow(null);
       setNeedsMigration(false);
@@ -546,7 +550,20 @@ export function OpponentProfileClient({ platform, username, isSelfAnalysis = fal
       if (!res.ok) return false;
       const rows = Array.isArray((json as any)?.markers) ? ((json as any).markers as StoredStyleMarker[]) : [];
       const filtered = rows.filter(Boolean);
-      setStoredStyleMarkers(filtered);
+      setStoredStyleMarkers((prev) => {
+        const keep = (prev ?? []).filter(
+          (m) => typeof m?.marker_key === "string" && m.marker_key.startsWith("archetype_")
+        );
+        const byKey = new Map<string, StoredStyleMarker>();
+        for (const m of keep) {
+          if (m?.marker_key) byKey.set(m.marker_key, m);
+        }
+        // Prefer SESSION markers for axes (they are filter-scoped)
+        for (const m of filtered) {
+          if (m?.marker_key) byKey.set(m.marker_key, m);
+        }
+        return Array.from(byKey.values());
+      });
       return filtered.length > 0;
     } catch {
       // Silent fail - markers will just not display
@@ -1627,7 +1644,72 @@ export function OpponentProfileClient({ platform, username, isSelfAnalysis = fal
                     ))}
                   </div>
 
-                  {/* Pro-Scout Narratives section removed - replaced by AI Coach */}
+                  {/* Style Archetype Badges */}
+                  {(() => {
+                    const archetypeMarkers = storedStyleMarkers.filter((m) => m.marker_key.startsWith("archetype_"));
+                    const primaryArchetypes = archetypeMarkers.filter((m) => m.metrics_json?.isPrimary === true);
+                    const secondaryArchetypes = archetypeMarkers.filter((m) => m.metrics_json?.isPrimary === false);
+                    const tier = primaryArchetypes[0]?.metrics_json?.tier ?? "basic";
+                    
+                    if (archetypeMarkers.length === 0) return null;
+                    
+                    return (
+                      <div className="rounded-xl border border-neutral-200 bg-neutral-50 p-3">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-[10px] font-semibold text-neutral-700">Playing Style</span>
+                          <span className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[9px] font-medium ${
+                            tier === "advanced" 
+                              ? "bg-purple-100 text-purple-700 border border-purple-200" 
+                              : "bg-neutral-100 text-neutral-600 border border-neutral-200"
+                          }`}>
+                            {tier === "advanced" ? "⚡ Advanced" : "Basic"}
+                          </span>
+                        </div>
+                        
+                        {/* Primary Styles */}
+                        {primaryArchetypes.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5 mb-2">
+                            {primaryArchetypes.map((m) => (
+                              <div
+                                key={m.marker_key}
+                                title={`${m.metrics_json?.description ?? ""}\n\nPreparation: ${m.tooltip}`}
+                                className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 border ${
+                                  m.strength === "Strong"
+                                    ? "bg-yellow-100 border-yellow-300 text-yellow-800"
+                                    : m.strength === "Medium"
+                                    ? "bg-amber-50 border-amber-200 text-amber-700"
+                                    : "bg-neutral-100 border-neutral-200 text-neutral-700"
+                                }`}
+                              >
+                                <span className="text-xs font-semibold">{m.label}</span>
+                                {m.metrics_json?.confidence != null && (
+                                  <span className="text-[9px] opacity-70">
+                                    {Math.round(m.metrics_json.confidence * 100)}%
+                                  </span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        
+                        {/* Secondary Styles */}
+                        {secondaryArchetypes.length > 0 && (
+                          <div className="flex flex-wrap gap-1">
+                            <span className="text-[9px] text-neutral-500 mr-1">Also:</span>
+                            {secondaryArchetypes.map((m) => (
+                              <div
+                                key={m.marker_key}
+                                title={`${m.metrics_json?.description ?? ""}\n\nPreparation: ${m.tooltip}`}
+                                className="inline-flex items-center gap-1 rounded-md bg-neutral-100 border border-neutral-200 px-1.5 py-0.5 text-[10px] text-neutral-600"
+                              >
+                                {m.label}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   <div className="grid gap-3">
                     <StyleSpectrumBar

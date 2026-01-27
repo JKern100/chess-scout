@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Chessboard } from "react-chessboard";
-import { MoreVertical, Check, RefreshCw, LayoutGrid, List, X } from "lucide-react";
+import { MoreVertical, Check, RefreshCw, LayoutGrid, List, X, ChevronsUpDown, ChevronsDownUp } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useImportsRealtime } from "@/lib/hooks/useImportsRealtime";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -13,6 +13,9 @@ import { AddPlayerModal } from "./AddPlayerModal";
 import { AnimatedNumber } from "./AnimatedNumber";
 import { OpponentCard, type ActivitySummary } from "./OpponentCard";
 import { PlatformLogo } from "@/components/PlatformLogo";
+import { CreateSyntheticOpponentModal } from "./CreateSyntheticOpponentModal";
+import { SyntheticOpponentCard } from "./SyntheticOpponentCard";
+import type { SyntheticStylePreset, RatingTier } from "@/config/syntheticStylePresets";
 
 type ChessPlatform = "lichess" | "chesscom";
 
@@ -46,9 +49,26 @@ type SavedLineRow = {
   saved_at: string;
 };
 
+type SyntheticOpponentRow = {
+  id: string;
+  name: string;
+  stylePreset: SyntheticStylePreset;
+  openingEco: string | null;
+  openingName: string;
+  openingFen: string;
+  ratingTier: RatingTier;
+  syncStatus: "pending" | "syncing" | "complete" | "error";
+  syncError?: string | null;
+  gamesFetched: number;
+  gamesScored: number;
+  styleMarkers?: any;
+  createdAt: string;
+};
+
 type Props = {
   initialOpponents: OpponentRow[];
   initialSelfPlayer?: OpponentRow | null;
+  initialSyntheticOpponents?: SyntheticOpponentRow[];
 };
 
 function formatRelative(iso: string) {
@@ -93,13 +113,15 @@ type LichessActivity = {
   activityLevel: "inactive" | "active" | "very_active";
 };
 
-export function DashboardPage({ initialOpponents, initialSelfPlayer }: Props) {
+export function DashboardPage({ initialOpponents, initialSelfPlayer, initialSyntheticOpponents }: Props) {
   const MIN_GAMES_FOR_ANALYSIS = 10;
   const router = useRouter();
   const [isMounted, setIsMounted] = useState(false);
   const [opponents, setOpponents] = useState<OpponentRow[]>(initialOpponents);
   const [selfPlayer, setSelfPlayer] = useState<OpponentRow | null>(initialSelfPlayer ?? null);
+  const [syntheticOpponents, setSyntheticOpponents] = useState<SyntheticOpponentRow[]>(initialSyntheticOpponents ?? []);
   const [addPlayerModalOpen, setAddPlayerModalOpen] = useState(false);
+  const [createSyntheticModalOpen, setCreateSyntheticModalOpen] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [openMenuKey, setOpenMenuKey] = useState<string | null>(null);
@@ -107,6 +129,9 @@ export function DashboardPage({ initialOpponents, initialSelfPlayer }: Props) {
 
   // View toggle state
   const [viewMode, setViewMode] = useState<ViewMode>("card");
+
+  // Card expansion state - default to all collapsed (condensed view)
+  const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
 
   // Rich data layer - online status and ratings
   const [lichessStatus, setLichessStatus] = useState<Map<string, LichessUserStatus>>(new Map());
@@ -334,6 +359,69 @@ export function DashboardPage({ initialOpponents, initialSelfPlayer }: Props) {
       setSelfPlayer(json.selfPlayer as OpponentRow);
     }
   }
+
+  async function reloadSyntheticOpponents() {
+    try {
+      const res = await fetch("/api/synthetic-opponents", { cache: "no-store" });
+      const json = await res.json();
+      if (res.ok && Array.isArray(json?.syntheticOpponents)) {
+        setSyntheticOpponents(json.syntheticOpponents as SyntheticOpponentRow[]);
+      }
+    } catch {
+      // ignore errors
+    }
+  }
+
+  async function archiveSyntheticOpponent(id: string) {
+    const ok = window.confirm("Archive this simulated opponent?\n\nYou can recreate it later.");
+    if (!ok) return;
+
+    try {
+      const res = await fetch("/api/synthetic-opponents", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id, archived: true }),
+      });
+      if (res.ok) {
+        setSyntheticOpponents((prev) => prev.filter((o) => o.id !== id));
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  async function resyncSyntheticOpponent(id: string) {
+    setSyntheticOpponents((prev) =>
+      prev.map((o) => (o.id === id ? { ...o, syncStatus: "syncing" as const } : o))
+    );
+
+    try {
+      const res = await fetch(`/api/synthetic-opponents/${id}/sync`, { method: "POST" });
+      if (res.ok) {
+        await reloadSyntheticOpponents();
+      } else {
+        setSyntheticOpponents((prev) =>
+          prev.map((o) => (o.id === id ? { ...o, syncStatus: "error" as const, syncError: "Sync failed" } : o))
+        );
+      }
+    } catch {
+      setSyntheticOpponents((prev) =>
+        prev.map((o) => (o.id === id ? { ...o, syncStatus: "error" as const, syncError: "Sync failed" } : o))
+      );
+    }
+  }
+
+  function handleSyntheticOpponentCreated(opponent: SyntheticOpponentRow) {
+    setSyntheticOpponents((prev) => [opponent, ...prev]);
+    // Reload to get the updated sync status
+    setTimeout(() => void reloadSyntheticOpponents(), 2000);
+  }
+
+  // Load synthetic opponents on mount
+  useEffect(() => {
+    if (!isMounted) return;
+    void reloadSyntheticOpponents();
+  }, [isMounted]);
 
   // Keep DB-backed counts fresh while importing, and ensure we refresh once the import stops/finishes.
   const prevIsImportingRef = useRef(false);
@@ -691,9 +779,48 @@ export function DashboardPage({ initialOpponents, initialSelfPlayer }: Props) {
     <div className="min-h-screen">
       <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6">
         <div className="flex items-start justify-between gap-3">
-          <AddOpponentBar onClick={() => setAddPlayerModalOpen(true)} loading={loading} />
+          <div className="flex items-center gap-2">
+            <AddOpponentBar onClick={() => setAddPlayerModalOpen(true)} loading={loading} />
+            <button
+              type="button"
+              onClick={() => setCreateSyntheticModalOpen(true)}
+              className="inline-flex h-10 items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 text-sm font-medium text-amber-800 hover:bg-amber-100 hover:border-amber-300 transition-colors"
+              title="Create a style-based opponent from Lichess Explorer data"
+            >
+              <span className="text-base">✨</span>
+              <span className="hidden sm:inline">Style Opponent</span>
+            </button>
+          </div>
 
-          <div className="flex items-center justify-end">
+          <div className="flex items-center gap-2">
+            {/* Expand/Collapse All (only in card view) */}
+            {viewMode === "card" && (
+              <div className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white p-1">
+                <button
+                  type="button"
+                  className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md px-2 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-50"
+                  title="Expand all cards"
+                  onClick={() => {
+                    const allKeys = orderedOpponents.map((o) => `${o.platform}:${o.username.trim().toLowerCase()}`);
+                    setExpandedCards(new Set(allKeys));
+                  }}
+                >
+                  <ChevronsUpDown className="h-4 w-4" />
+                  <span className="hidden sm:inline">Expand</span>
+                </button>
+                <button
+                  type="button"
+                  className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md px-2 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-50"
+                  title="Collapse all cards"
+                  onClick={() => setExpandedCards(new Set())}
+                >
+                  <ChevronsDownUp className="h-4 w-4" />
+                  <span className="hidden sm:inline">Collapse</span>
+                </button>
+              </div>
+            )}
+
+            {/* View Toggle */}
             <div className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white p-1">
               <button
                 type="button"
@@ -725,6 +852,13 @@ export function DashboardPage({ initialOpponents, initialSelfPlayer }: Props) {
           onClose={() => setAddPlayerModalOpen(false)}
           onAdd={handleAddOpponent}
           loading={loading}
+        />
+
+        {/* Create Synthetic Opponent Modal */}
+        <CreateSyntheticOpponentModal
+          open={createSyntheticModalOpen}
+          onClose={() => setCreateSyntheticModalOpen(false)}
+          onCreated={handleSyntheticOpponentCreated}
         />
 
         {status ? <div className="text-sm text-neutral-600">{status}</div> : null}
@@ -1106,12 +1240,46 @@ export function DashboardPage({ initialOpponents, initialSelfPlayer }: Props) {
                     menuOpen={menuOpen}
                     onMenuToggle={() => setOpenMenuKey((prev) => (prev === key ? null : key))}
                     activitySummary={summary}
+                    isExpanded={expandedCards.has(key)}
+                    onToggleExpand={() => {
+                      setExpandedCards((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(key)) {
+                          next.delete(key);
+                        } else {
+                          next.add(key);
+                        }
+                        return next;
+                      });
+                    }}
                   />
                 );
               })}
             </div>
           )}
         </section>
+
+        {/* Synthetic Opponents Section */}
+        {syntheticOpponents.length > 0 && (
+          <section className="mt-2">
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-semibold text-zinc-900">Style-Based Opponents</h2>
+                <p className="text-xs text-zinc-500">Simulated opponents based on opening + style from Lichess Explorer</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {syntheticOpponents.map((so) => (
+                <SyntheticOpponentCard
+                  key={so.id}
+                  opponent={so}
+                  onArchive={archiveSyntheticOpponent}
+                  onResync={resyncSyntheticOpponent}
+                />
+              ))}
+            </div>
+          </section>
+        )}
 
         {activeSavedLinesKey ? (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">

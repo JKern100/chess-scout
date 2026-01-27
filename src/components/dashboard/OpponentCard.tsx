@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { MoreVertical, RefreshCw, Clock, TrendingUp, TrendingDown, Minus, ChevronRight, Zap, Timer, Hourglass, BookOpen } from "lucide-react";
+import { MoreVertical, RefreshCw, Clock, TrendingUp, TrendingDown, Minus, ChevronRight, ChevronDown, Zap, Timer, Hourglass, BookOpen } from "lucide-react";
 import { AnimatedNumber } from "./AnimatedNumber";
 import { PlatformLogo } from "@/components/PlatformLogo";
 
@@ -67,6 +67,8 @@ type Props = {
   menuOpen: boolean;
   onMenuToggle: () => void;
   activitySummary?: ActivitySummary | null;
+  isExpanded?: boolean;
+  onToggleExpand?: () => void;
 };
 
 function formatRelativeTime(timestamp: number | null): string {
@@ -151,6 +153,8 @@ export function OpponentCard({
   menuOpen,
   onMenuToggle,
   activitySummary,
+  isExpanded = false,
+  onToggleExpand,
 }: Props) {
   const [lichessData, setLichessData] = useState<LichessUserData | null>(null);
   const [lichessLoading, setLichessLoading] = useState(false);
@@ -449,69 +453,95 @@ export function OpponentCard({
           </div>
         )}
 
-        {/* Win Rate Bar */}
-        {totalWDL > 0 && (
-          <div className="mt-4">
-            <div className="mb-1.5 flex items-center justify-between text-[10px] font-medium text-zinc-500">
-              <span>Career Performance</span>
-              <span>{totalWDL.toLocaleString()} games</span>
-            </div>
-            <div className="h-2 w-full overflow-hidden rounded-full bg-zinc-100">
-              <div className="flex h-full">
-                <div
-                  className="h-full bg-emerald-500 transition-all duration-500"
-                  style={{ width: `${winPct}%` }}
-                  title={`Wins: ${lichessData?.wins?.toLocaleString()}`}
-                />
-                <div
-                  className="h-full bg-zinc-300 transition-all duration-500"
-                  style={{ width: `${drawPct}%` }}
-                  title={`Draws: ${lichessData?.draws?.toLocaleString()}`}
-                />
-                <div
-                  className="h-full bg-rose-500 transition-all duration-500"
-                  style={{ width: `${lossPct}%` }}
-                  title={`Losses: ${lichessData?.losses?.toLocaleString()}`}
-                />
-              </div>
-            </div>
-            {topPerfs.length > 0 ? (
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {topPerfs.map((p) => {
-                  const d30 = formatDelta(p.delta30d);
-                  return (
+        {/* Expandable Content */}
+        {isExpanded && (
+          <>
+            {/* Win Rate Bar */}
+            {totalWDL > 0 && (
+              <div className="mt-4">
+                <div className="mb-1.5 flex items-center justify-between text-[10px] font-medium text-zinc-500">
+                  <span>Career Performance</span>
+                  <span>{totalWDL.toLocaleString()} games</span>
+                </div>
+                <div className="h-2 w-full overflow-hidden rounded-full bg-zinc-100">
+                  <div className="flex h-full">
                     <div
-                      key={p.speed}
-                      title={`${capitalizeSpeed(p.speed)} · ${p.games.toLocaleString()} games`}
-                      className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-2 py-1 text-[10px] font-medium text-zinc-700"
-                    >
-                      <span className="font-semibold text-zinc-900">{capitalizeSpeed(p.speed)}</span>
-                      <span className="tabular-nums text-zinc-700">{p.rating}</span>
-                      <span className={`inline-flex items-center gap-0.5 tabular-nums ${d30.color}`}>
-                        {d30.icon}
-                        {d30.text}
-                      </span>
-                    </div>
-                  );
-                })}
+                      className="h-full bg-emerald-500 transition-all duration-500"
+                      style={{ width: `${winPct}%` }}
+                      title={`Wins: ${lichessData?.wins?.toLocaleString()}`}
+                    />
+                    <div
+                      className="h-full bg-zinc-300 transition-all duration-500"
+                      style={{ width: `${drawPct}%` }}
+                      title={`Draws: ${lichessData?.draws?.toLocaleString()}`}
+                    />
+                    <div
+                      className="h-full bg-rose-500 transition-all duration-500"
+                      style={{ width: `${lossPct}%` }}
+                      title={`Losses: ${lichessData?.losses?.toLocaleString()}`}
+                    />
+                  </div>
+                </div>
+                {topPerfs.length > 0 ? (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {topPerfs.map((p) => {
+                      const d30 = formatDelta(p.delta30d);
+                      return (
+                        <div
+                          key={p.speed}
+                          title={`${capitalizeSpeed(p.speed)} · ${p.games.toLocaleString()} games`}
+                          className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-2 py-1 text-[10px] font-medium text-zinc-700"
+                        >
+                          <span className="font-semibold text-zinc-900">{capitalizeSpeed(p.speed)}</span>
+                          <span className="tabular-nums text-zinc-700">{p.rating}</span>
+                          <span className={`inline-flex items-center gap-0.5 tabular-nums ${d30.color}`}>
+                            {d30.icon}
+                            {d30.text}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : null}
               </div>
+            )}
+
+            {onShowSavedLines ? (
+              <button
+                type="button"
+                onClick={onShowSavedLines}
+                className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition-colors hover:bg-zinc-50"
+              >
+                <BookOpen className="h-4 w-4 text-zinc-400" />
+                <span>Show Saved Lines</span>
+              </button>
             ) : null}
-          </div>
+          </>
         )}
 
-        {onShowSavedLines ? (
+        {/* Expand/Collapse Toggle */}
+        {onToggleExpand && (
           <button
             type="button"
-            onClick={onShowSavedLines}
-            className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition-colors hover:bg-zinc-50"
+            onClick={onToggleExpand}
+            className="mt-3 inline-flex w-full items-center justify-center gap-1 rounded-lg py-1.5 text-xs font-medium text-zinc-500 transition-colors hover:bg-zinc-50 hover:text-zinc-700"
           >
-            <BookOpen className="h-4 w-4 text-zinc-400" />
-            <span>Show Saved Lines</span>
+            {isExpanded ? (
+              <>
+                <ChevronDown className="h-3.5 w-3.5 rotate-180" />
+                <span>Show less</span>
+              </>
+            ) : (
+              <>
+                <ChevronDown className="h-3.5 w-3.5" />
+                <span>Show more</span>
+              </>
+            )}
           </button>
-        ) : null}
+        )}
 
         {/* Action Buttons */}
-        <div className="mt-5 grid grid-cols-2 gap-3">
+        <div className="mt-3 grid grid-cols-2 gap-3">
           <button
             type="button"
             className="group/btn relative inline-flex h-10 items-center justify-center gap-2 overflow-hidden rounded-xl bg-zinc-900 text-sm font-semibold text-white transition-all hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"

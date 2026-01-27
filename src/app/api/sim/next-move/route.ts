@@ -35,6 +35,7 @@ export async function POST(request: Request) {
   const maxDepth = Math.min(Math.max(Number(body?.max_depth ?? 16), 1), 40);
   const prefetch = Boolean(body?.prefetch);
   const forceRpc = Boolean(body?.force_rpc);
+  const syntheticOpponentId = typeof body?.synthetic_opponent_id === "string" ? body.synthetic_opponent_id : null;
 
   const speedsProvided = Array.isArray(body?.speeds) || typeof body?.speeds === "string";
   const speedsRaw = Array.isArray(body?.speeds)
@@ -128,6 +129,173 @@ export async function POST(request: Request) {
   const startFenKey = normalizeFen(fen);
 
   const cache = { status: "db", max_games: 0, age_ms: 0, build_ms: 0 };
+
+  // Handle synthetic opponents - compute move stats from synthetic_opponent_games
+  if (syntheticOpponentId) {
+    // Verify the synthetic opponent belongs to this user
+    const { data: syntheticOpponent, error: syntheticError } = await supabase
+      .from("synthetic_opponents")
+      .select("id, name, opening_fen")
+      .eq("id", syntheticOpponentId)
+      .eq("profile_id", profileId)
+      .single();
+
+    if (syntheticError || !syntheticOpponent) {
+      return NextResponse.json({ error: "Synthetic opponent not found" }, { status: 404 });
+    }
+
+    // Fetch all games for this synthetic opponent
+    const { data: games, error: gamesError } = await supabase
+      .from("synthetic_opponent_games")
+      .select("moves_san, result, style_score")
+      .eq("synthetic_opponent_id", syntheticOpponentId)
+      .order("style_score", { ascending: false });
+
+    if (gamesError) {
+      return NextResponse.json({ error: gamesError.message }, { status: 500 });
+    }
+
+    // Compute move stats from games at the requested position
+    const moveCounts = new Map<string, { san: string; count: number; win: number; loss: number; draw: number }>();
+    const moveCountsAgainst = new Map<string, { san: string; count: number; win: number; loss: number; draw: number }>();
+    
+    // Parse the FEN to determine whose turn it is and the move number
+    const fenParts = fen.split(" ");
+    const turnToMove = fenParts[1] === "b" ? "b" : "w";
+    
+    // For each game, replay moves and find games that reach this position
+    for (const game of (games || [])) {
+      const movesSan = game.moves_san as string[];
+      if (!Array.isArray(movesSan) || movesSan.length === 0) continue;
+
+      try {
+        const gameChess = new Chess();
+        let matchedPosition = false;
+        let plyAtMatch = -1;
+
+        // Replay the game to find if it passes through this position
+        for (let i = 0; i < movesSan.length; i++) {
+          const currentFenKey = normalizeFen(gameChess.fen());
+          
+          if (currentFenKey === startFenKey) {
+            matchedPosition = true;
+            plyAtMatch = i;
+            
+            // The next move in the game is what was played from this position
+            const nextMoveSan = movesSan[i];
+            if (nextMoveSan) {
+              const move = gameChess.move(nextMoveSan);
+              if (move) {
+                const uci = move.from + move.to + (move.promotion || "");
+                const currentTurn = i % 2 === 0 ? "w" : "b"; // ply 0 = white's move
+                
+                // Determine if this is opponent's move or player's move
+                // For synthetic opponents, we treat all games as "opponent" data
+                const bucket = moveCounts;
+                const existing = bucket.get(uci);
+                const isWhiteWin = game.result === "1-0";
+                const isBlackWin = game.result === "0-1";
+                const isDraw = game.result === "1/2-1/2";
+                
+                if (existing) {
+                  existing.count += 1;
+                  if (isWhiteWin) existing.win += 1;
+                  else if (isBlackWin) existing.loss += 1;
+                  else if (isDraw) existing.draw += 1;
+                } else {
+                  bucket.set(uci, {
+                    san: nextMoveSan,
+                    count: 1,
+                    win: isWhiteWin ? 1 : 0,
+                    loss: isBlackWin ? 1 : 0,
+                    draw: isDraw ? 1 : 0,
+                  });
+                }
+              }
+            }
+            break; // Only count each game once per position
+          }
+          
+          // Try to play the next move
+          const played = gameChess.move(movesSan[i]!);
+          if (!played) break; // Invalid move, stop replaying
+        }
+      } catch {
+        // Skip games with invalid moves
+        continue;
+      }
+    }
+
+    // Convert to array and sort by count
+    const movesOpponent = Array.from(moveCounts.entries())
+      .map(([uci, stats]) => ({
+        uci,
+        san: stats.san,
+        played_count: stats.count,
+        win: stats.win,
+        loss: stats.loss,
+        draw: stats.draw,
+      }))
+      .sort((a, b) => b.played_count - a.played_count);
+
+    const movesAgainst = Array.from(moveCountsAgainst.entries())
+      .map(([uci, stats]) => ({
+        uci,
+        san: stats.san,
+        played_count: stats.count,
+        win: stats.win,
+        loss: stats.loss,
+        draw: stats.draw,
+      }))
+      .sort((a, b) => b.played_count - a.played_count);
+
+    const availableTotalCount = movesOpponent.reduce((s, m) => s + m.played_count, 0);
+    const availableAgainstTotalCount = movesAgainst.reduce((s, m) => s + m.played_count, 0);
+
+    // Pick a move using the selected strategy
+    function pickMove(moves: typeof movesOpponent) {
+      if (moves.length === 0) return null;
+      if (mode === "random") {
+        return moves[Math.floor(Math.random() * moves.length)] ?? null;
+      }
+      const total = moves.reduce((s, m) => s + m.played_count, 0);
+      if (total <= 0) return moves[0] ?? null;
+      let r = Math.random() * total;
+      for (const m of moves) {
+        r -= m.played_count;
+        if (r <= 0) return m;
+      }
+      return moves[moves.length - 1] ?? null;
+    }
+
+    const picked = pickMove(movesOpponent);
+
+    return NextResponse.json({
+      cache: { status: "synthetic", max_games: games?.length ?? 0, age_ms: 0, build_ms: 0 },
+      filter_meta: {
+        requested: { speeds: null, rated: "any", from: null, to: null },
+        source: "synthetic_opponent",
+        opening_graph_key_used: null,
+        approximate: false,
+        date_filter_ignored: false,
+        client_tree_enabled: false,
+        showing_all_time: true,
+        date_refine_available: false,
+        synthetic_opponent_id: syntheticOpponentId,
+        synthetic_opponent_name: syntheticOpponent.name,
+      },
+      position: startFenKey,
+      mode,
+      available_count: movesOpponent.length,
+      available_total_count: availableTotalCount,
+      available_against_count: movesAgainst.length,
+      available_against_total_count: availableAgainstTotalCount,
+      depth_remaining: 0,
+      move: picked,
+      moves: movesOpponent.slice(0, 30),
+      moves_against: movesAgainst.slice(0, 30),
+    });
+  }
 
   // Phase 1a: When analysis_v2_client_tree is enabled, always use opening_graph_nodes
   const useClientTree = isFeatureEnabled('analysis_v2_client_tree');

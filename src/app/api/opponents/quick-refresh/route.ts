@@ -324,6 +324,20 @@ async function processOpponent(
 
     const unsyncedGames = result.games.filter((g) => !existingIds.has(g.id));
 
+    // Debug logging for troubleshooting
+    if (username.toLowerCase() === "fernandoracing") {
+      console.log(`[quick-refresh] fernandoracing debug:`, {
+        latestSyncedMs,
+        sinceMs,
+        sinceMsDate: new Date(sinceMs).toISOString(),
+        totalGamesFromLichess: result.games.length,
+        existingIdsCount: existingIds.size,
+        unsyncedCount: unsyncedGames.length,
+        sampleGameIds: platformGameIds.slice(0, 5),
+        sampleExistingIds: Array.from(existingIds).slice(0, 5),
+      });
+    }
+
     const summary = computeSummaryFromGames(
       unsyncedGames,
       username,
