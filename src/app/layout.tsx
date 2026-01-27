@@ -11,6 +11,7 @@ import { ActivityTracker } from "@/components/ActivityTracker";
 import { MaintenanceScreen } from "@/components/maintenance/MaintenanceScreen";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseServiceClient } from "@/lib/supabase/service";
+import { Suspense } from "react";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -100,7 +101,9 @@ export default async function RootLayout({
             <ImportQueueProvider>
               <ActiveOpponentProvider>
                 <OnboardingProvider>
-                  <GlobalNavBar />
+                  <Suspense fallback={null}>
+                    <GlobalNavBar />
+                  </Suspense>
                   <NavPaddingWrapper>{children}</NavPaddingWrapper>
                 </OnboardingProvider>
               </ActiveOpponentProvider>
