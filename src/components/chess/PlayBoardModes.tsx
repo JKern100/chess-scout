@@ -1853,7 +1853,9 @@ export function PlayBoardModes({ initialFen }: Props) {
           )}
         </span>
 
-        {opponentSource === "history" && simGamesLeft != null ? (
+        {isThinking ? (
+          <span className="text-[10px] font-medium text-zinc-600">Thinking…</span>
+        ) : opponentSource === "history" && simGamesLeft != null ? (
           <span className="text-[10px] font-medium text-zinc-600" title="Games available at this position">
             {formatCompactCount(simGamesLeft)}
           </span>
