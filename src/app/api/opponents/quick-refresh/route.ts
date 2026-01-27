@@ -217,20 +217,37 @@ async function fetchExistingPlatformGameIds(params: {
 
   if (platformGameIds.length === 0) return new Set();
 
-  const { data, error } = await supabase
-    .from("games")
-    .select("platform_game_id")
-    .eq("profile_id", userId)
-    .eq("platform", platform)
-    .ilike("username", username.toLowerCase())
-    .in("platform_game_id", platformGameIds);
+  const existingIds = new Set<string>();
+  
+  // Batch the IN query to avoid PostgreSQL limits (batches of 100)
+  const BATCH_SIZE = 100;
+  for (let i = 0; i < platformGameIds.length; i += BATCH_SIZE) {
+    const batch = platformGameIds.slice(i, i + BATCH_SIZE);
+    
+    const { data, error } = await supabase
+      .from("games")
+      .select("platform_game_id")
+      .eq("profile_id", userId)
+      .eq("platform", platform)
+      .ilike("username", username.toLowerCase())
+      .in("platform_game_id", batch);
 
-  if (error || !data) return new Set();
-  return new Set(
-    data
-      .map((r: any) => String(r?.platform_game_id ?? "").trim())
-      .filter((v: string) => v.length > 0)
-  );
+    if (error) {
+      console.error(`[quick-refresh] Error fetching existing game IDs batch:`, error.message);
+      continue;
+    }
+    
+    if (data) {
+      for (const row of data) {
+        const id = String((row as any)?.platform_game_id ?? "").trim();
+        if (id.length > 0) {
+          existingIds.add(id);
+        }
+      }
+    }
+  }
+  
+  return existingIds;
 }
 
 async function fetchLatestSyncedPlayedAtMs(params: {

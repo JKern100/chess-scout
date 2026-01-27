@@ -683,6 +683,36 @@ export function DashboardPage({ initialOpponents, initialSelfPlayer, initialSynt
     }
   }, [router, savedLinesBusy, savedLinesByOpponent]);
 
+  const openSavedLinesForSyntheticOpponent = useCallback(async (syntheticOpponentId: string) => {
+    const key = `synthetic:${syntheticOpponentId}`;
+
+    setSavedLinesOpen((prev) => ({ ...prev, [key]: true }));
+
+    if (savedLinesBusy[key]) return;
+    if (Array.isArray(savedLinesByOpponent[key])) return;
+
+    setSavedLinesBusy((prev) => ({ ...prev, [key]: true }));
+    setSavedLinesError((prev) => ({ ...prev, [key]: null }));
+    try {
+      const res = await fetch(
+        `/api/saved-lines?synthetic_opponent_id=${encodeURIComponent(syntheticOpponentId)}`,
+        { cache: "no-store" }
+      );
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(String((json as any)?.error ?? "Failed to load saved lines"));
+      const rows = Array.isArray((json as any)?.saved_lines) ? ((json as any).saved_lines as SavedLineRow[]) : [];
+      setSavedLinesByOpponent((prev) => ({ ...prev, [key]: rows }));
+    } catch (e) {
+      setSavedLinesError((prev) => ({
+        ...prev,
+        [key]: e instanceof Error ? e.message : "Failed to load saved lines",
+      }));
+      setSavedLinesByOpponent((prev) => ({ ...prev, [key]: [] }));
+    } finally {
+      setSavedLinesBusy((prev) => ({ ...prev, [key]: false }));
+    }
+  }, [savedLinesBusy, savedLinesByOpponent]);
+
   const closeSavedLines = useCallback(() => {
     if (!activeSavedLinesKey) return;
     setSavedLinesOpen((prev) => ({ ...prev, [activeSavedLinesKey]: false }));
@@ -1275,6 +1305,7 @@ export function DashboardPage({ initialOpponents, initialSelfPlayer, initialSynt
                   opponent={so}
                   onArchive={archiveSyntheticOpponent}
                   onResync={resyncSyntheticOpponent}
+                  onShowSavedLines={openSavedLinesForSyntheticOpponent}
                 />
               ))}
             </div>
@@ -1301,7 +1332,12 @@ export function DashboardPage({ initialOpponents, initialSelfPlayer, initialSynt
 
               <div className="mt-4">
                 {(() => {
-                  const [platform, username] = activeSavedLinesKey.split(":");
+                  const [keyType, keyValue] = activeSavedLinesKey.split(":");
+                  const isSynthetic = keyType === "synthetic";
+                  const platform = isSynthetic ? null : keyType;
+                  const username = isSynthetic ? null : keyValue;
+                  const syntheticOpponentId = isSynthetic ? keyValue : null;
+                  const syntheticOpponent = isSynthetic ? syntheticOpponents.find((so) => so.id === syntheticOpponentId) : null;
                   const rows = savedLinesByOpponent[activeSavedLinesKey] ?? [];
                   const busy = Boolean(savedLinesBusy[activeSavedLinesKey]);
                   const err = savedLinesError[activeSavedLinesKey];
@@ -1309,10 +1345,17 @@ export function DashboardPage({ initialOpponents, initialSelfPlayer, initialSynt
                   return (
                     <div className="grid gap-2">
                       <div className="flex items-center gap-2 text-xs text-zinc-700">
-                        {(platform === "lichess" || platform === "chesscom") ? (
-                          <PlatformLogo platform={platform as ChessPlatform} size={16} className="opacity-90" />
+                        {isSynthetic ? (
+                          <>
+                            <span className="text-base">✨</span>
+                            <span className="font-medium text-zinc-900">{syntheticOpponent?.name ?? "Simulated Opponent"}</span>
+                          </>
+                        ) : (platform === "lichess" || platform === "chesscom") ? (
+                          <>
+                            <PlatformLogo platform={platform as ChessPlatform} size={16} className="opacity-90" />
+                            <span className="font-medium text-zinc-900">{username}</span>
+                          </>
                         ) : null}
-                        <span className="font-medium text-zinc-900">{username}</span>
                       </div>
 
                       {busy ? <div className="text-sm text-zinc-600">Loading…</div> : null}
@@ -1332,13 +1375,31 @@ export function DashboardPage({ initialOpponents, initialSelfPlayer, initialSynt
                               key={r.id}
                               type="button"
                               className="flex w-full items-start justify-between gap-3 border-b border-zinc-100 px-4 py-3 text-left hover:bg-zinc-50"
-                              onClick={() =>
-                                openSavedLineInAnalysis({
-                                  platform: (platform === "chesscom" ? "chesscom" : "lichess") as ChessPlatform,
-                                  username,
-                                  savedLineId: r.id,
-                                })
-                              }
+                              onClick={() => {
+                                if (isSynthetic && syntheticOpponent) {
+                                  try {
+                                    window.localStorage.setItem(
+                                      "chessscout.syntheticOpponent",
+                                      JSON.stringify({
+                                        id: syntheticOpponent.id,
+                                        name: syntheticOpponent.name,
+                                        stylePreset: syntheticOpponent.stylePreset,
+                                        openingFen: syntheticOpponent.openingFen,
+                                        styleMarkers: syntheticOpponent.styleMarkers,
+                                      })
+                                    );
+                                  } catch {
+                                    // ignore
+                                  }
+                                  router.push(`/play?mode=simulation&synthetic=true&saved_line_id=${encodeURIComponent(r.id)}`);
+                                } else {
+                                  openSavedLineInAnalysis({
+                                    platform: (platform === "chesscom" ? "chesscom" : "lichess") as ChessPlatform,
+                                    username: username ?? "",
+                                    savedLineId: r.id,
+                                  });
+                                }
+                              }}
                             >
                               <div className="min-w-0">
                                 <div className="truncate text-sm font-medium text-zinc-900">{r.name}</div>

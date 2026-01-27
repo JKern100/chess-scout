@@ -49,6 +49,7 @@ export async function GET(request: Request) {
   const id = url.searchParams.get("id");
   const opponent_platform_raw = url.searchParams.get("opponent_platform");
   const opponent_username_raw = url.searchParams.get("opponent_username");
+  const synthetic_opponent_id = url.searchParams.get("synthetic_opponent_id");
 
   if (id) {
     const { data, error } = await supabase
@@ -83,7 +84,9 @@ export async function GET(request: Request) {
     .eq("user_id", user.id)
     .order("saved_at", { ascending: false });
 
-  if (opponent_platform && opponent_username) {
+  if (synthetic_opponent_id) {
+    query = query.eq("opponent_id", synthetic_opponent_id);
+  } else if (opponent_platform && opponent_username) {
     query = query.eq("opponent_platform", opponent_platform).eq("opponent_username", opponent_username);
   }
 

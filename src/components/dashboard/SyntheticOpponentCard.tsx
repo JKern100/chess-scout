@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { MoreVertical, RefreshCw, Trash2, Play, Loader2 } from "lucide-react";
+import { MoreVertical, RefreshCw, Trash2, Play, Loader2, BookOpen } from "lucide-react";
 import { SYNTHETIC_STYLE_PRESETS, RATING_TIERS, type SyntheticStylePreset, type RatingTier } from "@/config/syntheticStylePresets";
 
 type SyntheticOpponent = {
@@ -25,9 +25,10 @@ type Props = {
   opponent: SyntheticOpponent;
   onArchive: (id: string) => void;
   onResync: (id: string) => void;
+  onShowSavedLines?: (id: string) => void;
 };
 
-export function SyntheticOpponentCard({ opponent, onArchive, onResync }: Props) {
+export function SyntheticOpponentCard({ opponent, onArchive, onResync, onShowSavedLines }: Props) {
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
   const [syncing, setSyncing] = useState(opponent.syncStatus === "syncing");
@@ -174,6 +175,18 @@ export function SyntheticOpponentCard({ opponent, onArchive, onResync }: Props) 
           </div>
         )}
       </div>
+
+      {/* Show Saved Lines Button */}
+      {onShowSavedLines && (
+        <button
+          type="button"
+          onClick={() => onShowSavedLines(opponent.id)}
+          className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition-colors hover:bg-zinc-50"
+        >
+          <BookOpen className="h-4 w-4 text-zinc-400" />
+          <span>Show Saved Lines</span>
+        </button>
+      )}
 
       {/* Style Badge */}
       <div className="mt-3 flex items-center gap-2">
