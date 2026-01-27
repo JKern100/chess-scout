@@ -144,11 +144,17 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Synthetic opponent not found" }, { status: 404 });
     }
 
-    // Fetch all games for this synthetic opponent
+    // Parse the FEN to determine whose turn it is
+    const fenParts = fen.split(" ");
+    const turnToMove = fenParts[1] === "b" ? "b" : "w";
+
+    // Fetch games for this synthetic opponent filtered by player color
+    // Only get games where the analyzed color matches whose turn it is
     const { data: games, error: gamesError } = await supabase
       .from("synthetic_opponent_games")
-      .select("moves_san, result, style_score")
+      .select("moves_san, result, style_score, player_color")
       .eq("synthetic_opponent_id", syntheticOpponentId)
+      .eq("player_color", turnToMove)
       .order("style_score", { ascending: false });
 
     if (gamesError) {
@@ -158,10 +164,6 @@ export async function POST(request: Request) {
     // Compute move stats from games at the requested position
     const moveCounts = new Map<string, { san: string; count: number; win: number; loss: number; draw: number }>();
     const moveCountsAgainst = new Map<string, { san: string; count: number; win: number; loss: number; draw: number }>();
-    
-    // Parse the FEN to determine whose turn it is and the move number
-    const fenParts = fen.split(" ");
-    const turnToMove = fenParts[1] === "b" ? "b" : "w";
     
     // For each game, replay moves and find games that reach this position
     for (const game of (games || [])) {

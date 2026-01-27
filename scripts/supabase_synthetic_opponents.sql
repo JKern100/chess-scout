@@ -62,11 +62,14 @@ create table if not exists public.synthetic_opponent_games (
   style_score float null,
   style_metrics_json jsonb null,
   
+  -- Which color was analyzed for this entry (same game can have entries for both colors)
+  player_color text not null default 'w' check (player_color in ('w', 'b')),
+  
   -- Timestamps
   created_at timestamptz not null default now(),
   
-  -- Unique per synthetic opponent
-  unique (synthetic_opponent_id, lichess_game_id)
+  -- Unique per synthetic opponent per color (same game can be stored twice, once per color)
+  unique (synthetic_opponent_id, lichess_game_id, player_color)
 );
 
 -- Indexes
@@ -78,6 +81,8 @@ create index if not exists synthetic_opponent_games_opponent_idx
   on public.synthetic_opponent_games (synthetic_opponent_id);
 create index if not exists synthetic_opponent_games_score_idx 
   on public.synthetic_opponent_games (synthetic_opponent_id, style_score desc nulls last);
+create index if not exists synthetic_opponent_games_color_idx 
+  on public.synthetic_opponent_games (synthetic_opponent_id, player_color);
 
 -- Cache table for popular opening+style+rating combinations
 create table if not exists public.synthetic_opponent_cache (

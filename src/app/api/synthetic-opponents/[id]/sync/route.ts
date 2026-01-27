@@ -117,52 +117,68 @@ export async function POST(request: Request, context: RouteContext) {
       .delete()
       .eq("synthetic_opponent_id", id);
 
-    // Score and store games
+    // Score and store games for BOTH colors
+    // We want 100 games for white and 100 games for black
     const presetConfig = SYNTHETIC_STYLE_PRESETS[stylePreset];
-    const scoredGames: any[] = [];
+    const scoredGamesWhite: any[] = [];
+    const scoredGamesBlack: any[] = [];
 
     for (const game of games) {
-      // Determine which color we're analyzing (use player with more matching style)
-      // For simplicity, analyze the winner or white if draw
-      const analyzeColor = game.winner === "black" ? "b" : "w";
-      
-      // Calculate style metrics
-      const metrics = calculateQuickStyleMetrics(game.movesSan || [], analyzeColor);
-      const styleScore = scoreGameForPreset(metrics, stylePreset);
+      const metadata = game.pgn ? extractPgnMetadata(game.pgn) : {
+        whitePlayer: null,
+        blackPlayer: null,
+        whiteElo: null,
+        blackElo: null,
+        result: "*" as const,
+        playedAt: null,
+        eco: null,
+        opening: null,
+      };
 
-      // Only include games that meet the minimum threshold
-      if (styleScore >= presetConfig.minScoreThreshold) {
-        const metadata = game.pgn ? extractPgnMetadata(game.pgn) : {
-          whitePlayer: null,
-          blackPlayer: null,
-          whiteElo: null,
-          blackElo: null,
-          result: "*" as const,
-          playedAt: null,
-          eco: null,
-          opening: null,
-        };
-        
-        scoredGames.push({
-          synthetic_opponent_id: id,
-          lichess_game_id: game.id,
-          pgn: game.pgn || "",
-          white_player: game.white?.name || metadata.whitePlayer,
-          black_player: game.black?.name || metadata.blackPlayer,
-          white_elo: game.white?.rating || metadata.whiteElo,
-          black_elo: game.black?.rating || metadata.blackElo,
-          result: metadata.result || (game.winner === "white" ? "1-0" : game.winner === "black" ? "0-1" : "1/2-1/2"),
-          played_at: game.playedAt || metadata.playedAt,
-          moves_san: game.movesSan || [],
-          style_score: styleScore,
-          style_metrics_json: metrics,
+      const baseGameData = {
+        synthetic_opponent_id: id,
+        lichess_game_id: game.id,
+        pgn: game.pgn || "",
+        white_player: game.white?.name || metadata.whitePlayer,
+        black_player: game.black?.name || metadata.blackPlayer,
+        white_elo: game.white?.rating || metadata.whiteElo,
+        black_elo: game.black?.rating || metadata.blackElo,
+        result: metadata.result || (game.winner === "white" ? "1-0" : game.winner === "black" ? "0-1" : "1/2-1/2"),
+        played_at: game.playedAt || metadata.playedAt,
+        moves_san: game.movesSan || [],
+      };
+
+      // Score for WHITE
+      const metricsWhite = calculateQuickStyleMetrics(game.movesSan || [], "w");
+      const styleScoreWhite = scoreGameForPreset(metricsWhite, stylePreset);
+      if (styleScoreWhite >= presetConfig.minScoreThreshold) {
+        scoredGamesWhite.push({
+          ...baseGameData,
+          style_score: styleScoreWhite,
+          style_metrics_json: metricsWhite,
+          player_color: "w",
+        });
+      }
+
+      // Score for BLACK
+      const metricsBlack = calculateQuickStyleMetrics(game.movesSan || [], "b");
+      const styleScoreBlack = scoreGameForPreset(metricsBlack, stylePreset);
+      if (styleScoreBlack >= presetConfig.minScoreThreshold) {
+        scoredGamesBlack.push({
+          ...baseGameData,
+          style_score: styleScoreBlack,
+          style_metrics_json: metricsBlack,
+          player_color: "b",
         });
       }
     }
 
-    // Sort by style score and take top games
-    scoredGames.sort((a, b) => b.style_score - a.style_score);
-    const topGames = scoredGames.slice(0, 500);
+    // Sort by style score and take top 100 games per color
+    scoredGamesWhite.sort((a, b) => b.style_score - a.style_score);
+    scoredGamesBlack.sort((a, b) => b.style_score - a.style_score);
+    const topWhite = scoredGamesWhite.slice(0, 100);
+    const topBlack = scoredGamesBlack.slice(0, 100);
+    const topGames = [...topWhite, ...topBlack];
 
     // Insert scored games
     if (topGames.length > 0) {
