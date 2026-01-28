@@ -191,7 +191,7 @@ export async function POST(request: Request, context: { params: Promise<Params> 
         {
           profile_id: user.id,
           platform,
-          username,
+          username: usernameKey,
           ratings: currentRatings ?? {},
           filters_json: filtersUsed,
           profile_version: 3,

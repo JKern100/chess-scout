@@ -79,6 +79,7 @@ export async function POST(request: Request) {
 
     const platform = (body?.platform as ChessPlatform | undefined) ?? "lichess";
     const username = String(body?.username ?? "").trim();
+    const usernameKey = username.toLowerCase();
 
     if (!username) {
       return NextResponse.json({ error: "username is required" }, { status: 400 });
@@ -117,7 +118,6 @@ export async function POST(request: Request) {
       scoutBaseFallback = false;
     }
 
-    const usernameKey = username.toLowerCase();
     const { count } = await supabase
       .from("games")
       .select("id", { count: "exact", head: true })
@@ -202,7 +202,7 @@ export async function POST(request: Request) {
         {
           profile_id: user.id,
           platform,
-          username,
+          username: usernameKey,
           ratings,
           fetched_at: new Date().toISOString(),
         },

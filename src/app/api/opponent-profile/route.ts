@@ -18,6 +18,7 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const platform = (url.searchParams.get("platform") as ChessPlatform | null) ?? "lichess";
   const username = String(url.searchParams.get("username") ?? "").trim();
+  const usernameKey = username.toLowerCase();
 
   if (!username) {
     return NextResponse.json({ error: "username is required" }, { status: 400 });
@@ -32,7 +33,9 @@ export async function GET(request: Request) {
     .select("id, profile_id, platform, username, ratings, fetched_at, created_at, updated_at")
     .eq("profile_id", user.id)
     .eq("platform", platform)
-    .eq("username", username)
+    .ilike("username", usernameKey)
+    .order("updated_at", { ascending: false })
+    .limit(1)
     .maybeSingle();
 
   if (error) {

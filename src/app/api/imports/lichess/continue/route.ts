@@ -237,11 +237,12 @@ export async function POST(request: Request) {
         if (updated?.target_type === "opponent" && updated?.status === "complete") {
           try {
             const ratings = await fetchLichessUserRatingsSnapshot({ username: updated.username });
+            const usernameKey = String(updated.username ?? "").trim().toLowerCase();
             await supabase.from("opponent_profiles").upsert(
               {
                 profile_id: user.id,
                 platform: updated.platform,
-                username: updated.username,
+                username: usernameKey,
                 ratings,
                 fetched_at: new Date().toISOString(),
               },
@@ -256,7 +257,7 @@ export async function POST(request: Request) {
             .update({ last_refreshed_at: new Date().toISOString() })
             .eq("user_id", user.id)
             .eq("platform", updated.platform)
-            .eq("username", updated.username);
+            .eq("username", String(updated.username ?? "").trim().toLowerCase());
         }
 
         return NextResponse.json({ import: updated, batchCount: 0, indexedGames: indexedGameCount });
@@ -286,11 +287,12 @@ export async function POST(request: Request) {
       if (updated?.target_type === "opponent") {
         try {
           const ratings = await fetchLichessUserRatingsSnapshot({ username: updated.username });
+          const usernameKey = String(updated.username ?? "").trim().toLowerCase();
           await supabase.from("opponent_profiles").upsert(
             {
               profile_id: user.id,
               platform: updated.platform,
-              username: updated.username,
+              username: usernameKey,
               ratings,
               fetched_at: new Date().toISOString(),
             },
@@ -305,7 +307,7 @@ export async function POST(request: Request) {
           .update({ last_refreshed_at: new Date().toISOString() })
           .eq("user_id", user.id)
           .eq("platform", updated.platform)
-          .eq("username", updated.username);
+          .eq("username", String(updated.username ?? "").trim().toLowerCase());
       }
 
       return NextResponse.json({ import: updated, batchCount: 0 });
@@ -565,11 +567,12 @@ export async function POST(request: Request) {
     if (updated?.status === "complete" && updated?.target_type === "opponent") {
       try {
         const ratings = await fetchLichessUserRatingsSnapshot({ username: updated.username });
+        const usernameKey = String(updated.username ?? "").trim().toLowerCase();
         await supabase.from("opponent_profiles").upsert(
           {
             profile_id: user.id,
             platform: updated.platform,
-            username: updated.username,
+            username: usernameKey,
             ratings,
             fetched_at: new Date().toISOString(),
           },
@@ -584,7 +587,7 @@ export async function POST(request: Request) {
         .update({ last_refreshed_at: new Date().toISOString() })
         .eq("user_id", user.id)
         .eq("platform", updated.platform)
-        .eq("username", updated.username);
+        .eq("username", String(updated.username ?? "").trim().toLowerCase());
     }
 
     return NextResponse.json({

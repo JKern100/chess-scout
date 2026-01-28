@@ -42,6 +42,8 @@ export async function GET(_request: Request, context: { params: Promise<Params> 
     .eq("profile_id", user.id)
     .eq("platform", platform)
     .ilike("username", usernameKey)
+    .order("updated_at", { ascending: false })
+    .limit(1)
     .maybeSingle();
 
   if (error) {
@@ -66,6 +68,8 @@ export async function GET(_request: Request, context: { params: Promise<Params> 
       .eq("profile_id", user.id)
       .eq("platform", platform)
       .ilike("username", usernameKey)
+      .order("updated_at", { ascending: false })
+      .limit(1)
       .maybeSingle();
 
     if (fallbackError) {
