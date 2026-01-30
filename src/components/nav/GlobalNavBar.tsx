@@ -3,11 +3,12 @@
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronDown, LayoutDashboard, LineChart, FileText, RefreshCw, Menu, X, Check, UserCircle, LogOut, History, Settings, Shield, BookOpen, Sparkles } from "lucide-react";
+import { ChevronDown, LayoutDashboard, LineChart, FileText, RefreshCw, Menu, X, Check, UserCircle, LogOut, History, Settings, Shield, BookOpen, Sparkles, HelpCircle } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { useActiveOpponent } from "@/context/ActiveOpponentContext";
 import { useImportQueue } from "@/context/ImportQueueContext";
 import { useAdminGuard } from "@/hooks/useAdminGuard";
+import { useTour, type TourPage } from "@/context/TourContext";
 
 type NavLink = {
   href: string;
@@ -51,6 +52,28 @@ export function GlobalNavBar() {
   const { activeOpponent, setActiveOpponent, availableOpponents, isLoading } = useActiveOpponent();
   const { isImporting } = useImportQueue();
   const { isAdmin } = useAdminGuard();
+  const { startTour, resetTour } = useTour();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const getCurrentTourPage = useCallback((): TourPage | null => {
+    if (pathname === "/dashboard") return "dashboard";
+    if (pathname.startsWith("/play")) return "analysis";
+    if (pathname.startsWith("/opponents")) return "scoutReport";
+    return null;
+  }, [pathname]);
+
+  const handleStartTour = useCallback(() => {
+    const tourPage = getCurrentTourPage();
+    if (tourPage) {
+      resetTour(tourPage);
+      setProfileDropdownOpen(false);
+      setTimeout(() => startTour(tourPage), 100);
+    }
+  }, [getCurrentTourPage, resetTour, startTour]);
 
   // Synthetic opponent support
   const isSyntheticMode = searchParams.get("synthetic") === "true";
@@ -223,10 +246,12 @@ export function GlobalNavBar() {
               {NAV_LINKS.map((link) => {
                 const isActive = isActivePath(pathname, link);
                 const href = link.label === "Scout Report" ? handleScoutReportClick() : link.href;
+                const tourAttr = link.label === "Analysis" ? "nav-analysis" : link.label === "Scout Report" ? "nav-scout-report" : undefined;
                 return (
                   <Link
                     key={link.href}
                     href={href}
+                    data-tour={tourAttr}
                     className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
                       isActive
                         ? "bg-zinc-100 text-zinc-900"
@@ -242,14 +267,14 @@ export function GlobalNavBar() {
           </div>
 
           {/* Center: Opponent Quick-Switcher (Desktop) - Hidden on Dashboard */}
-          <div className={`${pathname === "/dashboard" ? "hidden" : "hidden md:block"}`} ref={dropdownRef}>
+          <div className={`${pathname === "/dashboard" ? "hidden" : "hidden md:block"}`} ref={dropdownRef} data-tour="opponent-switcher">
             <button
               type="button"
               onClick={() => setDropdownOpen(!dropdownOpen)}
               className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-4 py-1.5 text-sm font-medium text-zinc-900 shadow-sm transition-colors hover:bg-zinc-50"
             >
-              {isLoading ? (
-                <RefreshCw className="h-4 w-4 animate-spin text-zinc-400" />
+              {!mounted || isLoading ? (
+                <span className="text-zinc-500">Loading...</span>
               ) : isSyntheticMode && syntheticOpponent ? (
                 <>
                   <Sparkles className="h-4 w-4 text-amber-500" />
@@ -379,7 +404,7 @@ export function GlobalNavBar() {
             )}
 
             {/* Profile Dropdown */}
-            <div className="relative" ref={profileDropdownRef}>
+            <div className="relative" ref={profileDropdownRef} data-tour="profile-menu">
               <button
                 type="button"
                 onClick={() => setProfileDropdownOpen(!profileDropdownOpen)}
@@ -439,6 +464,16 @@ export function GlobalNavBar() {
                       <BookOpen className="h-4 w-4 text-zinc-400" />
                       User Guide
                     </Link>
+                    {getCurrentTourPage() && (
+                      <button
+                        type="button"
+                        className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-blue-600 transition-colors hover:bg-blue-50"
+                        onClick={handleStartTour}
+                      >
+                        <HelpCircle className="h-4 w-4" />
+                        Start Page Tour
+                      </button>
+                    )}
                   </div>
 
                   {/* Sign Out */}

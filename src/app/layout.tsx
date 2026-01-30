@@ -5,6 +5,7 @@ import { ImportSupervisor } from "@/components/imports/ImportSupervisor";
 import { ImportQueueProvider } from "@/context/ImportQueueContext";
 import { ActiveOpponentProvider } from "@/context/ActiveOpponentContext";
 import { OnboardingProvider } from "@/context/OnboardingContext";
+import { TourProvider } from "@/context/TourContext";
 import { GlobalNavBar } from "@/components/nav/GlobalNavBar";
 import { NavPaddingWrapper } from "@/components/nav/NavPaddingWrapper";
 import { ActivityTracker } from "@/components/ActivityTracker";
@@ -101,10 +102,12 @@ export default async function RootLayout({
             <ImportQueueProvider>
               <ActiveOpponentProvider>
                 <OnboardingProvider>
-                  <Suspense fallback={null}>
-                    <GlobalNavBar />
-                  </Suspense>
-                  <NavPaddingWrapper>{children}</NavPaddingWrapper>
+                  <TourProvider>
+                    <Suspense fallback={null}>
+                      <GlobalNavBar />
+                    </Suspense>
+                    <NavPaddingWrapper>{children}</NavPaddingWrapper>
+                  </TourProvider>
                 </OnboardingProvider>
               </ActiveOpponentProvider>
             </ImportQueueProvider>

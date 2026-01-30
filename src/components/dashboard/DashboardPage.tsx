@@ -16,6 +16,8 @@ import { PlatformLogo } from "@/components/PlatformLogo";
 import { CreateSyntheticOpponentModal } from "./CreateSyntheticOpponentModal";
 import { SyntheticOpponentCard } from "./SyntheticOpponentCard";
 import type { SyntheticStylePreset, RatingTier } from "@/config/syntheticStylePresets";
+import { GuidedTour } from "@/components/tour/GuidedTour";
+import { dashboardTourSteps } from "@/config/tourSteps";
 
 type ChessPlatform = "lichess" | "chesscom";
 
@@ -810,9 +812,12 @@ export function DashboardPage({ initialOpponents, initialSelfPlayer, initialSynt
       <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6">
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-2">
-            <AddOpponentBar onClick={() => setAddPlayerModalOpen(true)} loading={loading} />
+            <div data-tour="add-player">
+              <AddOpponentBar onClick={() => setAddPlayerModalOpen(true)} loading={loading} />
+            </div>
             <button
               type="button"
+              data-tour="style-opponent"
               onClick={() => setCreateSyntheticModalOpen(true)}
               className="inline-flex h-10 items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 text-sm font-medium text-amber-800 hover:bg-amber-100 hover:border-amber-300 transition-colors"
               title="Create a style-based opponent from Lichess Explorer data"
@@ -851,7 +856,7 @@ export function DashboardPage({ initialOpponents, initialSelfPlayer, initialSynt
             )}
 
             {/* View Toggle */}
-            <div className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white p-1">
+            <div className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white p-1" data-tour="view-toggle">
               <button
                 type="button"
                 className={`inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors ${
@@ -1188,7 +1193,7 @@ export function DashboardPage({ initialOpponents, initialSelfPlayer, initialSynt
               </table>
             </div>
           ) : (
-            <div className="mt-6 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+            <div className="mt-6 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3" data-tour="opponent-cards">
               {/* Card View */}
               {orderedOpponents.map((o) => {
                 const key = `${o.platform}:${o.username.trim().toLowerCase()}`;
@@ -1420,6 +1425,7 @@ export function DashboardPage({ initialOpponents, initialSelfPlayer, initialSynt
           </div>
         ) : null}
       </main>
+      <GuidedTour page="dashboard" steps={dashboardTourSteps} />
     </div>
   );
 }

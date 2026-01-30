@@ -23,7 +23,7 @@ export function PlayModeToggle() {
   );
 
   return (
-    <div className="inline-flex overflow-hidden rounded-xl border border-zinc-200 bg-white">
+    <div className="inline-flex overflow-hidden rounded-xl border border-zinc-200 bg-white" data-tour="mode-toggle">
       <button
         type="button"
         className={`h-8 px-3 text-[10px] font-medium ${

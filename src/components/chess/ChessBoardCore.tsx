@@ -584,7 +584,7 @@ export function ChessBoardCore({ initialFen, soundEnabled = true, onFenChange, a
 
               <div className="relative flex min-w-0 items-start justify-center" style={{ height: boardHeightPx }}>
                 <div ref={boardSlotRef} className="flex h-full w-full min-w-0 items-center justify-center overflow-hidden">
-                  <div className="inline-flex max-h-full max-w-full items-center justify-center rounded-lg bg-neutral-900 p-3 shadow-2xl">
+                  <div className="inline-flex max-h-full max-w-full items-center justify-center rounded-lg bg-neutral-900 p-3 shadow-2xl" data-tour="chessboard">
                     <div className="flex min-w-0 items-center justify-center" style={{ width: boardWidth, height: boardWidth }}>
                       <div data-chessscout-board={boardId} className="relative overflow-visible" style={{ width: boardWidth, height: boardWidth }}>
                       {specialMarkerEnd ? (

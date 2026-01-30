@@ -8,6 +8,8 @@ import { GenerationProgressModal } from "@/components/profile/GenerationProgress
 import { trackActivity } from "@/lib/trackActivity";
 import ReactMarkdown from "react-markdown";
 import { Download, Mail } from "lucide-react";
+import { GuidedTour } from "@/components/tour/GuidedTour";
+import { scoutReportTourSteps } from "@/config/tourSteps";
 
 type ChessPlatform = "lichess" | "chesscom";
 
@@ -1123,7 +1125,7 @@ export function OpponentProfileClient({ platform, username, isSelfAnalysis = fal
           </div>
         )}
 
-        <div className="flex items-center justify-end">
+        <div className="flex items-center justify-end" data-tour="generate-report">
           <button
             type="button"
             onClick={onOpenFilters}
@@ -1277,7 +1279,7 @@ export function OpponentProfileClient({ platform, username, isSelfAnalysis = fal
             </div>
 
             {/* AI Coach Analysis Section - Always visible */}
-            <div className="rounded-xl border border-blue-200 bg-gradient-to-br from-blue-50 to-white p-4 shadow-sm">
+            <div className="rounded-xl border border-blue-200 bg-gradient-to-br from-blue-50 to-white p-4 shadow-sm" data-tour="ai-narrative">
               <div className="flex items-center justify-between gap-2 flex-wrap">
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-semibold text-blue-800">AI Coach Analysis</span>
@@ -1325,6 +1327,7 @@ export function OpponentProfileClient({ platform, username, isSelfAnalysis = fal
                       onClick={() => handleDownloadPdf()}
                       className="inline-flex h-7 items-center justify-center gap-1 rounded-lg border border-blue-200 bg-white px-2 text-[10px] font-medium text-blue-700 hover:bg-blue-50"
                       title="Download as PDF"
+                      data-tour="download-pdf"
                     >
                       <Download className="h-3 w-3" />
                       PDF
@@ -1461,7 +1464,7 @@ export function OpponentProfileClient({ platform, username, isSelfAnalysis = fal
               ))}
             </div>
 
-            <div className="grid gap-4 md:grid-cols-3">
+            <div className="grid gap-4 md:grid-cols-3" data-tour="openings-section">
               <OpeningBarList
                 title="As White"
                 rows={segment.openings.as_white}
@@ -1505,6 +1508,7 @@ export function OpponentProfileClient({ platform, username, isSelfAnalysis = fal
             </div>
             <BentoCard
               title={"Style Markers"}
+              data-tour="style-markers"
               headerRight={
                 <div className="flex items-center gap-2">
                   <button
@@ -2102,6 +2106,7 @@ export function OpponentProfileClient({ platform, username, isSelfAnalysis = fal
           currentStepOverride={progressStep}
         />
       </div>
+      <GuidedTour page="scoutReport" steps={scoutReportTourSteps} />
     </div>
   );
 }

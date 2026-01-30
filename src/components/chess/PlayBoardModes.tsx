@@ -38,6 +38,8 @@ import { useActiveOpponent } from "@/context/ActiveOpponentContext";
 import { sanToFigurine } from "@/components/chess/FigurineIcon";
 import { PlayModeToggle } from "@/components/chess/PlayModeToggle";
 import { trackActivity } from "@/lib/trackActivity";
+import { GuidedTour } from "@/components/tour/GuidedTour";
+import { analysisTourSteps } from "@/config/tourSteps";
 
 type Props = {
   initialFen?: string;
@@ -527,6 +529,7 @@ function MovesSoFarPanel(props: { state: ChessBoardCoreState; opponentUsername: 
                 setSaveLineNotes("");
                 setSaveLineOpen(true);
               }}
+              data-tour="save-line"
             >
               Save Line
             </button>
@@ -2623,6 +2626,7 @@ export function PlayBoardModes({ initialFen }: Props) {
   );
 
   return (
+    <>
     <ChessBoardCore
       initialFen={initialFen}
       leftHeader={<PlayModeToggle />}
@@ -3034,6 +3038,8 @@ export function PlayBoardModes({ initialFen }: Props) {
         );
       }}
     </ChessBoardCore>
+    <GuidedTour page="analysis" steps={analysisTourSteps} />
+    </>
   );
 }
 
@@ -3225,9 +3231,9 @@ function AnalysisRightSidebar(props: {
           onError={(msg) => showSavedLinePopup(msg)}
         />
       ) : null}
-      <div className="min-w-0 overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm">
+      <div className="min-w-0 overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm" data-tour="right-sidebar">
         <div className="flex min-w-0 items-center justify-between border-b border-zinc-200 px-2 py-2">
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1" data-tour="sidebar-tabs">
             <button
               type="button"
               className={`inline-flex h-9 w-9 items-center justify-center rounded-xl hover:bg-zinc-50 ${
@@ -3235,6 +3241,7 @@ function AnalysisRightSidebar(props: {
               }`}
               title="Filters"
               onClick={() => setAnalysisRightTab("filters")}
+              data-tour="filters-panel"
             >
               <Filter className="h-5 w-5" />
             </button>
@@ -3255,6 +3262,7 @@ function AnalysisRightSidebar(props: {
               }`}
               title="Candidates"
               onClick={() => setAnalysisRightTab("stats")}
+              data-tour="move-stats"
             >
               <GitBranch className="h-5 w-5" />
             </button>
