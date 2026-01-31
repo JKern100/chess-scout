@@ -22,7 +22,9 @@ export type OpponentSummary = {
   error?: string;
 };
 
-const CONCURRENCY_LIMIT = 3;
+// Reduced concurrency to avoid Lichess 429 rate limiting
+const CONCURRENCY_LIMIT = 1;
+const DELAY_BETWEEN_REQUESTS_MS = 500;
 
 async function fetchBatchedRatings(
   usernames: string[]
@@ -217,6 +219,7 @@ async function fetchExistingPlatformGameIds(params: {
 
   if (platformGameIds.length === 0) return new Set();
 
+  const usernameKey = username.trim().toLowerCase();
   const existingIds = new Set<string>();
   
   // Batch the IN query to avoid PostgreSQL limits (batches of 100)
@@ -229,7 +232,7 @@ async function fetchExistingPlatformGameIds(params: {
       .select("platform_game_id")
       .eq("profile_id", userId)
       .eq("platform", platform)
-      .ilike("username", username.toLowerCase())
+      .eq("username", usernameKey)
       .in("platform_game_id", batch);
 
     if (error) {
@@ -258,18 +261,27 @@ async function fetchLatestSyncedPlayedAtMs(params: {
 }): Promise<number | null> {
   const { supabase, userId, platform, username } = params;
 
+  const usernameKey = username.trim().toLowerCase();
+  
   const { data, error } = await supabase
     .from("games")
     .select("played_at")
     .eq("profile_id", userId)
     .eq("platform", platform)
-    .ilike("username", username.toLowerCase())
+    .eq("username", usernameKey)
     .not("played_at", "is", null)
     .order("played_at", { ascending: false })
     .limit(1)
     .maybeSingle();
 
-  if (error || !data) return null;
+  if (error) {
+    console.error(`[quick-refresh] fetchLatestSyncedPlayedAtMs error for ${username}:`, error.message);
+    return null;
+  }
+  if (!data) {
+    console.log(`[quick-refresh] fetchLatestSyncedPlayedAtMs: no games found for ${username}`);
+    return null;
+  }
   const iso = (data as any)?.played_at as string | null | undefined;
   if (!iso) return null;
   const ms = new Date(iso).getTime();
@@ -330,7 +342,8 @@ async function processOpponent(
       max: 500,
     });
 
-    const platformGameIds = result.games.map((g) => g.id);
+    // Normalize game IDs (trim whitespace) for consistent matching
+    const platformGameIds = result.games.map((g) => String(g.id ?? "").trim()).filter(id => id.length > 0);
     const existingIds = await fetchExistingPlatformGameIds({
       supabase: ctx.supabase,
       userId: ctx.userId,
@@ -339,20 +352,35 @@ async function processOpponent(
       platformGameIds,
     });
 
-    const unsyncedGames = result.games.filter((g) => !existingIds.has(g.id));
+    // Use normalized IDs for comparison
+    const unsyncedGames = result.games.filter((g) => {
+      const normalizedId = String(g.id ?? "").trim();
+      return normalizedId.length > 0 && !existingIds.has(normalizedId);
+    });
 
-    // Debug logging for troubleshooting
-    if (username.toLowerCase() === "fernandoracing") {
-      console.log(`[quick-refresh] fernandoracing debug:`, {
-        latestSyncedMs,
-        sinceMs,
-        sinceMsDate: new Date(sinceMs).toISOString(),
-        totalGamesFromLichess: result.games.length,
-        existingIdsCount: existingIds.size,
-        unsyncedCount: unsyncedGames.length,
-        sampleGameIds: platformGameIds.slice(0, 5),
-        sampleExistingIds: Array.from(existingIds).slice(0, 5),
-      });
+    // Debug logging for troubleshooting - enabled for all users
+    console.log(`[quick-refresh] ${username} debug:`, {
+      latestSyncedMs,
+      latestSyncedDate: latestSyncedMs ? new Date(latestSyncedMs).toISOString() : null,
+      fallbackUsed: latestSyncedMs === null,
+      fallbackIso: latestSyncedMs === null ? (last_refreshed_at ?? created_at) : null,
+      sinceMs,
+      sinceMsDate: new Date(sinceMs).toISOString(),
+      newestGameFromLichess: result.newestGameAtMs ? new Date(result.newestGameAtMs).toISOString() : null,
+      oldestGameFromLichess: result.oldestGameAtMs ? new Date(result.oldestGameAtMs).toISOString() : null,
+      totalGamesFromLichess: result.games.length,
+      existingIdsCount: existingIds.size,
+      unsyncedCount: unsyncedGames.length,
+      sampleGameIds: platformGameIds.slice(0, 5),
+      sampleExistingIds: Array.from(existingIds).slice(0, 5),
+      sampleUnsyncedIds: unsyncedGames.slice(0, 5).map(g => g.id),
+    });
+
+    // Warning if all games from Lichess are already synced but Lichess has newer games than our latest
+    if (unsyncedGames.length === 0 && result.games.length > 0 && result.newestGameAtMs && latestSyncedMs) {
+      if (result.newestGameAtMs > latestSyncedMs) {
+        console.warn(`[quick-refresh] ${username}: Lichess has newer games (${new Date(result.newestGameAtMs).toISOString()}) than our latest synced (${new Date(latestSyncedMs).toISOString()}) but all are marked as existing. Possible data issue.`);
+      }
     }
 
     const summary = computeSummaryFromGames(
@@ -369,6 +397,8 @@ async function processOpponent(
       ...summary,
     };
   } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : "Unknown error";
+    console.error(`[quick-refresh] Error processing ${username}:`, errorMsg);
     return {
       platform,
       username,
@@ -381,7 +411,7 @@ async function processOpponent(
       ratingDeltas: {},
       currentRatings,
       notes: [],
-      error: err instanceof Error ? err.message : "Unknown error",
+      error: errorMsg,
     };
   }
 }
@@ -389,7 +419,8 @@ async function processOpponent(
 async function runWithConcurrency<T, R>(
   items: T[],
   limit: number,
-  fn: (item: T) => Promise<R>
+  fn: (item: T) => Promise<R>,
+  delayMs: number = 0
 ): Promise<R[]> {
   const results: R[] = new Array(items.length);
   let nextIndex = 0;
@@ -399,6 +430,12 @@ async function runWithConcurrency<T, R>(
       const i = nextIndex;
       nextIndex += 1;
       if (i >= items.length) return;
+      
+      // Add delay between requests to avoid rate limiting
+      if (i > 0 && delayMs > 0) {
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+      }
+      
       results[i] = await fn(items[i]);
     }
   }
@@ -446,7 +483,7 @@ export async function POST() {
 
     const currentRatingsMap = await fetchBatchedRatings(lichessUsernames);
 
-    // Process opponents with concurrency limit
+    // Process opponents with concurrency limit and delay to avoid Lichess rate limiting
     const summaries = await runWithConcurrency(
       opponents,
       CONCURRENCY_LIMIT,
@@ -463,7 +500,8 @@ export async function POST() {
           currentRatings,
           { supabase, userId: user.id }
         );
-      }
+      },
+      DELAY_BETWEEN_REQUESTS_MS
     );
 
     // Update database with new timestamps and ratings

@@ -287,72 +287,95 @@ export async function fetchLichessGameHeadersSince(params: {
   url.searchParams.set("evals", "false");
   url.searchParams.set("opening", "false");
 
-  const res = await fetch(url.toString(), {
-    headers: {
-      accept: "application/x-ndjson",
-    },
-    cache: "no-store",
-  });
+  // Retry logic with exponential backoff for rate limiting (429)
+  const MAX_RETRIES = 3;
+  let lastError: Error | null = null;
+  
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      // Exponential backoff: 1s, 2s, 4s
+      const delayMs = Math.pow(2, attempt) * 1000;
+      console.log(`[lichess] Retrying ${username} after ${delayMs}ms (attempt ${attempt + 1}/${MAX_RETRIES})`);
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+    
+    const res = await fetch(url.toString(), {
+      headers: {
+        accept: "application/x-ndjson",
+      },
+      cache: "no-store",
+    });
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Lichess API error (${res.status}): ${text || res.statusText}`);
-  }
-
-  const body = await res.text();
-  const lines = body
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean);
-
-  let oldest: number | null = null;
-  let newest: number | null = null;
-
-  const games: LichessGameHeader[] = [];
-
-  for (const line of lines) {
-    let parsed: any;
-    try {
-      parsed = JSON.parse(line);
-    } catch {
+    if (res.status === 429) {
+      console.warn(`[lichess] Rate limited (429) for ${username}, will retry...`);
+      lastError = new Error(`Lichess rate limited (429)`);
       continue;
     }
 
-    if (!parsed?.id) continue;
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`Lichess API error (${res.status}): ${text || res.statusText}`);
+    }
+    
+    // Success - parse response
+    const body = await res.text();
+    const lines = body
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean);
 
-    const createdAt = typeof parsed.createdAt === "number" ? parsed.createdAt : null;
-    const lastMoveAt = typeof parsed.lastMoveAt === "number" ? parsed.lastMoveAt : null;
-    const ts = lastMoveAt ?? createdAt;
+    let oldest: number | null = null;
+    let newest: number | null = null;
 
-    if (typeof ts === "number") {
-      oldest = oldest === null ? ts : Math.min(oldest, ts);
-      newest = newest === null ? ts : Math.max(newest, ts);
+    const games: LichessGameHeader[] = [];
+
+    for (const line of lines) {
+      let parsed: any;
+      try {
+        parsed = JSON.parse(line);
+      } catch {
+        continue;
+      }
+
+      if (!parsed?.id) continue;
+
+      const createdAt = typeof parsed.createdAt === "number" ? parsed.createdAt : null;
+      const lastMoveAt = typeof parsed.lastMoveAt === "number" ? parsed.lastMoveAt : null;
+      const ts = lastMoveAt ?? createdAt;
+
+      if (typeof ts === "number") {
+        oldest = oldest === null ? ts : Math.min(oldest, ts);
+        newest = newest === null ? ts : Math.max(newest, ts);
+      }
+
+      games.push({
+        id: parsed.id,
+        createdAt,
+        lastMoveAt,
+        speed: typeof parsed.speed === "string" ? parsed.speed : null,
+        rated: Boolean(parsed.rated),
+        variant: typeof parsed.variant === "string" ? parsed.variant : null,
+        status: typeof parsed.status === "string" ? parsed.status : null,
+        white: {
+          username: parsed.players?.white?.user?.name ?? parsed.players?.white?.user?.id ?? null,
+          rating: typeof parsed.players?.white?.rating === "number" ? parsed.players.white.rating : null,
+        },
+        black: {
+          username: parsed.players?.black?.user?.name ?? parsed.players?.black?.user?.id ?? null,
+          rating: typeof parsed.players?.black?.rating === "number" ? parsed.players.black.rating : null,
+        },
+      });
     }
 
-    games.push({
-      id: parsed.id,
-      createdAt,
-      lastMoveAt,
-      speed: typeof parsed.speed === "string" ? parsed.speed : null,
-      rated: Boolean(parsed.rated),
-      variant: typeof parsed.variant === "string" ? parsed.variant : null,
-      status: typeof parsed.status === "string" ? parsed.status : null,
-      white: {
-        username: parsed.players?.white?.user?.name ?? parsed.players?.white?.user?.id ?? null,
-        rating: typeof parsed.players?.white?.rating === "number" ? parsed.players.white.rating : null,
-      },
-      black: {
-        username: parsed.players?.black?.user?.name ?? parsed.players?.black?.user?.id ?? null,
-        rating: typeof parsed.players?.black?.rating === "number" ? parsed.players.black.rating : null,
-      },
-    });
+    return {
+      games,
+      oldestGameAtMs: oldest,
+      newestGameAtMs: newest,
+    };
   }
-
-  return {
-    games,
-    oldestGameAtMs: oldest,
-    newestGameAtMs: newest,
-  };
+  
+  // All retries exhausted
+  throw lastError ?? new Error(`Lichess API failed after ${MAX_RETRIES} retries`);
 }
 
 export async function fetchLichessUserTotalGames(params: { username: string }): Promise<number | null> {
