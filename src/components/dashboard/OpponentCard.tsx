@@ -433,7 +433,8 @@ export function OpponentCard({
                   {Object.entries(activitySummary.ratingDeltas).map(([speed, delta]) => (
                     <span
                       key={speed}
-                      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                      title={`${capitalizeSpeed(speed)} rating change: ${delta > 0 ? "+" : ""}${delta} points since last sync`}
+                      className={`inline-flex cursor-help items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${
                         delta > 0 ? "bg-emerald-100 text-emerald-700" :
                         delta < 0 ? "bg-rose-100 text-rose-700" :
                         "bg-zinc-100 text-zinc-600"

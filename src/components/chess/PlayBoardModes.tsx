@@ -692,6 +692,12 @@ export function PlayBoardModes({ initialFen }: Props) {
         if (parsed?.id && parsed?.name) {
           setSyntheticOpponent(parsed);
           setOpponentUsernameLocal(parsed.name);
+          // Apply the selected player color if provided
+          if (parsed.playerColor === "white" || parsed.playerColor === "black") {
+            setOpponentPlaysColor(parsed.playerColor === "white" ? "black" : "white");
+            // Also persist to the standard player side storage
+            window.localStorage.setItem("chessscout_player_side", parsed.playerColor);
+          }
         }
       }
     } catch {

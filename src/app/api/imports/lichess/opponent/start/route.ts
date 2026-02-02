@@ -92,6 +92,23 @@ export async function POST(request: Request) {
       );
     }
 
+    // Validate username exists on Lichess BEFORE saving to database
+    try {
+      await fetchLichessUserRatingsSnapshot({ username });
+    } catch (e) {
+      const errMsg = e instanceof Error ? e.message : String(e);
+      // Check if this is a 404 (user not found)
+      if (errMsg.includes("(404)") || errMsg.toLowerCase().includes("not found")) {
+        return NextResponse.json(
+          { error: `User "${username}" not found on Lichess. Please check the username and try again.` },
+          { status: 404 }
+        );
+      }
+      // For other errors (rate limit, network issues), let them through with a warning
+      // The import will handle them later
+      console.warn(`Lichess user validation warning for "${username}": ${errMsg}`);
+    }
+
     const expiresAt = new Date(Date.now() + DEFAULT_OPPONENT_TTL_DAYS * 24 * 60 * 60 * 1000);
 
     const scoutBaseSinceMs = new Date().setFullYear(new Date().getFullYear() - SCOUT_BASE_YEARS);

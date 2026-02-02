@@ -144,17 +144,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Synthetic opponent not found" }, { status: 404 });
     }
 
-    // Parse the FEN to determine whose turn it is
-    const fenParts = fen.split(" ");
-    const turnToMove = fenParts[1] === "b" ? "b" : "w";
-
-    // Fetch games for this synthetic opponent filtered by player color
-    // Only get games where the analyzed color matches whose turn it is
+    // Fetch ALL games for this synthetic opponent (both colors)
+    // We need all games to find positions that occur in any game, regardless of
+    // which color was style-scored. The 100 "white" and 100 "black" games are
+    // independent sets, so filtering by turn would miss positions from the other set.
     const { data: games, error: gamesError } = await supabase
       .from("synthetic_opponent_games")
       .select("moves_san, result, style_score, player_color")
       .eq("synthetic_opponent_id", syntheticOpponentId)
-      .eq("player_color", turnToMove)
       .order("style_score", { ascending: false });
 
     if (gamesError) {
