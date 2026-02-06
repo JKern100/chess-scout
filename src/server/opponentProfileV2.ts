@@ -66,6 +66,10 @@ export type V2OpeningRow = {
   name: string;
   games: number;
   pct: number;
+  wins: number;
+  losses: number;
+  draws: number;
+  win_rate: number; // 0-100 percentage
 };
 
 export type V2BranchMove = {
@@ -87,11 +91,20 @@ export type V2StyleSignals = {
     queenside: number;
     none: number;
     avg_castle_move: number | null;
+    win_rates?: {
+      kingside: number;
+      queenside: number;
+      none: number;
+    };
   };
   queen_trade_by_20: {
     traded: number;
     not_traded: number;
     pct: number;
+    win_rates?: {
+      traded: number;
+      not_traded: number;
+    };
   };
   pawn_storm_after_castle: {
     kingside_pct: number;
@@ -101,6 +114,11 @@ export type V2StyleSignals = {
     avg_pawns_advanced_by_10: number;
     avg_captures_by_15: number;
     avg_checks_by_15: number;
+  };
+  game_length?: {
+    short_games: { count: number; win_rate: number }; // < 25 moves
+    medium_games: { count: number; win_rate: number }; // 25-40 moves
+    long_games: { count: number; win_rate: number }; // > 40 moves
   };
 };
 
@@ -425,22 +443,49 @@ function pct(n: number, d: number) {
   return (n / d) * 100;
 }
 
-function topOpenings(rows: Array<{ eco: string | null; name: string }>, topN: number): V2OpeningRow[] {
-  const counts = new Map<string, { eco: string | null; name: string; n: number }>();
+function topOpenings(rows: Array<{ eco: string | null; name: string; result: "win" | "loss" | "draw" | "unknown" }>, topN: number): V2OpeningRow[] {
+  const counts = new Map<string, { eco: string | null; name: string; n: number; wins: number; losses: number; draws: number }>();
   for (const r of rows) {
     const key = `${r.eco ?? ""}|${r.name}`;
-    const cur = counts.get(key) ?? { eco: r.eco, name: r.name, n: 0 };
+    const cur = counts.get(key) ?? { eco: r.eco, name: r.name, n: 0, wins: 0, losses: 0, draws: 0 };
     cur.n += 1;
+    if (r.result === "win") cur.wins += 1;
+    else if (r.result === "loss") cur.losses += 1;
+    else if (r.result === "draw") cur.draws += 1;
     counts.set(key, cur);
   }
 
   const total = rows.length;
   const sorted = Array.from(counts.values()).sort((a, b) => b.n - a.n);
   const top = sorted.slice(0, topN);
-  const otherN = sorted.slice(topN).reduce((s, x) => s + x.n, 0);
+  const other = sorted.slice(topN);
+  const otherN = other.reduce((s, x) => s + x.n, 0);
+  const otherWins = other.reduce((s, x) => s + x.wins, 0);
+  const otherLosses = other.reduce((s, x) => s + x.losses, 0);
+  const otherDraws = other.reduce((s, x) => s + x.draws, 0);
 
-  const out: V2OpeningRow[] = top.map((t) => ({ eco: t.eco, name: t.name, games: t.n, pct: pct(t.n, total) }));
-  if (otherN > 0) out.push({ eco: null, name: "Other", games: otherN, pct: pct(otherN, total) });
+  const out: V2OpeningRow[] = top.map((t) => ({
+    eco: t.eco,
+    name: t.name,
+    games: t.n,
+    pct: pct(t.n, total),
+    wins: t.wins,
+    losses: t.losses,
+    draws: t.draws,
+    win_rate: t.n > 0 ? pct(t.wins, t.n) : 0,
+  }));
+  if (otherN > 0) {
+    out.push({
+      eco: null,
+      name: "Other",
+      games: otherN,
+      pct: pct(otherN, total),
+      wins: otherWins,
+      losses: otherLosses,
+      draws: otherDraws,
+      win_rate: otherN > 0 ? pct(otherWins, otherN) : 0,
+    });
+  }
   return out;
 }
 
@@ -499,8 +544,17 @@ function computeStyleSignals(games: GameNorm[]): V2StyleSignals {
   let castleMoveSum = 0;
   let castleMoveCount = 0;
 
+  // Win tracking for castling types
+  let castlesKWins = 0;
+  let castlesQWins = 0;
+  let castlesNoneWins = 0;
+
   let queenTradedBy20 = 0;
   let queenNotTradedBy20 = 0;
+
+  // Win tracking for queen trades
+  let queenTradedWins = 0;
+  let queenNotTradedWins = 0;
 
   let ksStormGames = 0;
   let qsStormGames = 0;
@@ -512,21 +566,45 @@ function computeStyleSignals(games: GameNorm[]): V2StyleSignals {
   let checksSum = 0;
   let aggrCount = 0;
 
+  // Game length tracking with win rates
+  let shortGames = 0; // < 25 moves
+  let mediumGames = 0; // 25-40 moves
+  let longGames = 0; // > 40 moves
+  let shortGamesWins = 0;
+  let mediumGamesWins = 0;
+  let longGamesWins = 0;
+
   for (const g of games) {
     const s = g.style;
     if (!s) continue;
 
-    if (s.castle_type === "K") castlesK += 1;
-    else if (s.castle_type === "Q") castlesQ += 1;
-    else castlesNone += 1;
+    const isWin = g.result === "win";
+
+    // Castling stats with win tracking
+    if (s.castle_type === "K") {
+      castlesK += 1;
+      if (isWin) castlesKWins += 1;
+    } else if (s.castle_type === "Q") {
+      castlesQ += 1;
+      if (isWin) castlesQWins += 1;
+    } else {
+      castlesNone += 1;
+      if (isWin) castlesNoneWins += 1;
+    }
 
     if (s.castle_move != null) {
       castleMoveSum += s.castle_move;
       castleMoveCount += 1;
     }
 
-    if (s.queen_traded_by_20) queenTradedBy20 += 1;
-    else queenNotTradedBy20 += 1;
+    // Queen trade stats with win tracking
+    if (s.queen_traded_by_20) {
+      queenTradedBy20 += 1;
+      if (isWin) queenTradedWins += 1;
+    } else {
+      queenNotTradedBy20 += 1;
+      if (isWin) queenNotTradedWins += 1;
+    }
 
     if (s.castle_type === "K") {
       ksEligible += 1;
@@ -541,6 +619,19 @@ function computeStyleSignals(games: GameNorm[]): V2StyleSignals {
     capturesSum += s.captures_by_15;
     checksSum += s.checks_by_15;
     aggrCount += 1;
+
+    // Game length stats (estimate from moves_san length / 2 for full moves)
+    const fullMoves = Math.ceil(g.moves_san.length / 2);
+    if (fullMoves < 25) {
+      shortGames += 1;
+      if (isWin) shortGamesWins += 1;
+    } else if (fullMoves <= 40) {
+      mediumGames += 1;
+      if (isWin) mediumGamesWins += 1;
+    } else {
+      longGames += 1;
+      if (isWin) longGamesWins += 1;
+    }
   }
 
   const total = games.length;
@@ -551,11 +642,20 @@ function computeStyleSignals(games: GameNorm[]): V2StyleSignals {
       queenside: castlesQ,
       none: castlesNone,
       avg_castle_move: castleMoveCount > 0 ? Math.round((castleMoveSum / castleMoveCount) * 10) / 10 : null,
+      win_rates: {
+        kingside: castlesK > 0 ? pct(castlesKWins, castlesK) : 0,
+        queenside: castlesQ > 0 ? pct(castlesQWins, castlesQ) : 0,
+        none: castlesNone > 0 ? pct(castlesNoneWins, castlesNone) : 0,
+      },
     },
     queen_trade_by_20: {
       traded: queenTradedBy20,
       not_traded: queenNotTradedBy20,
       pct: pct(queenTradedBy20, total),
+      win_rates: {
+        traded: queenTradedBy20 > 0 ? pct(queenTradedWins, queenTradedBy20) : 0,
+        not_traded: queenNotTradedBy20 > 0 ? pct(queenNotTradedWins, queenNotTradedBy20) : 0,
+      },
     },
     pawn_storm_after_castle: {
       kingside_pct: pct(ksStormGames, ksEligible),
@@ -565,6 +665,11 @@ function computeStyleSignals(games: GameNorm[]): V2StyleSignals {
       avg_pawns_advanced_by_10: aggrCount > 0 ? Math.round((pawnsAdvancedSum / aggrCount) * 10) / 10 : 0,
       avg_captures_by_15: aggrCount > 0 ? Math.round((capturesSum / aggrCount) * 10) / 10 : 0,
       avg_checks_by_15: aggrCount > 0 ? Math.round((checksSum / aggrCount) * 10) / 10 : 0,
+    },
+    game_length: {
+      short_games: { count: shortGames, win_rate: shortGames > 0 ? pct(shortGamesWins, shortGames) : 0 },
+      medium_games: { count: mediumGames, win_rate: mediumGames > 0 ? pct(mediumGamesWins, mediumGames) : 0 },
+      long_games: { count: longGames, win_rate: longGames > 0 ? pct(longGamesWins, longGames) : 0 },
     },
   };
 }
@@ -581,11 +686,12 @@ function buildSegmentProfile(games: GameNorm[]): V2SegmentProfile {
   const asWhite = { win: 0, draw: 0, loss: 0, total: 0 };
   const asBlack = { win: 0, draw: 0, loss: 0, total: 0 };
 
-  const openingsAsWhite: Array<{ eco: string | null; name: string }> = [];
-  const openingsBlackE4: Array<{ eco: string | null; name: string }> = [];
-  const openingsBlackD4: Array<{ eco: string | null; name: string }> = [];
-  const openingsBlackC4: Array<{ eco: string | null; name: string }> = [];
-  const openingsBlackNf3: Array<{ eco: string | null; name: string }> = [];
+  type OpeningEntry = { eco: string | null; name: string; result: "win" | "loss" | "draw" | "unknown" };
+  const openingsAsWhite: OpeningEntry[] = [];
+  const openingsBlackE4: OpeningEntry[] = [];
+  const openingsBlackD4: OpeningEntry[] = [];
+  const openingsBlackC4: OpeningEntry[] = [];
+  const openingsBlackNf3: OpeningEntry[] = [];
 
   for (const g of games) {
     if (g.played_at) {
@@ -606,13 +712,13 @@ function buildSegmentProfile(games: GameNorm[]): V2SegmentProfile {
     const { eco, name } = matchEco(g.moves_san, 24);
 
     if (g.opponent_color === "w") {
-      openingsAsWhite.push({ eco, name });
+      openingsAsWhite.push({ eco, name, result: g.result });
     } else {
       const w1 = g.moves_san[0] ?? "";
-      if (w1 === "e4") openingsBlackE4.push({ eco, name });
-      if (w1 === "d4") openingsBlackD4.push({ eco, name });
-      if (w1 === "c4") openingsBlackC4.push({ eco, name });
-      if (w1 === "Nf3") openingsBlackNf3.push({ eco, name });
+      if (w1 === "e4") openingsBlackE4.push({ eco, name, result: g.result });
+      if (w1 === "d4") openingsBlackD4.push({ eco, name, result: g.result });
+      if (w1 === "c4") openingsBlackC4.push({ eco, name, result: g.result });
+      if (w1 === "Nf3") openingsBlackNf3.push({ eco, name, result: g.result });
     }
   }
 

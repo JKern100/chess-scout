@@ -30,6 +30,10 @@ type V2OpeningRow = {
   name: string;
   games: number;
   pct: number;
+  wins?: number;
+  losses?: number;
+  draws?: number;
+  win_rate?: number;
 };
 
 type V2BranchNode = {
@@ -76,13 +80,24 @@ type OpponentProfileV2 = {
           queenside: number;
           none: number;
           avg_castle_move: number | null;
+          win_rates?: { kingside: number; queenside: number; none: number };
         };
-        queen_trade_by_20: { traded: number; not_traded: number; pct: number };
+        queen_trade_by_20: {
+          traded: number;
+          not_traded: number;
+          pct: number;
+          win_rates?: { traded: number; not_traded: number };
+        };
         pawn_storm_after_castle: { kingside_pct: number; queenside_pct: number };
         aggression: {
           avg_pawns_advanced_by_10: number;
           avg_captures_by_15: number;
           avg_checks_by_15: number;
+        };
+        game_length?: {
+          short_games: { count: number; win_rate: number };
+          medium_games: { count: number; win_rate: number };
+          long_games: { count: number; win_rate: number };
         };
       };
       results: {
@@ -1079,6 +1094,11 @@ export function OpponentProfileClient({ platform, username, isSelfAnalysis = fal
           ) : (
             filtered.map((r) => {
               const width = Math.max(2, Math.min(100, (r.pct / maxPct) * 100));
+              const hasWinRate = r.wins != null && r.games > 0;
+              const winRate = hasWinRate ? r.win_rate : null;
+              const winRateColor = winRate != null
+                ? winRate >= 55 ? "text-emerald-600" : winRate <= 45 ? "text-rose-600" : "text-neutral-600"
+                : "text-neutral-500";
               return (
                 <div key={`${r.eco ?? ""}|${r.name}`} className="grid gap-1">
                   <div className="flex items-center justify-between gap-3">
@@ -1088,7 +1108,14 @@ export function OpponentProfileClient({ platform, username, isSelfAnalysis = fal
                     </div>
                     <div className="shrink-0 text-right">
                       <div className="text-xs font-semibold text-neutral-900">{r.pct.toFixed(0)}%</div>
-                      <div className="text-[10px] text-neutral-500">{r.games} games</div>
+                      <div className="flex items-center gap-1.5 text-[10px]">
+                        <span className="text-neutral-500">{r.games} games</span>
+                        {hasWinRate && (
+                          <span className={`font-medium ${winRateColor}`} title={`${r.wins}W / ${r.draws ?? 0}D / ${r.losses}L`}>
+                            {winRate?.toFixed(0)}% win
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                   <div className="h-2 w-full overflow-hidden rounded-xl bg-neutral-100">
@@ -1776,6 +1803,25 @@ export function OpponentProfileClient({ platform, username, isSelfAnalysis = fal
                 <div className="mt-2 text-[10px] text-neutral-600">
                   Avg castle move: <span className="font-medium text-neutral-900">{segment.style.castling.avg_castle_move ?? "—"}</span>
                 </div>
+                {segment.style.castling.win_rates && (
+                  <div className="mt-2 flex flex-wrap gap-2 text-[10px]">
+                    {segment.style.castling.kingside > 0 && (
+                      <span className={segment.style.castling.win_rates.kingside >= 55 ? "text-emerald-600" : segment.style.castling.win_rates.kingside <= 45 ? "text-rose-600" : "text-neutral-600"}>
+                        O-O: <span className="font-medium">{segment.style.castling.win_rates.kingside.toFixed(0)}%</span> win
+                      </span>
+                    )}
+                    {segment.style.castling.queenside > 0 && (
+                      <span className={segment.style.castling.win_rates.queenside >= 55 ? "text-emerald-600" : segment.style.castling.win_rates.queenside <= 45 ? "text-rose-600" : "text-neutral-600"}>
+                        O-O-O: <span className="font-medium">{segment.style.castling.win_rates.queenside.toFixed(0)}%</span> win
+                      </span>
+                    )}
+                    {segment.style.castling.none > 0 && (
+                      <span className={segment.style.castling.win_rates.none >= 55 ? "text-emerald-600" : segment.style.castling.win_rates.none <= 45 ? "text-rose-600" : "text-neutral-600"}>
+                        No castle: <span className="font-medium">{segment.style.castling.win_rates.none.toFixed(0)}%</span> win
+                      </span>
+                    )}
+                  </div>
+                )}
               </BentoCard>
               <BentoCard title="Queen Trade Tendency">
                 <SegmentedBar
@@ -1793,6 +1839,16 @@ export function OpponentProfileClient({ platform, username, isSelfAnalysis = fal
                     ({segment.style.queen_trade_by_20.traded} traded · {segment.style.queen_trade_by_20.not_traded} not traded)
                   </span>
                 </div>
+                {segment.style.queen_trade_by_20.win_rates && (
+                  <div className="mt-2 flex flex-wrap gap-3 text-[10px]">
+                    <span className={segment.style.queen_trade_by_20.win_rates.traded >= 55 ? "text-emerald-600" : segment.style.queen_trade_by_20.win_rates.traded <= 45 ? "text-rose-600" : "text-neutral-600"}>
+                      When traded: <span className="font-medium">{segment.style.queen_trade_by_20.win_rates.traded.toFixed(0)}%</span> win
+                    </span>
+                    <span className={segment.style.queen_trade_by_20.win_rates.not_traded >= 55 ? "text-emerald-600" : segment.style.queen_trade_by_20.win_rates.not_traded <= 45 ? "text-rose-600" : "text-neutral-600"}>
+                      When kept: <span className="font-medium">{segment.style.queen_trade_by_20.win_rates.not_traded.toFixed(0)}%</span> win
+                    </span>
+                  </div>
+                )}
               </BentoCard>
             </div>
 
