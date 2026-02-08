@@ -54,6 +54,9 @@ type Props = {
   filterTo?: string | null;
   filterSpeeds?: string[] | null;
   filterRated?: 'any' | 'rated' | 'casual';
+  filterOpponentColor?: 'w' | 'b' | null; // Filter by which color opponent played
+  filterOpeningEco?: string | null;  // Filter by ECO code (e.g., "A10")
+  filterOpeningName?: string | null; // Filter by opening name
   engineDepth?: number;
   isSyntheticMode?: boolean;
   syntheticGamesCount?: number;
@@ -210,6 +213,9 @@ export function AnalysisBoard(props: Props) {
     filterTo,
     filterSpeeds,
     filterRated = 'any',
+    filterOpponentColor,
+    filterOpeningEco,
+    filterOpeningName,
     engineDepth = 18,
     isSyntheticMode = false,
     syntheticGamesCount,
@@ -238,6 +244,9 @@ export function AnalysisBoard(props: Props) {
     to: filterTo ?? null,
     speeds: filterSpeeds ?? null,
     rated: filterRated,
+    opponentColor: filterOpponentColor,
+    openingEco: filterOpeningEco,
+    openingName: filterOpeningName,
     enabled,
   });
 

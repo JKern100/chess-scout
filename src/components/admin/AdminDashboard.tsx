@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Shield,
   Users,
@@ -19,8 +19,11 @@ import {
   RefreshCw,
   ChevronDown,
   ChevronUp,
+  ChevronRight,
   Trash2,
   X,
+  Loader2,
+  UserX,
 } from "lucide-react";
 import { useAdminRedirect } from "@/hooks/useAdminGuard";
 import Link from "next/link";
@@ -253,60 +256,267 @@ function DeleteConfirmModal({ user, isOpen, onClose, onConfirm, isDeleting, rela
   );
 }
 
+// --- Activity Chart (pure SVG) ---
+
+type DailyActivity = { date: string; activeUsers: number; events: number };
+
+function ActivityChart({ data, height = 180 }: { data: DailyActivity[]; height?: number }) {
+  if (data.length === 0) {
+    return <div className="flex h-40 items-center justify-center text-sm text-zinc-400">No activity data yet</div>;
+  }
+
+  const maxUsers = Math.max(1, ...data.map((d) => d.activeUsers));
+  const maxEvents = Math.max(1, ...data.map((d) => d.events));
+  const padding = { top: 10, right: 12, bottom: 28, left: 32 };
+  const width = 600;
+  const chartW = width - padding.left - padding.right;
+  const chartH = height - padding.top - padding.bottom;
+  const barW = Math.max(2, Math.min(14, chartW / data.length - 2));
+
+  // Build area path for events (background)
+  const eventPoints = data.map((d, i) => {
+    const x = padding.left + (i / Math.max(1, data.length - 1)) * chartW;
+    const y = padding.top + chartH - (d.events / maxEvents) * chartH;
+    return `${x},${y}`;
+  });
+  const areaPath = `M${padding.left},${padding.top + chartH} L${eventPoints.join(" L")} L${padding.left + chartW},${padding.top + chartH} Z`;
+
+  // Y-axis labels
+  const yTicks = [0, Math.ceil(maxUsers / 2), maxUsers];
+
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} className="w-full" preserveAspectRatio="xMidYMid meet">
+      {/* Grid lines */}
+      {yTicks.map((tick) => {
+        const y = padding.top + chartH - (tick / maxUsers) * chartH;
+        return (
+          <g key={tick}>
+            <line x1={padding.left} y1={y} x2={width - padding.right} y2={y} stroke="#e4e4e7" strokeWidth={0.5} />
+            <text x={padding.left - 6} y={y + 3} textAnchor="end" className="fill-zinc-400" fontSize={9}>
+              {tick}
+            </text>
+          </g>
+        );
+      })}
+
+      {/* Events area (subtle background) */}
+      <path d={areaPath} fill="rgb(251 146 60 / 0.12)" />
+
+      {/* Active user bars */}
+      {data.map((d, i) => {
+        const x = padding.left + (i / Math.max(1, data.length - 1)) * chartW - barW / 2;
+        const barH = (d.activeUsers / maxUsers) * chartH;
+        const y = padding.top + chartH - barH;
+        return (
+          <g key={d.date}>
+            <rect x={x} y={y} width={barW} height={Math.max(0, barH)} rx={2} fill="rgb(249 115 22)" opacity={0.85}>
+              <title>{`${d.date}: ${d.activeUsers} active user${d.activeUsers !== 1 ? "s" : ""}, ${d.events} events`}</title>
+            </rect>
+          </g>
+        );
+      })}
+
+      {/* X-axis date labels (every ~7 days) */}
+      {data.map((d, i) => {
+        if (data.length <= 7 || i % Math.max(1, Math.floor(data.length / 6)) === 0 || i === data.length - 1) {
+          const x = padding.left + (i / Math.max(1, data.length - 1)) * chartW;
+          const label = d.date.slice(5); // "MM-DD"
+          return (
+            <text key={d.date} x={x} y={height - 4} textAnchor="middle" className="fill-zinc-400" fontSize={9}>
+              {label}
+            </text>
+          );
+        }
+        return null;
+      })}
+    </svg>
+  );
+}
+
+// --- Opponent types ---
+
+type OpponentInfo = {
+  platform: string;
+  username: string;
+  targetType: string;
+  importId: string;
+  importedCount: number;
+  status: string;
+  lastImportAt: string;
+  games: number;
+  graphNodes: number;
+  graphExamples: number;
+  opponentProfiles: number;
+  styleMarkers: number;
+};
+
+// --- User Row (expandable with opponents) ---
+
 type UserRowProps = {
   user: AdminUser;
   onDeleteClick: (user: AdminUser) => void;
+  onDeleteOpponent: (userId: string, platform: string, username: string) => Promise<void>;
   canDelete: boolean;
+  expanded: boolean;
+  onToggleExpand: () => void;
 };
 
-function UserRow({ user, onDeleteClick, canDelete }: UserRowProps) {
+function UserRow({ user, onDeleteClick, onDeleteOpponent, canDelete, expanded, onToggleExpand }: UserRowProps) {
+  const [opponents, setOpponents] = useState<OpponentInfo[] | null>(null);
+  const [opponentsLoading, setOpponentsLoading] = useState(false);
+  const [deletingOpponent, setDeletingOpponent] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!expanded) return;
+    if (opponents !== null) return;
+    setOpponentsLoading(true);
+    fetch(`/api/admin/users/${user.id}/opponents`)
+      .then((r) => r.json())
+      .then((data) => setOpponents(data.opponents ?? []))
+      .catch(() => setOpponents([]))
+      .finally(() => setOpponentsLoading(false));
+  }, [expanded, opponents, user.id]);
+
+  const handleDeleteOpponent = async (platform: string, username: string) => {
+    const key = `${platform}:${username}`;
+    if (!confirm(`Delete ALL data for opponent "${username}" on ${platform}? This cannot be undone.`)) return;
+    setDeletingOpponent(key);
+    try {
+      await onDeleteOpponent(user.id, platform, username);
+      setOpponents((prev) => prev?.filter((o) => `${o.platform}:${o.username}` !== key) ?? null);
+    } finally {
+      setDeletingOpponent(null);
+    }
+  };
+
   return (
-    <tr className="border-b border-zinc-100 hover:bg-zinc-50">
-      <td className="px-4 py-3">
-        <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-zinc-100 text-sm font-medium text-zinc-600">
-            {user.displayName.slice(0, 2).toUpperCase()}
+    <>
+      <tr className="border-b border-zinc-100 hover:bg-zinc-50 cursor-pointer" onClick={onToggleExpand}>
+        <td className="px-4 py-3">
+          <div className="flex items-center gap-3">
+            <div className={`transition-transform duration-150 ${expanded ? "rotate-90" : ""}`}>
+              <ChevronRight className="h-4 w-4 text-zinc-400" />
+            </div>
+            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-zinc-100 text-sm font-medium text-zinc-600">
+              {user.displayName.slice(0, 2).toUpperCase()}
+            </div>
+            <div>
+              <div className="font-medium text-zinc-900">{user.displayName}</div>
+              <div className="text-xs text-zinc-500">{user.platformUsername || user.platform}</div>
+            </div>
           </div>
-          <div>
-            <div className="font-medium text-zinc-900">{user.displayName}</div>
-            <div className="text-xs text-zinc-500">{user.platformUsername || user.platform}</div>
+        </td>
+        <td className="px-4 py-3">
+          <div className="text-sm text-zinc-700">{user.lastActive ? formatRelativeTime(user.lastActive) : "Never"}</div>
+        </td>
+        <td className="px-4 py-3">
+          <div className="text-sm text-zinc-700">{formatDuration(user.metrics.totalTimeSpentMinutes)}</div>
+        </td>
+        <td className="px-4 py-3">
+          <div className="flex items-center gap-4 text-sm">
+            <span className="flex items-center gap-1 text-zinc-600">
+              <FileText className="h-3.5 w-3.5" />
+              {user.metrics.reportsGenerated}
+            </span>
+            <span className="flex items-center gap-1 text-zinc-600">
+              <Crosshair className="h-3.5 w-3.5" />
+              {user.metrics.opponentsScouted}
+            </span>
           </div>
-        </div>
-      </td>
-      <td className="px-4 py-3">
-        <div className="text-sm text-zinc-700">{user.lastActive ? formatRelativeTime(user.lastActive) : "Never"}</div>
-      </td>
-      <td className="px-4 py-3">
-        <div className="text-sm text-zinc-700">{formatDuration(user.metrics.totalTimeSpentMinutes)}</div>
-      </td>
-      <td className="px-4 py-3">
-        <div className="flex items-center gap-4 text-sm">
-          <span className="flex items-center gap-1 text-zinc-600">
-            <FileText className="h-3.5 w-3.5" />
-            {user.metrics.reportsGenerated}
-          </span>
-          <span className="flex items-center gap-1 text-zinc-600">
-            <Crosshair className="h-3.5 w-3.5" />
-            {user.metrics.opponentsScouted}
-          </span>
-        </div>
-      </td>
-      <td className="px-4 py-3">
-        <StatusBadge status={user.status} />
-      </td>
-      <td className="px-4 py-3 text-right">
-        <button
-          type="button"
-          onClick={() => onDeleteClick(user)}
-          disabled={!canDelete}
-          className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
-          title={canDelete ? "Delete user" : "Set SUPABASE_SERVICE_ROLE_KEY to enable admin deletion"}
-        >
-          <Trash2 className="h-4 w-4" />
-          Delete
-        </button>
-      </td>
-    </tr>
+        </td>
+        <td className="px-4 py-3">
+          <StatusBadge status={user.status} />
+        </td>
+        <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
+          <button
+            type="button"
+            onClick={() => onDeleteClick(user)}
+            disabled={!canDelete}
+            className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+            title={canDelete ? "Delete user & all data" : "Set SUPABASE_SERVICE_ROLE_KEY to enable admin deletion"}
+          >
+            <UserX className="h-4 w-4" />
+            Delete User
+          </button>
+        </td>
+      </tr>
+      {expanded && (
+        <tr className="border-b border-zinc-100 bg-zinc-50/70">
+          <td colSpan={6} className="px-4 py-3">
+            <div className="ml-10">
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-zinc-500">
+                Synced Opponents / Imported Accounts
+              </div>
+              {opponentsLoading && (
+                <div className="flex items-center gap-2 py-2 text-xs text-zinc-500">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading opponents...
+                </div>
+              )}
+              {opponents && opponents.length === 0 && (
+                <div className="py-2 text-xs text-zinc-400">No opponents imported</div>
+              )}
+              {opponents && opponents.length > 0 && (
+                <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
+                  <table className="w-full text-xs">
+                    <thead className="bg-zinc-50">
+                      <tr>
+                        <th className="px-3 py-1.5 text-left font-medium text-zinc-500">Opponent</th>
+                        <th className="px-3 py-1.5 text-left font-medium text-zinc-500">Platform</th>
+                        <th className="px-3 py-1.5 text-right font-medium text-zinc-500">Games</th>
+                        <th className="px-3 py-1.5 text-right font-medium text-zinc-500">Graph Nodes</th>
+                        <th className="px-3 py-1.5 text-right font-medium text-zinc-500">Profiles</th>
+                        <th className="px-3 py-1.5 text-left font-medium text-zinc-500">Status</th>
+                        <th className="px-3 py-1.5 text-right font-medium text-zinc-500">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {opponents.map((opp) => {
+                        const key = `${opp.platform}:${opp.username}`;
+                        const totalRows = opp.games + opp.graphNodes + opp.graphExamples + opp.opponentProfiles + opp.styleMarkers;
+                        return (
+                          <tr key={key} className="border-t border-zinc-100 hover:bg-zinc-50">
+                            <td className="px-3 py-1.5 font-medium text-zinc-800">{opp.username}</td>
+                            <td className="px-3 py-1.5 text-zinc-600">{opp.platform}</td>
+                            <td className="px-3 py-1.5 text-right text-zinc-700">{opp.games.toLocaleString()}</td>
+                            <td className="px-3 py-1.5 text-right text-zinc-700">{opp.graphNodes.toLocaleString()}</td>
+                            <td className="px-3 py-1.5 text-right text-zinc-700">{opp.opponentProfiles}</td>
+                            <td className="px-3 py-1.5">
+                              <span className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+                                opp.status === "complete" ? "bg-green-100 text-green-700" :
+                                opp.status === "importing" ? "bg-blue-100 text-blue-700" :
+                                "bg-zinc-100 text-zinc-600"
+                              }`}>
+                                {opp.status}
+                              </span>
+                            </td>
+                            <td className="px-3 py-1.5 text-right">
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteOpponent(opp.platform, opp.username)}
+                                disabled={deletingOpponent === key}
+                                className="inline-flex items-center gap-1 rounded border border-red-200 bg-white px-2 py-0.5 text-[10px] font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
+                                title={`Delete all data for ${opp.username} (${totalRows.toLocaleString()} rows)`}
+                              >
+                                {deletingOpponent === key ? (
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                ) : (
+                                  <Trash2 className="h-3 w-3" />
+                                )}
+                                Delete
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
 
@@ -352,6 +562,15 @@ export function AdminDashboard() {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [relatedCounts, setRelatedCounts] = useState<RelatedDataCounts | null>(null);
 
+  // Activity chart state
+  const [activityData, setActivityData] = useState<DailyActivity[]>([]);
+  const [activityLoading, setActivityLoading] = useState(false);
+  const [eventBreakdown, setEventBreakdown] = useState<Array<{ type: string; count: number }>>([]);
+  const [totalEvents, setTotalEvents] = useState(0);
+
+  // Expanded user rows
+  const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
+
   // Fetch real data from API
   const fetchUsers = async () => {
     try {
@@ -376,12 +595,31 @@ export function AdminDashboard() {
     }
   };
 
+  // Fetch activity chart data
+  const fetchActivity = useCallback(async () => {
+    setActivityLoading(true);
+    try {
+      const res = await fetch("/api/admin/activity?days=30");
+      if (res.ok) {
+        const data = await res.json();
+        setActivityData(data.dailyActivity ?? []);
+        setEventBreakdown(data.eventBreakdown ?? []);
+        setTotalEvents(data.totalEvents ?? 0);
+      }
+    } catch {
+      // Activity chart is best-effort
+    } finally {
+      setActivityLoading(false);
+    }
+  }, []);
+
   // Fetch data on mount
   useEffect(() => {
     if (isAdmin && !dataLoaded) {
       void fetchUsers();
+      void fetchActivity();
     }
-  }, [isAdmin, dataLoaded]);
+  }, [isAdmin, dataLoaded, fetchActivity]);
 
   // Filter and sort users
   const filteredUsers = useMemo(() => {
@@ -430,8 +668,18 @@ export function AdminDashboard() {
   };
 
   const handleRefresh = async () => {
-    await fetchUsers();
+    await Promise.all([fetchUsers(), fetchActivity()]);
   };
+
+  // Delete opponent handler
+  const handleDeleteOpponent = useCallback(async (userId: string, platform: string, username: string) => {
+    const key = encodeURIComponent(`${platform}:${username}`);
+    const res = await fetch(`/api/admin/users/${userId}/opponents/${key}`, { method: "DELETE" });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || "Failed to delete opponent");
+    }
+  }, []);
 
   // Delete user handlers
   const handleDeleteClick = async (user: AdminUser) => {
@@ -687,7 +935,10 @@ export function AdminDashboard() {
                         key={user.id}
                         user={user}
                         onDeleteClick={handleDeleteClick}
+                        onDeleteOpponent={handleDeleteOpponent}
                         canDelete={serviceRoleAvailable}
+                        expanded={expandedUserId === user.id}
+                        onToggleExpand={() => setExpandedUserId(expandedUserId === user.id ? null : user.id)}
                       />
                     ))}
                   </tbody>
@@ -706,8 +957,32 @@ export function AdminDashboard() {
             </div>
           </div>
 
-          {/* Right Sidebar - Resource Usage & Insights */}
+          {/* Right Sidebar - Activity, Resource Usage & Insights */}
           <div className="space-y-6">
+            {/* Activity Chart */}
+            <div className="rounded-xl border border-zinc-200 bg-white p-5">
+              <div className="mb-3 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Activity className="h-5 w-5 text-orange-500" />
+                  <h2 className="font-semibold text-zinc-900">Activity (30 days)</h2>
+                </div>
+                {activityLoading && <Loader2 className="h-4 w-4 animate-spin text-zinc-400" />}
+              </div>
+              <ActivityChart data={activityData} />
+              {eventBreakdown.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {eventBreakdown.slice(0, 5).map((e) => (
+                    <span key={e.type} className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-600">
+                      {e.type.replace(/_/g, " ")} <span className="text-zinc-400">{e.count}</span>
+                    </span>
+                  ))}
+                  {totalEvents > 0 && (
+                    <span className="text-[10px] text-zinc-400">{totalEvents.toLocaleString()} total events</span>
+                  )}
+                </div>
+              )}
+            </div>
+
             {/* Resource Usage */}
             <div className="rounded-xl border border-zinc-200 bg-white p-5">
               <div className="mb-4 flex items-center gap-2">

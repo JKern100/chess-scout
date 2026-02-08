@@ -33,6 +33,9 @@ export interface UseDateFilterRefinementParams {
   to: string | null;
   speeds: string[] | null;
   rated: 'any' | 'rated' | 'casual';
+  opponentColor?: 'w' | 'b' | null; // Filter by which color opponent played
+  openingEco?: string | null;  // Filter by ECO code (e.g., "A10")
+  openingName?: string | null; // Filter by opening name (e.g., "English Opening")
   enabled: boolean; // Only refine when Analysis is enabled
 }
 
@@ -70,6 +73,9 @@ export function useDateFilterRefinement(
     to,
     speeds,
     rated,
+    opponentColor,
+    openingEco,
+    openingName,
     enabled,
   } = params;
   
@@ -98,7 +104,7 @@ export function useDateFilterRefinement(
   const shouldUseIndexedDB = featureEnabled;
   
   // Generate a key for the current params to detect changes
-  const paramsKey = `${visitorId}_${platform}_${opponent}_${positionKey}_${side}_${from}_${to}_${speeds?.join(',')}_${rated}`;
+  const paramsKey = `${visitorId}_${platform}_${opponent}_${positionKey}_${side}_${from}_${to}_${speeds?.join(',')}_${rated}_${opponentColor ?? 'any'}_${openingEco ?? ''}_${openingName ?? ''}`;
   
   // Reset state when params change
   useEffect(() => {
@@ -151,6 +157,9 @@ export function useDateFilterRefinement(
           to,
           speeds,
           rated,
+          opponentColor,
+          openingEco,
+          openingName,
         },
         positionKey,
         side,
@@ -184,7 +193,7 @@ export function useDateFilterRefinement(
         error: e instanceof Error ? e.message : 'Refinement failed',
       }));
     }
-  }, [visitorId, platform, opponent, positionKey, side, from, to, speeds, rated, shouldUseIndexedDB, enabled]);
+  }, [visitorId, platform, opponent, positionKey, side, from, to, speeds, rated, opponentColor, openingEco, openingName, shouldUseIndexedDB, enabled]);
   
   const cancelRefinement = useCallback(() => {
     abortRef.current = true;

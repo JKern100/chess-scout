@@ -22,6 +22,9 @@ export interface DateFilterParams {
   to?: string | null;    // ISO date string
   speeds?: string[] | null;
   rated?: 'any' | 'rated' | 'casual';
+  opponentColor?: 'w' | 'b' | null; // Filter by which color opponent played
+  openingEco?: string | null;  // Filter by ECO code (e.g., "A10")
+  openingName?: string | null; // Filter by opening name (e.g., "English Opening")
 }
 
 export interface MoveStats {
@@ -100,7 +103,7 @@ export async function getDateFilteredMoves(params: {
     };
   }
   
-  // Apply additional filters (speed, rated)
+  // Apply additional filters (speed, rated, opponentColor)
   let filteredGames = games;
   
   if (filterParams.speeds && filterParams.speeds.length > 0 && filterParams.speeds.length < 5) {
@@ -111,6 +114,21 @@ export async function getDateFilteredMoves(params: {
     filteredGames = filteredGames.filter(g => g.rated === true);
   } else if (filterParams.rated === 'casual') {
     filteredGames = filteredGames.filter(g => g.rated === false);
+  }
+  
+  // Filter by opponent color (which side opponent played)
+  if (filterParams.opponentColor) {
+    filteredGames = filteredGames.filter(g => g.opponentColor === filterParams.opponentColor);
+  }
+  
+  // Filter by opening ECO code + name
+  if (filterParams.openingEco) {
+    if (filterParams.openingName) {
+      // Match both ECO code and name for precision (e.g., A10 "English Opening" vs A10 other variant)
+      filteredGames = filteredGames.filter(g => g.eco === filterParams.openingEco && g.ecoName === filterParams.openingName);
+    } else {
+      filteredGames = filteredGames.filter(g => g.eco === filterParams.openingEco);
+    }
   }
   
   onProgress?.({

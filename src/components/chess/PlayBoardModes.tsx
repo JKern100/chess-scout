@@ -40,6 +40,10 @@ import { PlayModeToggle } from "@/components/chess/PlayModeToggle";
 import { trackActivity } from "@/lib/trackActivity";
 import { GuidedTour } from "@/components/tour/GuidedTour";
 import { analysisTourSteps } from "@/config/tourSteps";
+import ecoIndexRaw from "@/server/openings/eco_index.json";
+
+type EcoEntry = { eco: string; name: string; moves_san: string[] };
+const ecoIndex = ecoIndexRaw as EcoEntry[];
 
 type Props = {
   initialFen?: string;
@@ -664,9 +668,22 @@ export function PlayBoardModes({ initialFen }: Props) {
   const savedLineId = searchParams.get("saved_line_id");
   const modeParam = searchParams.get("mode");
   const isSyntheticMode = searchParams.get("synthetic") === "true";
+  const openingEcoParam = searchParams.get("opening_eco");
+  const openingNameParam = searchParams.get("opening_name");
+  const opponentParam = searchParams.get("opponent");
+  const opponentColorParam = (searchParams.get("opponent_color") ?? searchParams.get("player_color")) as "white" | "black" | null;
+  const speedsParam = searchParams.get("speeds");
+  const ratedParam = searchParams.get("rated");
+  const fromParam = searchParams.get("from");
+  const toParam = searchParams.get("to");
+
+  // Track if we've already loaded the opening from URL params
+  const openingLoadedRef = useRef(false);
+  const filtersAppliedFromUrlRef = useRef(false);
+  const opponentFromUrlRef = useRef(false);
 
   const { activeOpponent, setActiveOpponent, availableOpponents: globalAvailableOpponents } = useActiveOpponent();
-  const [opponentUsername, setOpponentUsernameLocal] = useState<string>("");
+  const [opponentUsername, setOpponentUsernameLocal] = useState<string>(opponentParam ?? "");
   const [availableOpponents, setAvailableOpponents] = useState<Array<{ platform: string; username: string }>>([]);
   const { imports } = useImportsRealtime();
 
@@ -706,8 +723,20 @@ export function PlayBoardModes({ initialFen }: Props) {
   }, [isSyntheticMode]);
 
   // Sync local opponent username with global active opponent (only if not in synthetic mode)
+  // Apply URL opponent param immediately on mount (before activeOpponent effect)
+  useEffect(() => {
+    if (opponentParam) {
+      opponentFromUrlRef.current = true;
+      setOpponentUsernameLocal(opponentParam);
+      // Also update global context so it stays in sync
+      setActiveOpponent({ platform: "lichess", username: opponentParam });
+    }
+  }, [opponentParam, setActiveOpponent]);
+
   useEffect(() => {
     if (isSyntheticMode) return;
+    // Don't override if opponent was set from URL param
+    if (opponentFromUrlRef.current) return;
     if (activeOpponent?.username) {
       setOpponentUsernameLocal(activeOpponent.username);
     }
@@ -721,6 +750,54 @@ export function PlayBoardModes({ initialFen }: Props) {
       setActiveOpponent({ platform: opp.platform as "lichess" | "chesscom", username: opp.username });
     }
   }, [availableOpponents, setActiveOpponent]);
+
+  // State for opening hydration callback (set by ChessBoardCore)
+  const openingHydrateCallbackRef = useRef<((startFen: string, moves: string[]) => void) | null>(null);
+
+  // Load opening from URL params (opening_eco, opponent)
+  useEffect(() => {
+    if (openingLoadedRef.current) return;
+    if (!openingEcoParam) return;
+
+    // Set opponent username if provided (already handled by opponentParam effect above)
+
+    // Find the ECO entry and get the moves
+    const ecoEntry = ecoIndex.find(
+      (e) => e.eco === openingEcoParam && (!openingNameParam || e.name === openingNameParam)
+    ) ?? ecoIndex.find((e) => e.eco === openingEcoParam);
+
+    if (ecoEntry && ecoEntry.moves_san.length > 0) {
+      // Defer hydration until the board is ready
+      const hydrateOpening = () => {
+        if (openingHydrateCallbackRef.current) {
+          openingHydrateCallbackRef.current(new Chess().fen(), ecoEntry.moves_san);
+          openingLoadedRef.current = true;
+        } else {
+          // Board not ready yet, try again shortly
+          setTimeout(hydrateOpening, 100);
+        }
+      };
+      hydrateOpening();
+    }
+  }, [openingEcoParam, openingNameParam]);
+
+  // Apply opponent color from URL param (opponent_color=white means opponent plays white, user plays black)
+  const opponentColorAppliedRef = useRef(false);
+  useEffect(() => {
+    if (opponentColorAppliedRef.current) return;
+    if (!opponentColorParam) return;
+    
+    // opponent_color is the OPPONENT's color, set directly
+    setOpponentPlaysColor(opponentColorParam);
+    // User plays the opposite color
+    const userColor = opponentColorParam === "white" ? "black" : "white";
+    window.localStorage.setItem("chessscout_player_side", userColor);
+    opponentColorAppliedRef.current = true;
+  }, [opponentColorParam]);
+
+  // Track if filters from URL have been applied
+  const urlFiltersAppliedRef = useRef(false);
+
   const {
     isImporting: globalIsImporting,
     progress: globalProgress,
@@ -855,6 +932,40 @@ export function PlayBoardModes({ initialFen }: Props) {
       applyAnalysisFilters();
     }
   }, [applyAnalysisFilters, draftFiltersHydrated]);
+
+  // Apply filters from URL params (from Scout Report click)
+  useEffect(() => {
+    if (urlFiltersAppliedRef.current) return;
+    if (!draftFiltersHydrated) return;
+    // Only apply if we have at least one filter param from URL
+    if (!speedsParam && !ratedParam && !fromParam && !toParam) return;
+
+    // Parse speeds from comma-separated string
+    const parsedSpeeds = speedsParam
+      ? speedsParam.split(",").filter((s) => ["bullet", "blitz", "rapid", "classical", "correspondence"].includes(s)) as typeof DEFAULT_SPEEDS
+      : draftSpeeds;
+    
+    const parsedRated = ratedParam === "rated" ? "rated" : ratedParam === "casual" ? "casual" : "any";
+
+    // Update draft filters
+    if (speedsParam) setDraftSpeeds(parsedSpeeds);
+    if (ratedParam) setDraftRated(parsedRated);
+    if (fromParam) setDraftFromDate(fromParam);
+    if (toParam) setDraftToDate(toParam);
+    if (fromParam || toParam) setDraftDatePreset("custom");
+
+    // Apply filters directly
+    setAnalysisAppliedFilters({
+      speeds: parsedSpeeds.length > 0 ? parsedSpeeds : DEFAULT_SPEEDS,
+      rated: parsedRated,
+      datePreset: (fromParam || toParam) ? "custom" : "6m",
+      fromDate: fromParam ?? "",
+      toDate: toParam ?? "",
+    });
+
+    urlFiltersAppliedRef.current = true;
+  }, [draftFiltersHydrated, speedsParam, ratedParam, fromParam, toParam, draftSpeeds, setDraftSpeeds, setDraftRated, setDraftFromDate, setDraftToDate, setDraftDatePreset]);
+
   const [generateStyleMarkers, setGenerateStyleMarkers] = useState(true);
   const [opponentMode, setOpponentMode] = useState<Strategy>("proportional");
   const [depthRemaining, setDepthRemaining] = useState<number | null>(null);
@@ -912,7 +1023,9 @@ export function PlayBoardModes({ initialFen }: Props) {
   const [opponentPlaysColor, setOpponentPlaysColor] = useState<"white" | "black">("black");
 
   // Sync opponentPlaysColor with stored playerSide on mount to avoid mismatch
+  // BUT skip if URL param already set the color (URL param takes priority)
   useEffect(() => {
+    if (opponentColorAppliedRef.current) return; // URL param already applied, don't override
     try {
       const saved = window.localStorage.getItem("chessscout_player_side");
       if (saved === "white" || saved === "black") {
@@ -963,6 +1076,8 @@ export function PlayBoardModes({ initialFen }: Props) {
 
   useEffect(() => {
     if (availableOpponents.length === 0) return;
+    // Don't override if opponent was set from URL param
+    if (opponentFromUrlRef.current) return;
     const current = opponentUsername.trim().toLowerCase();
     if (current && availableOpponents.some((o) => o.username.toLowerCase() === current)) return;
     setOpponentUsername(availableOpponents[0]?.username ?? "");
@@ -2668,75 +2783,127 @@ export function PlayBoardModes({ initialFen }: Props) {
       soundEnabled={soundEnabled}
       leftPanel={(state) => <MovesSoFarPanel state={state} opponentUsername={opponentUsername} />}
       aboveBoard={(state) => {
+        const oppName = opponentUsername || "Opponent";
+        // Above board shows the player whose pieces are at the top
+        // When board is NOT flipped: opponent is at top
+        // When board IS flipped: "You" is at top
+        const isOpponentAtTop = state.visualOrientation === state.playerSide;
+        const topLabel = isOpponentAtTop ? oppName : "You";
+        
         if (mode === "analysis") {
-          if (!analysisShowEval) return null;
-          const text = formatEvalForDisplay(analysisEval);
-
           return (
-            <div className="flex justify-end">
-              <div className="inline-flex items-center rounded-full bg-zinc-100 px-3 py-1 text-[12px] font-semibold text-zinc-900">
-                <span className="font-mono tabular-nums">{text}</span>
-              </div>
+            <div className="flex items-center justify-between mb-1">
+              <div className="text-sm font-medium text-zinc-700">{topLabel}</div>
+              {analysisShowEval && (
+                <div className="inline-flex items-center rounded-full bg-zinc-100 px-3 py-1 text-[12px] font-semibold text-zinc-900">
+                  <span className="font-mono tabular-nums">{formatEvalForDisplay(analysisEval)}</span>
+                </div>
+              )}
             </div>
           );
         }
 
-        if (mode !== "simulation") return null;
+        if (mode !== "simulation") {
+          return (
+            <div className="flex items-center justify-start mb-1">
+              <div className="text-sm font-medium text-zinc-700">{topLabel}</div>
+            </div>
+          );
+        }
 
         if (!clocksEnabled) {
-          if (!opponentSourceIndicator) return null;
-          return <div className="flex justify-start">{opponentSourceIndicator}</div>;
+          return (
+            <div className="flex items-center justify-between mb-1">
+              <div className="text-sm font-medium text-zinc-700">{topLabel}</div>
+              {isOpponentAtTop ? opponentSourceIndicator : null}
+            </div>
+          );
         }
 
         const playerColor = state.playerSide === "white" ? "w" : "b";
-        const opponentColor = playerColor === "w" ? "b" : "w";
-        const isActive = state.game.turn() === opponentColor && clockRunning && !clockPaused && !clockExpired;
+        const opponentColorChar = playerColor === "w" ? "b" : "w";
+        // Clock at top depends on who is visually at top
+        const topColorChar = isOpponentAtTop ? opponentColorChar : playerColor;
+        const isActive = state.game.turn() === topColorChar && clockRunning && !clockPaused && !clockExpired;
 
-        const oppMs = state.playerSide === "white" ? blackMs : whiteMs;
-        const isLow = oppMs <= 10_000;
+        const topMs = isOpponentAtTop
+          ? (state.playerSide === "white" ? blackMs : whiteMs)
+          : (state.playerSide === "white" ? whiteMs : blackMs);
+        const isLow = topMs <= 10_000;
 
         return (
-          <div
-            className={`flex items-center justify-between gap-2 rounded-xl border px-3 py-2 font-mono text-2xl tabular-nums ${
-              isActive
-                ? isLow
-                  ? "border-rose-300 bg-rose-600 text-white"
-                  : "border-zinc-200 bg-zinc-900 text-white"
-                : isLow
-                  ? "border-rose-200 bg-rose-50 text-rose-700"
-                  : "border-zinc-200 bg-zinc-100 text-zinc-700"
-            }`}
-          >
-            <div className="flex items-center">
-              {opponentSourceIndicator ? <span className="mr-2">{opponentSourceIndicator}</span> : null}
+          <div className="mb-1">
+            <div className="text-sm font-medium text-zinc-700 mb-1">{topLabel}</div>
+            <div
+              className={`flex items-center justify-between gap-2 rounded-xl border px-3 py-2 font-mono text-2xl tabular-nums ${
+                isActive
+                  ? isLow
+                    ? "border-rose-300 bg-rose-600 text-white"
+                    : "border-zinc-200 bg-zinc-900 text-white"
+                  : isLow
+                    ? "border-rose-200 bg-rose-50 text-rose-700"
+                    : "border-zinc-200 bg-zinc-100 text-zinc-700"
+              }`}
+            >
+              <div className="flex items-center">
+                {isOpponentAtTop && opponentSourceIndicator ? <span className="mr-2">{opponentSourceIndicator}</span> : null}
+              </div>
+              <div className="flex items-center justify-end">{formatClock(topMs)}</div>
             </div>
-            <div className="flex items-center justify-end">{formatClock(oppMs)}</div>
           </div>
         );
       }}
       belowBoard={(state) => {
-        if (mode !== "simulation") return null;
-        if (!clocksEnabled) return null;
+        const oppName = opponentUsername || "Opponent";
+        // Below board shows the player whose pieces are at the bottom
+        // When board is NOT flipped: "You" is at bottom
+        // When board IS flipped: opponent is at bottom
+        const isOpponentAtBottom = state.visualOrientation !== state.playerSide;
+        const bottomLabel = isOpponentAtBottom ? oppName : "You";
+
+        if (mode !== "simulation") {
+          return (
+            <div className="flex items-center justify-start mt-1">
+              <div className="text-sm font-medium text-zinc-700">{bottomLabel}</div>
+            </div>
+          );
+        }
+
+        if (!clocksEnabled) {
+          return (
+            <div className="flex items-center justify-between mt-1">
+              <div className="text-sm font-medium text-zinc-700">{bottomLabel}</div>
+              {isOpponentAtBottom ? opponentSourceIndicator : null}
+            </div>
+          );
+        }
 
         const playerColor = state.playerSide === "white" ? "w" : "b";
-        const isActive = state.game.turn() === playerColor && clockRunning && !clockPaused && !clockExpired;
+        const opponentColorChar = playerColor === "w" ? "b" : "w";
+        const bottomColorChar = isOpponentAtBottom ? opponentColorChar : playerColor;
+        const isActive = state.game.turn() === bottomColorChar && clockRunning && !clockPaused && !clockExpired;
 
-        const pMs = state.playerSide === "white" ? whiteMs : blackMs;
-        const isLow = pMs <= 10_000;
+        const bMs = isOpponentAtBottom
+          ? (state.playerSide === "white" ? blackMs : whiteMs)
+          : (state.playerSide === "white" ? whiteMs : blackMs);
+        const isLow = bMs <= 10_000;
 
         return (
-          <div
-            className={`flex items-center justify-end rounded-xl border px-3 py-2 font-mono text-2xl tabular-nums ${
-              isActive
-                ? isLow
-                  ? "border-rose-300 bg-rose-600 text-white"
-                  : "border-zinc-200 bg-zinc-900 text-white"
-                : isLow
-                  ? "border-rose-200 bg-rose-50 text-rose-700"
-                  : "border-zinc-200 bg-zinc-100 text-zinc-700"
-            }`}
-          >
-            {formatClock(pMs)}
+          <div className="mt-1">
+            <div
+              className={`flex items-center justify-between rounded-xl border px-3 py-2 font-mono text-2xl tabular-nums ${
+                isActive
+                  ? isLow
+                    ? "border-rose-300 bg-rose-600 text-white"
+                    : "border-zinc-200 bg-zinc-900 text-white"
+                  : isLow
+                    ? "border-rose-200 bg-rose-50 text-rose-700"
+                    : "border-zinc-200 bg-zinc-100 text-zinc-700"
+              }`}
+            >
+              <div className="text-sm font-medium">{bottomLabel}</div>
+              <div>{formatClock(bMs)}</div>
+            </div>
           </div>
         );
       }}
@@ -2894,6 +3061,9 @@ export function PlayBoardModes({ initialFen }: Props) {
         scoutBoardContextRef.current = { fen: state.fen, turn: state.game.turn(), playerSide: state.playerSide };
         simBoardStateRef.current = state;
 
+        // Register the hydration callback for opening loading
+        openingHydrateCallbackRef.current = state.hydrateFromFenAndMoves;
+
         const shouldHydrateSavedLine = Boolean(savedLineId && mode === "analysis");
 
         if (mode === "analysis") {
@@ -2973,6 +3143,9 @@ export function PlayBoardModes({ initialFen }: Props) {
               filterTo={analysisAppliedFilters.toDate || null}
               filterSpeeds={analysisAppliedFilters.speeds}
               filterRated={analysisAppliedFilters.rated}
+              filterOpponentColor={opponentPlaysColor === "white" ? "w" : "b"}
+              filterOpeningEco={openingEcoParam || null}
+              filterOpeningName={openingNameParam || null}
               isSyntheticMode={isSyntheticMode}
               syntheticGamesCount={syntheticGamesCount}
             />
@@ -3114,6 +3287,9 @@ function AnalysisRightSidebar(props: {
   filterTo?: string | null;
   filterSpeeds?: string[] | null;
   filterRated?: 'any' | 'rated' | 'casual';
+  filterOpponentColor?: 'w' | 'b' | null;
+  filterOpeningEco?: string | null;
+  filterOpeningName?: string | null;
   // Synthetic opponent props
   isSyntheticMode?: boolean;
   syntheticGamesCount?: number;
@@ -3182,6 +3358,9 @@ function AnalysisRightSidebar(props: {
     filterTo,
     filterSpeeds,
     filterRated,
+    filterOpponentColor,
+    filterOpeningEco,
+    filterOpeningName,
     isSyntheticMode = false,
     syntheticGamesCount,
   } = props;
@@ -3384,6 +3563,21 @@ function AnalysisRightSidebar(props: {
           ) : active === "preferences" ? (
             <div className="grid gap-2 text-[10px] text-zinc-700">
               <div className="text-[10px] font-medium text-zinc-900">Preferences</div>
+              
+              <div className="pt-1 text-[10px] font-medium text-zinc-900">Board</div>
+              <button
+                type="button"
+                className="inline-flex items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[11px] font-medium text-zinc-700 hover:bg-zinc-50 transition-colors"
+                onClick={() => state.toggleBoardFlip()}
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                Flip Board
+              </button>
+              <div className="text-[9px] text-zinc-500">
+                Currently viewing from {state.visualOrientation === "white" ? "White" : "Black"}'s perspective
+              </div>
+
+              <div className="pt-2 text-[10px] font-medium text-zinc-900">Display</div>
               <label className="inline-flex items-center gap-2">
                 <input type="checkbox" checked={analysisShowArrow} onChange={(e) => setAnalysisShowArrow(e.target.checked)} />
                 Show arrows
@@ -3398,7 +3592,7 @@ function AnalysisRightSidebar(props: {
                   checked={analysisShowEngineBest}
                   onChange={(e) => setAnalysisShowEngineBest(e.target.checked)}
                 />
-                Display engine’s best move
+                Display engine's best move
               </label>
               <label className="inline-flex items-center gap-2">
                 <input
@@ -3463,6 +3657,9 @@ function AnalysisRightSidebar(props: {
               filterTo={filterTo}
               filterSpeeds={filterSpeeds}
               filterRated={filterRated}
+              filterOpponentColor={filterOpponentColor}
+              filterOpeningEco={filterOpeningEco}
+              filterOpeningName={filterOpeningName}
               isSyntheticMode={isSyntheticMode}
               syntheticGamesCount={syntheticGamesCount}
             />

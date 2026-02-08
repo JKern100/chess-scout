@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Chess } from "chess.js";
 import { Chessboard } from "react-chessboard";
 import { useChessSounds } from "@/hooks/useChessSounds";
@@ -16,6 +16,9 @@ export type ChessBoardCoreState = {
   redoMoves: string[];
   playerSide: Side;
   setPlayerSide: (side: Side) => void;
+  boardFlipped: boolean;
+  toggleBoardFlip: () => void;
+  visualOrientation: Side;
   status: string | null;
   setStatus: (s: string | null) => void;
   isGameOver: boolean;
@@ -73,6 +76,7 @@ export function ChessBoardCore({ initialFen, soundEnabled = true, onFenChange, a
   const [redoFens, setRedoFens] = useState<string[]>([]);
   const [redoMoves, setRedoMoves] = useState<string[]>([]);
   const [playerSide, setPlayerSideState] = useState<Side>("white");
+  const [boardFlipped, setBoardFlipped] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
 
   const [isMounted, setIsMounted] = useState(false);
@@ -436,6 +440,9 @@ export function ChessBoardCore({ initialFen, soundEnabled = true, onFenChange, a
     return "Game over";
   })();
 
+  const toggleBoardFlip = useCallback(() => setBoardFlipped(prev => !prev), []);
+  const visualOrientation: Side = boardFlipped ? (playerSide === "white" ? "black" : "white") : playerSide;
+
   const state: ChessBoardCoreState = {
     game,
     fen,
@@ -445,6 +452,9 @@ export function ChessBoardCore({ initialFen, soundEnabled = true, onFenChange, a
     redoMoves,
     playerSide,
     setPlayerSide,
+    boardFlipped,
+    toggleBoardFlip,
+    visualOrientation,
     status,
     setStatus,
     isGameOver,
@@ -611,7 +621,7 @@ export function ChessBoardCore({ initialFen, soundEnabled = true, onFenChange, a
                           id: boardId,
                           position: fen,
                           onPieceDrop: (args: any) => onPieceDrop(args, state),
-                          boardOrientation: playerSide,
+                          boardOrientation: visualOrientation,
                           animationDurationInMs: 150,
                           showNotation: false,
                           allowDrawingArrows: false,
@@ -641,7 +651,7 @@ export function ChessBoardCore({ initialFen, soundEnabled = true, onFenChange, a
                               <div
                                 className={`absolute bottom-[3px] left-[4px] font-mono text-[0.85em] leading-none ${notationClassForSquare(
                                   f,
-                                  playerSide === "white" ? "1" : "8"
+                                  visualOrientation === "white" ? "1" : "8"
                                 )}`}
                               >
                                 {f}
@@ -655,7 +665,7 @@ export function ChessBoardCore({ initialFen, soundEnabled = true, onFenChange, a
                             <div key={r} className="relative">
                               <div
                                 className={`absolute right-[4px] top-[3px] font-mono text-[0.85em] leading-none ${notationClassForSquare(
-                                  playerSide === "white" ? "h" : "a",
+                                  visualOrientation === "white" ? "h" : "a",
                                   r
                                 )}`}
                               >

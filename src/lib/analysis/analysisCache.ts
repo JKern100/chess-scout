@@ -12,7 +12,7 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 
 const DB_NAME = 'chess_scout_analysis';
-const DB_VERSION = 2; // Bumped for scout_predictions store
+const DB_VERSION = 3; // Bumped for eco/ecoName fields on CachedGame
 const MAX_OPENING_PLIES = 20; // Store first 20 plies (10 moves) per game
 
 export { MAX_OPENING_PLIES };
@@ -40,6 +40,8 @@ export interface CachedGame {
   rated: boolean | null;
   result: string;                // "1-0" | "0-1" | "1/2-1/2" | "*"
   opponentColor: 'w' | 'b';      // Which color the opponent played
+  eco: string | null;              // ECO code (e.g., "A10", "B27")
+  ecoName: string | null;          // ECO opening name (e.g., "English Opening")
   openingTrace: OpeningTraceEntry[]; // First N plies with position keys
 }
 
@@ -89,7 +91,7 @@ let dbPromise: Promise<IDBPDatabase<AnalysisCacheSchema>> | null = null;
 function getDb(): Promise<IDBPDatabase<AnalysisCacheSchema>> {
   if (!dbPromise) {
     dbPromise = openDB<AnalysisCacheSchema>(DB_NAME, DB_VERSION, {
-      upgrade(db) {
+      upgrade(db, oldVersion, _newVersion, transaction) {
         // Games store with indexes for filtering
         if (!db.objectStoreNames.contains('analysis_games')) {
           const gamesStore = db.createObjectStore('analysis_games', { keyPath: 'id' });
@@ -106,6 +108,17 @@ function getDb(): Promise<IDBPDatabase<AnalysisCacheSchema>> {
         if (!db.objectStoreNames.contains('scout_predictions')) {
           const scoutStore = db.createObjectStore('scout_predictions', { keyPath: 'key' });
           scoutStore.createIndex('by_cached_at', 'cachedAt');
+        }
+
+        // v3: eco/ecoName fields added to CachedGame.
+        // Clear games + sync cursors so next import re-populates with ECO data.
+        if (oldVersion < 3 && oldVersion > 0) {
+          try {
+            transaction.objectStore('analysis_games').clear();
+            transaction.objectStore('analysis_sync_cursors').clear();
+          } catch {
+            // Best-effort: if clearing fails, data will be overwritten on next import
+          }
         }
       },
     });

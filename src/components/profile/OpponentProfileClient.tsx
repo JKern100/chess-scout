@@ -7,9 +7,16 @@ import { StyleSpectrumBar, StyleSpectrumData } from "@/components/profile/StyleS
 import { GenerationProgressModal } from "@/components/profile/GenerationProgressModal";
 import { trackActivity } from "@/lib/trackActivity";
 import ReactMarkdown from "react-markdown";
-import { Download, Mail } from "lucide-react";
+import { Download, Mail, ChevronRight } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { GuidedTour } from "@/components/tour/GuidedTour";
 import { scoutReportTourSteps } from "@/config/tourSteps";
+import { Chess } from "chess.js";
+import { Chessboard } from "react-chessboard";
+import ecoIndexRaw from "@/server/openings/eco_index.json";
+
+type EcoEntry = { eco: string; name: string; moves_san: string[] };
+const ecoIndex = ecoIndexRaw as EcoEntry[];
 
 type ChessPlatform = "lichess" | "chesscom";
 
@@ -502,6 +509,7 @@ function RepertoireTree(params: { nodes: V2BranchNode[]; maxDepth: number; oppon
 }
 
 export function OpponentProfileClient({ platform, username, isSelfAnalysis = false }: Props) {
+  const router = useRouter();
   const { speeds, setSpeeds, rated, setRated, datePreset, setDatePreset, fromDate, setFromDate, toDate, setToDate } = useOpponentFilters();
 
   const [profileRow, setProfileRow] = useState<OpponentProfileRow | null>(null);
@@ -1068,10 +1076,69 @@ export function OpponentProfileClient({ platform, username, isSelfAnalysis = fal
   const engineAcpl: number | null = engineMetrics?.acpl?.overall ?? null;
   const analyzedGames: number = engineMetrics?.analyzed_games?.total ?? 0;
 
-  function OpeningBarList(props: { rows: V2OpeningRow[]; title: string; sampleWarning?: string | null; ctx?: V3Context | null }) {
-    const { rows, title, sampleWarning, ctx } = props;
+  // Helper to get opening info from ECO index
+  const getOpeningInfo = useCallback((eco: string | null, name: string) => {
+    if (!eco) return null;
+    const entry = ecoIndex.find((e) => e.eco === eco && e.name === name) ?? ecoIndex.find((e) => e.eco === eco);
+    if (!entry) return null;
+
+    // Format moves as "1.c4 Nf6 2.Nc3" etc.
+    const movesFormatted: string[] = [];
+    for (let i = 0; i < entry.moves_san.length; i++) {
+      const moveNum = Math.floor(i / 2) + 1;
+      if (i % 2 === 0) {
+        movesFormatted.push(`${moveNum}.${entry.moves_san[i]}`);
+      } else {
+        movesFormatted.push(entry.moves_san[i]);
+      }
+    }
+
+    // Compute FEN after playing all moves
+    const chess = new Chess();
+    for (const san of entry.moves_san) {
+      try {
+        chess.move(san);
+      } catch {
+        break;
+      }
+    }
+
+    return {
+      moves: movesFormatted.join(" "),
+      fen: chess.fen(),
+      movesSan: entry.moves_san,
+    };
+  }, []);
+
+  function OpeningBarList(props: {
+    rows: V2OpeningRow[];
+    title: string;
+    sampleWarning?: string | null;
+    ctx?: V3Context | null;
+    playerColor: "white" | "black";
+  }) {
+    const { rows, title, sampleWarning, ctx, playerColor } = props;
     const filtered = filterPctAtLeastOne(rows);
     const maxPct = filtered.reduce((m, r) => Math.max(m, r.pct), 0) || 1;
+    const [hoveredEco, setHoveredEco] = useState<string | null>(null);
+
+    const handleOpeningClick = (row: V2OpeningRow) => {
+      if (row.name === "Other" || !row.eco) return;
+      const params = new URLSearchParams({
+        mode: "analysis",
+        opponent: username,
+        opening_eco: row.eco,
+        opening_name: row.name,
+        opponent_color: playerColor, // "As White" section → opponent plays white
+      });
+      // Pass current filters
+      if (speeds.length > 0) params.set("speeds", speeds.join(","));
+      if (rated !== "any") params.set("rated", rated);
+      if (fromDate) params.set("from", fromDate);
+      if (toDate) params.set("to", toDate);
+      router.push(`/play?${params.toString()}`);
+    };
+
     return (
       <BentoCard title={title}>
         {ctx ? (
@@ -1099,28 +1166,64 @@ export function OpponentProfileClient({ platform, username, isSelfAnalysis = fal
               const winRateColor = winRate != null
                 ? winRate >= 55 ? "text-emerald-600" : winRate <= 45 ? "text-rose-600" : "text-neutral-600"
                 : "text-neutral-500";
+              const isClickable = r.name !== "Other" && r.eco;
+              const openingInfo = isClickable ? getOpeningInfo(r.eco, r.name) : null;
+              const isHovered = hoveredEco === `${r.eco}|${r.name}`;
+
               return (
-                <div key={`${r.eco ?? ""}|${r.name}`} className="grid gap-1">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="truncate text-xs font-medium text-neutral-900">{r.name}</div>
-                      {r.eco ? <div className="text-[10px] text-neutral-500">{r.eco}</div> : null}
-                    </div>
-                    <div className="shrink-0 text-right">
-                      <div className="text-xs font-semibold text-neutral-900">{r.pct.toFixed(0)}%</div>
-                      <div className="flex items-center gap-1.5 text-[10px]">
-                        <span className="text-neutral-500">{r.games} games</span>
-                        {hasWinRate && (
-                          <span className={`font-medium ${winRateColor}`} title={`${r.wins}W / ${r.draws ?? 0}D / ${r.losses}L`}>
-                            {winRate?.toFixed(0)}% win
-                          </span>
-                        )}
+                <div key={`${r.eco ?? ""}|${r.name}`} className="relative">
+                  <button
+                    type="button"
+                    className={`grid gap-1 text-left w-full rounded-lg p-1.5 -m-1.5 transition-colors ${
+                      isClickable ? "hover:bg-neutral-50 cursor-pointer group" : "cursor-default"
+                    }`}
+                    onClick={() => handleOpeningClick(r)}
+                    onMouseEnter={() => isClickable && setHoveredEco(`${r.eco}|${r.name}`)}
+                    onMouseLeave={() => setHoveredEco(null)}
+                    disabled={!isClickable}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1">
+                          <span className="truncate text-xs font-medium text-neutral-900">{r.name}</span>
+                          {isClickable && (
+                            <ChevronRight className="h-3 w-3 text-neutral-400 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                          )}
+                        </div>
+                        {r.eco ? <div className="text-[10px] text-neutral-500">{r.eco}</div> : null}
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <div className="text-xs font-semibold text-neutral-900">{r.pct.toFixed(0)}%</div>
+                        <div className="flex items-center gap-1.5 text-[10px]">
+                          <span className="text-neutral-500">{r.games} games</span>
+                          {hasWinRate && (
+                            <span className={`font-medium ${winRateColor}`} title={`${r.wins}W / ${r.draws ?? 0}D / ${r.losses}L`}>
+                              {winRate?.toFixed(0)}% win
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                  <div className="h-2 w-full overflow-hidden rounded-xl bg-neutral-100">
-                    <div className="h-2 rounded-xl" style={{ width: `${width}%`, backgroundColor: accent }} />
-                  </div>
+                    <div className="h-2 w-full overflow-hidden rounded-xl bg-neutral-100">
+                      <div className="h-2 rounded-xl" style={{ width: `${width}%`, backgroundColor: accent }} />
+                    </div>
+                  </button>
+                  {/* Hover tooltip with opening moves and board */}
+                  {isHovered && openingInfo && (
+                    <div className="absolute left-full top-0 ml-2 z-50 bg-white rounded-lg shadow-lg border border-neutral-200 p-3 w-48">
+                      <div className="text-[11px] font-medium text-neutral-700 mb-2">{openingInfo.moves}</div>
+                      <div className="w-full aspect-square">
+                        <Chessboard
+                          options={{
+                            position: openingInfo.fen,
+                            boardOrientation: playerColor,
+                            showNotation: false,
+                            allowDrawingArrows: false,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })
@@ -1497,18 +1600,21 @@ export function OpponentProfileClient({ platform, username, isSelfAnalysis = fal
                 rows={segment.openings.as_white}
                 sampleWarning={segment.openings.sample_warning}
                 ctx={v3Addon?.contexts.as_white ?? null}
+                playerColor="white"
               />
               <OpeningBarList
                 title="As Black vs 1.e4"
                 rows={segment.openings.as_black_vs_e4}
                 sampleWarning={segment.openings.sample_warning}
                 ctx={v3Addon?.contexts.as_black_vs_e4 ?? null}
+                playerColor="black"
               />
               <OpeningBarList
                 title="As Black vs 1.d4"
                 rows={segment.openings.as_black_vs_d4}
                 sampleWarning={segment.openings.sample_warning}
                 ctx={v3Addon?.contexts.as_black_vs_d4 ?? null}
+                playerColor="black"
               />
             </div>
 

@@ -62,6 +62,7 @@ type FlushGame = {
   opponent_color: "w" | "b";
   result: string;
   opening_trace: OpeningTraceEntry[];
+  moves_san: string[]; // First 24 SAN moves for ECO classification
 };
 
 type WorkerProgress = {
@@ -501,6 +502,9 @@ async function runImport(params: ImportStartMessage) {
         }
       }
 
+      // Capture first 24 SAN moves for ECO classification
+      const movesSan = verbose.slice(0, 24).map((m: any) => String(m.san ?? "")).filter(Boolean);
+
       gameBuffer.push({
         platform_game_id: platformGameId,
         played_at: playedAtIso,
@@ -510,6 +514,7 @@ async function runImport(params: ImportStartMessage) {
         opponent_color: oppColor,
         result,
         opening_trace: openingTrace,
+        moves_san: movesSan,
       });
 
       gamesProcessed += 1;

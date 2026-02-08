@@ -1,6 +1,7 @@
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { normalizeFen } from "@/server/opponentModel";
 import { upsertCachedGames, type CachedGame, type OpeningTraceEntry } from "@/lib/analysis/analysisCache";
+import { matchEco } from "@/lib/analysis/ecoMatcher";
 
 type WorkerFlushNode = {
   filter_key: string;
@@ -25,6 +26,7 @@ type WorkerFlushGame = {
     moveUci: string;
     isOpponentMove: boolean;
   }>;
+  moves_san?: string[]; // First 24 SAN moves for ECO classification
 };
 
 type WorkerMessage =
@@ -211,23 +213,28 @@ export function createOpeningGraphImporter(params: {
     
     const cachedGames: CachedGame[] = games
       .filter((g) => g.platform_game_id && g.opening_trace)
-      .map((g) => ({
-        id: g.platform_game_id,
-        visitorKey,
-        platform,
-        opponent: usernameNormalized,
-        playedAt: g.played_at ?? new Date().toISOString(),
-        speed: g.speed,
-        rated: g.rated,
-        result: g.result ?? "*",
-        opponentColor: g.opponent_color,
-        openingTrace: g.opening_trace.map((t) => ({
-          ply: t.ply,
-          positionKey: t.positionKey,
-          moveUci: t.moveUci,
-          isOpponentMove: t.isOpponentMove,
-        })),
-      }));
+      .map((g) => {
+        const ecoMatch = g.moves_san ? matchEco(g.moves_san, 24) : { eco: null, name: "Unknown" };
+        return {
+          id: g.platform_game_id,
+          visitorKey,
+          platform,
+          opponent: usernameNormalized,
+          playedAt: g.played_at ?? new Date().toISOString(),
+          speed: g.speed,
+          rated: g.rated,
+          result: g.result ?? "*",
+          opponentColor: g.opponent_color,
+          eco: ecoMatch.eco,
+          ecoName: ecoMatch.name,
+          openingTrace: g.opening_trace.map((t) => ({
+            ply: t.ply,
+            positionKey: t.positionKey,
+            moveUci: t.moveUci,
+            isOpponentMove: t.isOpponentMove,
+          })),
+        };
+      });
     
     try {
       await upsertCachedGames(cachedGames);

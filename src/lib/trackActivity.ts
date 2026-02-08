@@ -89,9 +89,21 @@ export async function trackActivity(
 
     if (error) {
       console.error("[trackActivity] Error updating profile:", error);
-    } else {
-      console.log("[trackActivity] Tracked:", actionType, metadata || "");
     }
+
+    // Also log to activity_events table for admin analytics (best-effort)
+    supabase
+      .from("activity_events")
+      .insert({
+        profile_id: user.id,
+        event_type: actionType,
+        metadata: metadata ? metadata : null,
+      })
+      .then(({ error: evtErr }) => {
+        if (evtErr) {
+          // Table may not exist yet — silently ignore
+        }
+      });
   } catch (err) {
     console.error("[trackActivity] Failed to track activity:", err);
   }
