@@ -29,7 +29,7 @@ type ProfilePayload = {
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 // Use the model name without 'models/' prefix for the new SDK
-const GEMINI_MODEL = process.env.GEMINI_TUNED_MODEL || "gemini-2.0-flash-exp";
+const GEMINI_MODEL = process.env.GEMINI_TUNED_MODEL || "gemini-2.0-flash";
 
 const DEFAULT_SYSTEM_INSTRUCTION = `You are ChessScout CoachGPT, a professional chess coach and scouting analyst.
 
