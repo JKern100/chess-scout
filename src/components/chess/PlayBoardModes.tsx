@@ -24,6 +24,7 @@ import { useSearchParams } from "next/navigation";
 import { getBestMoveForPlay, type EngineScore } from "@/lib/engine/engineService";
 import { ChessBoardCore, type ChessBoardCoreState } from "./ChessBoardCore";
 import { SimulationRightSidebar } from "./SimulationRightSidebar";
+import { EcoFilterDropdown } from "./EcoFilterDropdown";
 import { AnalysisBoard } from "./AnalysisBoard";
 import { LichessBookTab } from "./LichessBookTab";
 import { ScoutOverlay, ScoutPanelContent, type OpponentReplyForecast } from "./ScoutOverlay";
@@ -1021,6 +1022,10 @@ export function PlayBoardModes({ initialFen }: Props) {
   // Simulation right sidebar state
   const [simRightTab, setSimRightTab] = useState<SimulationRightTab>("filters");
   const [opponentPlaysColor, setOpponentPlaysColor] = useState<"white" | "black">("black");
+
+  // ECO opening filter state
+  const [selectedEco, setSelectedEco] = useState<string | null>(openingEcoParam || null);
+  const [selectedEcoName, setSelectedEcoName] = useState<string | null>(openingNameParam || null);
 
   // Sync opponentPlaysColor with stored playerSide on mount to avoid mismatch
   // BUT skip if URL param already set the color (URL param takes priority)
@@ -3079,6 +3084,10 @@ export function PlayBoardModes({ initialFen }: Props) {
                 setOpponentPlaysColor(c);
                 state.setPlayerSide(c === "white" ? "black" : "white");
               }}
+              selectedEco={selectedEco}
+              selectedEcoName={selectedEcoName}
+              onEcoSelect={(eco: string | null, name: string | null) => { setSelectedEco(eco); setSelectedEcoName(name); }}
+              platform={activeOpponent?.platform ?? "lichess"}
               analysisRightTab={analysisRightTab}
               setAnalysisRightTab={setAnalysisRightTab}
               analysisFilterApplyStatus={analysisFilterApply.status}
@@ -3144,8 +3153,8 @@ export function PlayBoardModes({ initialFen }: Props) {
               filterSpeeds={analysisAppliedFilters.speeds}
               filterRated={analysisAppliedFilters.rated}
               filterOpponentColor={opponentPlaysColor === "white" ? "w" : "b"}
-              filterOpeningEco={openingEcoParam || null}
-              filterOpeningName={openingNameParam || null}
+              filterOpeningEco={selectedEco}
+              filterOpeningName={selectedEcoName}
               isSyntheticMode={isSyntheticMode}
               syntheticGamesCount={syntheticGamesCount}
             />
@@ -3183,6 +3192,10 @@ export function PlayBoardModes({ initialFen }: Props) {
                 setOpponentPlaysColor(c);
                 state.setPlayerSide(c === "white" ? "black" : "white");
               }}
+              selectedEco={selectedEco}
+              selectedEcoName={selectedEcoName}
+              onEcoSelect={(eco: string | null, name: string | null) => { setSelectedEco(eco); setSelectedEcoName(name); }}
+              platform={activeOpponent?.platform ?? "lichess"}
               mode={opponentMode}
               setMode={setOpponentMode}
               clocksEnabled={clocksEnabled}
@@ -3230,6 +3243,10 @@ function AnalysisRightSidebar(props: {
   analysisFiltersPanel: React.ReactNode;
   opponentPlaysColor: "white" | "black";
   setOpponentPlaysColor: (c: "white" | "black") => void;
+  selectedEco: string | null;
+  selectedEcoName: string | null;
+  onEcoSelect: (eco: string | null, name: string | null) => void;
+  platform: string;
   analysisRightTab: AnalysisRightTab;
   setAnalysisRightTab: (t: AnalysisRightTab) => void;
   analysisFilterApplyStatus: "applied" | "applying";
@@ -3302,6 +3319,10 @@ function AnalysisRightSidebar(props: {
     analysisFiltersPanel,
     opponentPlaysColor,
     setOpponentPlaysColor,
+    selectedEco,
+    selectedEcoName,
+    onEcoSelect,
+    platform: platformProp,
     analysisRightTab,
     setAnalysisRightTab,
     analysisFilterApplyStatus,
@@ -3556,6 +3577,17 @@ function AnalysisRightSidebar(props: {
                     You play as {opponentPlaysColor === "white" ? "Black" : "White"}
                   </div>
                 </div>
+              </div>
+
+              <div className="min-w-0 rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm">
+                <EcoFilterDropdown
+                  platform={platformProp}
+                  opponentUsername={opponentUsername}
+                  opponentColor={opponentPlaysColor === "white" ? "w" : "b"}
+                  selectedEco={selectedEco}
+                  selectedEcoName={selectedEcoName}
+                  onSelect={onEcoSelect}
+                />
               </div>
 
               {analysisFiltersPanel}

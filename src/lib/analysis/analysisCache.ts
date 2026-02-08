@@ -299,3 +299,48 @@ export function getMovesFromTree(
   const bucket = side === 'opponent' ? pos.opponent : pos.against;
   return Array.from(bucket.values()).sort((a, b) => b.count - a.count);
 }
+
+/**
+ * ECO entry returned by getDistinctEcos
+ */
+export interface EcoEntry {
+  eco: string;
+  name: string;
+  count: number;
+}
+
+/**
+ * Get distinct ECO openings from cached games for an opponent,
+ * optionally filtered by which color the opponent played.
+ * Returns entries sorted by game count descending.
+ */
+export async function getDistinctEcos(params: {
+  visitorKey: string;
+  opponentColor?: 'w' | 'b' | null;
+}): Promise<EcoEntry[]> {
+  const { visitorKey, opponentColor } = params;
+  const db = await getDb();
+  const tx = db.transaction('analysis_games', 'readonly');
+  const index = tx.objectStore('analysis_games').index('by_visitor');
+  
+  const counts = new Map<string, { eco: string; name: string; count: number }>();
+  let cursor = await index.openCursor(visitorKey);
+  
+  while (cursor) {
+    const game = cursor.value as CachedGame;
+    if (game.eco) {
+      if (!opponentColor || game.opponentColor === opponentColor) {
+        const key = `${game.eco}|${game.ecoName ?? ''}`;
+        const existing = counts.get(key);
+        if (existing) {
+          existing.count++;
+        } else {
+          counts.set(key, { eco: game.eco, name: game.ecoName ?? game.eco, count: 1 });
+        }
+      }
+    }
+    cursor = await cursor.continue();
+  }
+  
+  return Array.from(counts.values()).sort((a, b) => b.count - a.count);
+}

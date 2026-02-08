@@ -2,6 +2,7 @@
 
 import { Filter, Settings, Brain, Search } from "lucide-react";
 import type { ChessBoardCoreState } from "./ChessBoardCore";
+import { EcoFilterDropdown } from "./EcoFilterDropdown";
 import { ScoutPanelContent } from "./ScoutOverlay";
 
 type Strategy = "proportional" | "random";
@@ -24,6 +25,10 @@ type Props = {
   filtersPanel: React.ReactNode;
   opponentPlaysColor: "white" | "black";
   setOpponentPlaysColor: (c: "white" | "black") => void;
+  selectedEco: string | null;
+  selectedEcoName: string | null;
+  onEcoSelect: (eco: string | null, name: string | null) => void;
+  platform: string;
   // Settings tab props
   mode: Strategy;
   setMode: (m: Strategy) => void;
@@ -75,6 +80,10 @@ export function SimulationRightSidebar(props: Props) {
     filtersPanel,
     opponentPlaysColor,
     setOpponentPlaysColor,
+    selectedEco,
+    selectedEcoName,
+    onEcoSelect,
+    platform: platformProp,
     mode,
     setMode,
     clocksEnabled,
@@ -268,6 +277,18 @@ export function SimulationRightSidebar(props: Props) {
               <div className="text-[9px] text-zinc-500">
                 You play as {opponentPlaysColor === "white" ? "Black" : "White"}
               </div>
+            </div>
+
+            {/* ECO Opening filter */}
+            <div className="grid gap-2">
+              <EcoFilterDropdown
+                platform={platformProp}
+                opponentUsername={opponentUsername ?? ""}
+                opponentColor={opponentPlaysColor === "white" ? "w" : "b"}
+                selectedEco={selectedEco}
+                selectedEcoName={selectedEcoName}
+                onSelect={onEcoSelect}
+              />
             </div>
 
             {/* Existing filters panel */}
