@@ -88,6 +88,7 @@ type Props = {
   headerRight?: ReactNode;
   actions?: ReactNode;
   footerNote?: ReactNode;
+  ecoSlot?: ReactNode;
 };
 
 export function OpponentFiltersPanel(props: Props) {
@@ -108,6 +109,7 @@ export function OpponentFiltersPanel(props: Props) {
     headerRight,
     actions,
     footerNote,
+    ecoSlot,
   } = props;
 
   const [generateStyleMarkersLocal, setGenerateStyleMarkersLocal] = useState(true);
@@ -206,6 +208,8 @@ export function OpponentFiltersPanel(props: Props) {
             </div>
           </div>
         </div>
+
+        {ecoSlot ? <div>{ecoSlot}</div> : null}
 
         <div className="flex select-none items-center justify-between gap-3 rounded-xl border border-zinc-200 bg-white px-3 py-2">
           <label className="flex min-w-0 cursor-pointer items-center gap-2" htmlFor="opp-filter-style-markers">

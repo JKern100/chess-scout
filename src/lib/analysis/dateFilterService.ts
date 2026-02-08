@@ -121,14 +121,9 @@ export async function getDateFilteredMoves(params: {
     filteredGames = filteredGames.filter(g => g.opponentColor === filterParams.opponentColor);
   }
   
-  // Filter by opening ECO code + name
+  // Filter by opening ECO code (name may differ between sources, so match code only)
   if (filterParams.openingEco) {
-    if (filterParams.openingName) {
-      // Match both ECO code and name for precision (e.g., A10 "English Opening" vs A10 other variant)
-      filteredGames = filteredGames.filter(g => g.eco === filterParams.openingEco && g.ecoName === filterParams.openingName);
-    } else {
-      filteredGames = filteredGames.filter(g => g.eco === filterParams.openingEco);
-    }
+    filteredGames = filteredGames.filter(g => g.eco === filterParams.openingEco);
   }
   
   onProgress?.({

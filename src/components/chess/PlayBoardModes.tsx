@@ -825,6 +825,8 @@ export function PlayBoardModes({ initialFen }: Props) {
     datePreset: "7d" | "30d" | "6m" | "18m" | "all" | "custom";
     fromDate: string;
     toDate: string;
+    eco: string | null;
+    ecoName: string | null;
   }>(() => {
     const now = new Date();
     const range = getDateRangeFromPreset("6m", now);
@@ -834,21 +836,25 @@ export function PlayBoardModes({ initialFen }: Props) {
       datePreset: "6m",
       fromDate: range.from ?? "",
       toDate: range.to ?? "",
+      eco: openingEcoParam || null,
+      ecoName: openingNameParam || null,
     };
   });
 
   const analysisAppliedFiltersKey = useMemo(() => {
-    return buildFiltersKey({
+    const base = buildFiltersKey({
       speeds: analysisAppliedFilters.speeds,
       rated: analysisAppliedFilters.rated,
       from: analysisAppliedFilters.fromDate,
       to: analysisAppliedFilters.toDate,
     });
+    return `${base}|eco:${analysisAppliedFilters.eco ?? ''}|${analysisAppliedFilters.ecoName ?? ''}`;
   }, [analysisAppliedFilters]);
 
   const analysisDraftFiltersKey = useMemo(() => {
-    return buildFiltersKey({ speeds: draftSpeeds, rated: draftRated, from: draftFromDate, to: draftToDate });
-  }, [draftFromDate, draftRated, draftSpeeds, draftToDate]);
+    const base = buildFiltersKey({ speeds: draftSpeeds, rated: draftRated, from: draftFromDate, to: draftToDate });
+    return `${base}|eco:${selectedEco ?? ''}|${selectedEcoName ?? ''}`;
+  }, [draftFromDate, draftRated, draftSpeeds, draftToDate, selectedEco, selectedEcoName]);
 
   const analysisDraftDirty = useMemo(() => {
     if (!draftFiltersHydrated) return false;
@@ -863,7 +869,8 @@ export function PlayBoardModes({ initialFen }: Props) {
   const analysisHasAutoAppliedRef = useRef(false);
 
   const applyAnalysisFilters = useCallback(() => {
-    const nextKey = buildFiltersKey({ speeds: draftSpeeds, rated: draftRated, from: draftFromDate, to: draftToDate });
+    const base = buildFiltersKey({ speeds: draftSpeeds, rated: draftRated, from: draftFromDate, to: draftToDate });
+    const nextKey = `${base}|eco:${selectedEco ?? ''}|${selectedEcoName ?? ''}`;
     setAnalysisFilterApply({ status: "applying", key: nextKey });
     setAnalysisAppliedFilters({
       speeds: draftSpeeds,
@@ -871,6 +878,8 @@ export function PlayBoardModes({ initialFen }: Props) {
       datePreset: draftDatePreset,
       fromDate: draftFromDate,
       toDate: draftToDate,
+      eco: selectedEco,
+      ecoName: selectedEcoName,
     });
     try {
       window.localStorage.setItem(
@@ -881,12 +890,14 @@ export function PlayBoardModes({ initialFen }: Props) {
           datePreset: draftDatePreset,
           from: draftFromDate,
           to: draftToDate,
+          eco: selectedEco,
+          ecoName: selectedEcoName,
         })
       );
     } catch {
       // ignore
     }
-  }, [draftDatePreset, draftFromDate, draftRated, draftSpeeds, draftToDate]);
+  }, [draftDatePreset, draftFromDate, draftRated, draftSpeeds, draftToDate, selectedEco, selectedEcoName]);
 
   useEffect(() => {
     if (!draftFiltersHydrated) return;
@@ -926,6 +937,8 @@ export function PlayBoardModes({ initialFen }: Props) {
         datePreset: preset as any,
         fromDate: computed.from ?? "",
         toDate: computed.to ?? "",
+        eco: typeof parsed?.eco === "string" ? parsed.eco : (openingEcoParam || null),
+        ecoName: typeof parsed?.ecoName === "string" ? parsed.ecoName : (openingNameParam || null),
       });
       analysisHasAutoAppliedRef.current = true;
     } catch {
@@ -962,6 +975,8 @@ export function PlayBoardModes({ initialFen }: Props) {
       datePreset: (fromParam || toParam) ? "custom" : "6m",
       fromDate: fromParam ?? "",
       toDate: toParam ?? "",
+      eco: openingEcoParam || null,
+      ecoName: openingNameParam || null,
     });
 
     urlFiltersAppliedRef.current = true;
@@ -2471,6 +2486,16 @@ export function PlayBoardModes({ initialFen }: Props) {
         generateStyleMarkers={generateStyleMarkers}
         setGenerateStyleMarkers={setGenerateStyleMarkers}
         footerNote={archivingNote ? <span>{archivingNote}</span> : null}
+        ecoSlot={
+          <EcoFilterDropdown
+            platform={activeOpponent?.platform ?? "lichess"}
+            opponentUsername={opponentUsername}
+            opponentColor={opponentPlaysColor === "white" ? "w" : "b"}
+            selectedEco={selectedEco}
+            selectedEcoName={selectedEcoName}
+            onSelect={(eco: string | null, name: string | null) => { setSelectedEco(eco); setSelectedEcoName(name); }}
+          />
+        }
         actions={
           <div className="flex items-center justify-between gap-3">
             {analysisDraftDirty ? (
@@ -3084,10 +3109,6 @@ export function PlayBoardModes({ initialFen }: Props) {
                 setOpponentPlaysColor(c);
                 state.setPlayerSide(c === "white" ? "black" : "white");
               }}
-              selectedEco={selectedEco}
-              selectedEcoName={selectedEcoName}
-              onEcoSelect={(eco: string | null, name: string | null) => { setSelectedEco(eco); setSelectedEcoName(name); }}
-              platform={activeOpponent?.platform ?? "lichess"}
               analysisRightTab={analysisRightTab}
               setAnalysisRightTab={setAnalysisRightTab}
               analysisFilterApplyStatus={analysisFilterApply.status}
@@ -3153,8 +3174,8 @@ export function PlayBoardModes({ initialFen }: Props) {
               filterSpeeds={analysisAppliedFilters.speeds}
               filterRated={analysisAppliedFilters.rated}
               filterOpponentColor={opponentPlaysColor === "white" ? "w" : "b"}
-              filterOpeningEco={selectedEco}
-              filterOpeningName={selectedEcoName}
+              filterOpeningEco={analysisAppliedFilters.eco}
+              filterOpeningName={analysisAppliedFilters.ecoName}
               isSyntheticMode={isSyntheticMode}
               syntheticGamesCount={syntheticGamesCount}
             />
@@ -3243,10 +3264,6 @@ function AnalysisRightSidebar(props: {
   analysisFiltersPanel: React.ReactNode;
   opponentPlaysColor: "white" | "black";
   setOpponentPlaysColor: (c: "white" | "black") => void;
-  selectedEco: string | null;
-  selectedEcoName: string | null;
-  onEcoSelect: (eco: string | null, name: string | null) => void;
-  platform: string;
   analysisRightTab: AnalysisRightTab;
   setAnalysisRightTab: (t: AnalysisRightTab) => void;
   analysisFilterApplyStatus: "applied" | "applying";
@@ -3319,10 +3336,6 @@ function AnalysisRightSidebar(props: {
     analysisFiltersPanel,
     opponentPlaysColor,
     setOpponentPlaysColor,
-    selectedEco,
-    selectedEcoName,
-    onEcoSelect,
-    platform: platformProp,
     analysisRightTab,
     setAnalysisRightTab,
     analysisFilterApplyStatus,
@@ -3577,17 +3590,6 @@ function AnalysisRightSidebar(props: {
                     You play as {opponentPlaysColor === "white" ? "Black" : "White"}
                   </div>
                 </div>
-              </div>
-
-              <div className="min-w-0 rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm">
-                <EcoFilterDropdown
-                  platform={platformProp}
-                  opponentUsername={opponentUsername}
-                  opponentColor={opponentPlaysColor === "white" ? "w" : "b"}
-                  selectedEco={selectedEco}
-                  selectedEcoName={selectedEcoName}
-                  onSelect={onEcoSelect}
-                />
               </div>
 
               {analysisFiltersPanel}

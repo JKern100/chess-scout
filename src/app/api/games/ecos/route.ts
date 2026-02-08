@@ -112,14 +112,15 @@ async function fallbackParsePgn(
     if (!ecoMatch) continue;
 
     const eco = ecoMatch[1];
-    const openingMatch = OPENING_RE.exec(header);
-    const ecoName = openingMatch?.[1] ?? ecoNameMap.get(eco) ?? eco;
+    // Always use eco_index.json as the canonical name source
+    const ecoName = ecoNameMap.get(eco) ?? eco;
 
     const whiteMatch = WHITE_RE.exec(header);
     const whiteName = whiteMatch?.[1]?.toLowerCase() ?? "";
     const oppColor = whiteName === usernameNorm ? "w" : "b";
 
-    const key = `${eco}|${ecoName}|${oppColor}`;
+    // Group by ECO code + color only (not name) to avoid duplicates
+    const key = `${eco}|${oppColor}`;
     const existing = counts.get(key);
     if (existing) {
       existing.count++;
@@ -128,6 +129,6 @@ async function fallbackParsePgn(
     }
   }
 
-  const ecos = Array.from(counts.values()).sort((a, b) => b.count - a.count);
+  const ecos = Array.from(counts.values()).sort((a, b) => a.eco.localeCompare(b.eco));
   return NextResponse.json({ ecos });
 }

@@ -41,7 +41,7 @@ async function fetchEcosFromApi(
       counts.set(key, { eco: r.eco, name: r.eco_name, count: r.count });
     }
   }
-  return Array.from(counts.values()).sort((a, b) => b.count - a.count);
+  return Array.from(counts.values()).sort((a, b) => a.eco.localeCompare(b.eco));
 }
 
 export function EcoFilterDropdown({
@@ -106,12 +106,22 @@ export function EcoFilterDropdown({
     void fetchEcos();
   }, [fetchEcos]);
 
-  // Reset selection when color changes if the selected ECO is no longer available
+  // When the ECO list loads, snap the selection to the matching entry.
+  // Match by ECO code first (name may differ between API and eco_index.json).
+  // If the selected ECO code doesn't exist at all in the list, clear the selection.
   useEffect(() => {
     if (!selectedEco) return;
-    if (ecos.length === 0 && !loading) return;
-    const found = ecos.find((e) => e.eco === selectedEco && e.name === selectedEcoName);
-    if (!found && ecos.length > 0) {
+    if (ecos.length === 0) return; // still loading or truly empty
+    // Exact match (eco + name)
+    const exact = ecos.find((e) => e.eco === selectedEco && e.name === selectedEcoName);
+    if (exact) return; // already in sync
+    // Fuzzy match: same ECO code, different name variant
+    const byCode = ecos.find((e) => e.eco === selectedEco);
+    if (byCode) {
+      // Snap to the name the dropdown actually has
+      onSelect(byCode.eco, byCode.name);
+    } else {
+      // ECO code not present for this color — clear
       onSelect(null, null);
     }
   }, [ecos, selectedEco, selectedEcoName, loading, onSelect]);
