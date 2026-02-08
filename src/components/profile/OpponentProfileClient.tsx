@@ -522,6 +522,7 @@ export function OpponentProfileClient({ platform, username, isSelfAnalysis = fal
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [generateBusy, setGenerateBusy] = useState(false);
+  const [aiErrorMessage, setAiErrorMessage] = useState<string | null>(null);
 
   const [progressModalOpen, setProgressModalOpen] = useState(false);
   const [progressStatus, setProgressStatus] = useState<"idle" | "generating" | "completed" | "cancelled" | "error">("idle");
@@ -753,7 +754,32 @@ export function OpponentProfileClient({ platform, username, isSelfAnalysis = fal
         throw new Error(String((json as any)?.error ?? "Failed to generate report"));
       }
       setNeedsMigration(Boolean((json as any)?.needs_migration));
-      setProfileRow(((json as any)?.opponent_profile as OpponentProfileRow | null) ?? null);
+      
+      // Merge ai_narrative from the response into the profile row
+      // This handles cases where the DB update failed but the narrative was still generated
+      const returnedProfile = ((json as any)?.opponent_profile as OpponentProfileRow | null) ?? null;
+      const aiNarrative = (json as any)?.ai_narrative as { quick_summary?: string; comprehensive_report?: string } | null;
+      if (returnedProfile && aiNarrative) {
+        if (!returnedProfile.ai_quick_summary && aiNarrative.quick_summary) {
+          returnedProfile.ai_quick_summary = aiNarrative.quick_summary;
+        }
+        if (!returnedProfile.ai_comprehensive_report && aiNarrative.comprehensive_report) {
+          returnedProfile.ai_comprehensive_report = aiNarrative.comprehensive_report;
+        }
+        if (!returnedProfile.ai_narrative_generated_at) {
+          returnedProfile.ai_narrative_generated_at = new Date().toISOString();
+        }
+      }
+      setProfileRow(returnedProfile);
+
+      // Surface AI generation errors so user knows what happened
+      const aiErr = (json as any)?.ai_error;
+      if (aiErr && typeof aiErr === "string") {
+        console.warn("[OpponentProfileClient] AI narrative error:", aiErr);
+        setAiErrorMessage(aiErr);
+      } else {
+        setAiErrorMessage(null);
+      }
 
       // Compute SESSION markers with current filters (same data source as Analysis page)
       // This ensures Profile and Analysis pages show identical style marker values
@@ -1495,7 +1521,11 @@ export function OpponentProfileClient({ platform, username, isSelfAnalysis = fal
                 )
               ) : (
                 <div className="mt-3 text-sm text-blue-700/70">
-                  AI analysis will be generated when you regenerate this profile.
+                  {aiErrorMessage ? (
+                    <span className="text-red-600">AI generation failed: {aiErrorMessage}</span>
+                  ) : (
+                    "AI analysis will be generated when you regenerate this profile."
+                  )}
                 </div>
               )}
             </div>

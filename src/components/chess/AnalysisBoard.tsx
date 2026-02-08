@@ -169,9 +169,9 @@ const CandidateMoveRow = memo(function CandidateMoveRow(props: CandidateMoveRowP
       <div className="flex flex-col gap-1">
         <div className="h-2.5 overflow-hidden rounded-full border border-zinc-200 bg-zinc-100">
           <div className="flex h-full w-full">
-            <div className="h-full bg-emerald-500 transition-[width] duration-200" style={{ width: `${winPct}%` }} />
-            <div className="h-full bg-zinc-300 transition-[width] duration-200" style={{ width: `${drawPct}%` }} />
-            <div className="h-full bg-rose-500 transition-[width] duration-200" style={{ width: `${lossPct}%` }} />
+            <div className="h-full bg-emerald-500 transition-[width] duration-200" style={{ width: `${winPct}%` }} title={`Win: ${winPct.toFixed(1)}%`} />
+            <div className="h-full bg-zinc-300 transition-[width] duration-200" style={{ width: `${drawPct}%` }} title={`Draw: ${drawPct.toFixed(1)}%`} />
+            <div className="h-full bg-rose-500 transition-[width] duration-200" style={{ width: `${lossPct}%` }} title={`Loss: ${lossPct.toFixed(1)}%`} />
           </div>
         </div>
         {styleBadges && styleBadges.length > 0 && (

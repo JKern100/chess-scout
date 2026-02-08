@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
-import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { getDistinctEcos, type EcoEntry } from "@/lib/analysis/analysisCache";
 
 type Props = {
@@ -13,6 +12,38 @@ type Props = {
   onSelect: (eco: string | null, ecoName: string | null) => void;
 };
 
+/**
+ * Fetch ECOs from the server API (extracts from PGN headers in the games table).
+ * Works immediately on first visit — no IndexedDB sync needed.
+ */
+async function fetchEcosFromApi(
+  platform: string,
+  username: string,
+  opponentColor: "w" | "b"
+): Promise<EcoEntry[]> {
+  const res = await fetch(
+    `/api/games/ecos?platform=${encodeURIComponent(platform)}&username=${encodeURIComponent(username)}`
+  );
+  if (!res.ok) return [];
+  const json = await res.json();
+  const raw: Array<{ eco: string; eco_name: string; opponent_color: string; count: number }> =
+    json.ecos ?? [];
+
+  // Filter by color and merge into EcoEntry shape
+  const counts = new Map<string, EcoEntry>();
+  for (const r of raw) {
+    if (r.opponent_color !== opponentColor) continue;
+    const key = `${r.eco}|${r.eco_name}`;
+    const existing = counts.get(key);
+    if (existing) {
+      existing.count += r.count;
+    } else {
+      counts.set(key, { eco: r.eco, name: r.eco_name, count: r.count });
+    }
+  }
+  return Array.from(counts.values()).sort((a, b) => b.count - a.count);
+}
+
 export function EcoFilterDropdown({
   platform,
   opponentUsername,
@@ -23,53 +54,57 @@ export function EcoFilterDropdown({
 }: Props) {
   const [ecos, setEcos] = useState<EcoEntry[]>([]);
   const [loading, setLoading] = useState(false);
-  const [visitorId, setVisitorId] = useState<string | null>(null);
   const lastFetchKey = useRef("");
 
-  // Fetch user ID on mount
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const supabase = createSupabaseBrowserClient();
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!cancelled && user?.id) setVisitorId(user.id);
-      } catch {
-        // ignore
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
+  // Fetch ECOs from API (primary) with IndexedDB upgrade when available
+  const fetchEcos = useCallback(async () => {
+    if (!opponentUsername) return;
 
-  // Fetch distinct ECOs when visitor, opponent, or color changes
-  useEffect(() => {
-    if (!visitorId || !opponentUsername) return;
-
-    const visitorKey = `${visitorId}_${platform}_${opponentUsername.toLowerCase()}`;
-    const fetchKey = `${visitorKey}_${opponentColor}`;
-
+    const fetchKey = `${platform}_${opponentUsername.toLowerCase()}_${opponentColor}`;
     if (fetchKey === lastFetchKey.current) return;
     lastFetchKey.current = fetchKey;
 
-    let cancelled = false;
     setLoading(true);
 
-    (async () => {
-      try {
-        const entries = await getDistinctEcos({
-          visitorKey,
-          opponentColor,
-        });
-        if (!cancelled) setEcos(entries);
-      } catch {
-        if (!cancelled) setEcos([]);
-      } finally {
-        if (!cancelled) setLoading(false);
+    try {
+      // Primary source: API endpoint (reads from Supabase games table PGN headers)
+      const apiEntries = await fetchEcosFromApi(platform, opponentUsername, opponentColor);
+      if (apiEntries.length > 0) {
+        setEcos(apiEntries);
+        setLoading(false);
+        return;
       }
-    })();
 
-    return () => { cancelled = true; };
-  }, [visitorId, platform, opponentUsername, opponentColor]);
+      // Secondary: try IndexedDB (may have data from a previous sync)
+      try {
+        // Need visitorId for IndexedDB — get from supabase
+        const { createSupabaseBrowserClient } = await import("@/lib/supabase/client");
+        const supabase = createSupabaseBrowserClient();
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user?.id) {
+          const visitorKey = `${user.id}_${platform}_${opponentUsername.toLowerCase()}`;
+          const idbEntries = await getDistinctEcos({ visitorKey, opponentColor });
+          if (idbEntries.length > 0) {
+            setEcos(idbEntries);
+            setLoading(false);
+            return;
+          }
+        }
+      } catch {
+        // IndexedDB not available — that's fine
+      }
+
+      setEcos([]);
+    } catch {
+      setEcos([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [platform, opponentUsername, opponentColor]);
+
+  useEffect(() => {
+    void fetchEcos();
+  }, [fetchEcos]);
 
   // Reset selection when color changes if the selected ECO is no longer available
   useEffect(() => {
@@ -113,9 +148,6 @@ export function EcoFilterDropdown({
       </select>
       {loading && ecos.length === 0 && (
         <div className="text-[9px] text-zinc-400">Loading openings…</div>
-      )}
-      {!loading && ecos.length === 0 && (
-        <div className="text-[9px] text-zinc-400">No ECO data yet — re-import to populate</div>
       )}
     </div>
   );
