@@ -736,12 +736,17 @@ export function PlayBoardModes({ initialFen }: Props) {
 
   useEffect(() => {
     if (isSyntheticMode) return;
-    // Don't override if opponent was set from URL param
-    if (opponentFromUrlRef.current) return;
-    if (activeOpponent?.username) {
-      setOpponentUsernameLocal(activeOpponent.username);
+    if (!activeOpponent?.username) return;
+    // If opponent was set from URL param, wait until context catches up before allowing future syncs
+    if (opponentFromUrlRef.current) {
+      if (opponentParam && activeOpponent.username.toLowerCase() === opponentParam.toLowerCase()) {
+        // Context now matches URL param — clear the guard so future nav bar changes sync to the board
+        opponentFromUrlRef.current = false;
+      }
+      return;
     }
-  }, [activeOpponent, isSyntheticMode]);
+    setOpponentUsernameLocal(activeOpponent.username);
+  }, [activeOpponent, isSyntheticMode, opponentParam]);
 
   // When local opponent changes, update global context
   const setOpponentUsername = useCallback((username: string) => {
@@ -841,6 +846,22 @@ export function PlayBoardModes({ initialFen }: Props) {
     };
   });
 
+  // ECO opening filter state (must be declared before filter key computations that reference it)
+  const [selectedEco, setSelectedEco] = useState<string | null>(openingEcoParam || null);
+  const [selectedEcoName, setSelectedEcoName] = useState<string | null>(openingNameParam || null);
+
+  // Refs for ECO so applyAnalysisFilters can read current values without depending on them
+  const selectedEcoRef = useRef(selectedEco);
+  selectedEcoRef.current = selectedEco;
+  const selectedEcoNameRef = useRef(selectedEcoName);
+  selectedEcoNameRef.current = selectedEcoName;
+
+  // Stable callback for ECO dropdown selection changes
+  const onEcoSelect = useCallback((eco: string | null, name: string | null) => {
+    setSelectedEco(eco);
+    setSelectedEcoName(name);
+  }, []);
+
   const analysisAppliedFiltersKey = useMemo(() => {
     const base = buildFiltersKey({
       speeds: analysisAppliedFilters.speeds,
@@ -869,8 +890,11 @@ export function PlayBoardModes({ initialFen }: Props) {
   const analysisHasAutoAppliedRef = useRef(false);
 
   const applyAnalysisFilters = useCallback(() => {
+    // Read ECO from refs to avoid dependency chain (ECO changes shouldn't recreate this callback)
+    const eco = selectedEcoRef.current;
+    const ecoName = selectedEcoNameRef.current;
     const base = buildFiltersKey({ speeds: draftSpeeds, rated: draftRated, from: draftFromDate, to: draftToDate });
-    const nextKey = `${base}|eco:${selectedEco ?? ''}|${selectedEcoName ?? ''}`;
+    const nextKey = `${base}|eco:${eco ?? ''}|${ecoName ?? ''}`;
     setAnalysisFilterApply({ status: "applying", key: nextKey });
     setAnalysisAppliedFilters({
       speeds: draftSpeeds,
@@ -878,8 +902,8 @@ export function PlayBoardModes({ initialFen }: Props) {
       datePreset: draftDatePreset,
       fromDate: draftFromDate,
       toDate: draftToDate,
-      eco: selectedEco,
-      ecoName: selectedEcoName,
+      eco,
+      ecoName,
     });
     try {
       window.localStorage.setItem(
@@ -890,14 +914,14 @@ export function PlayBoardModes({ initialFen }: Props) {
           datePreset: draftDatePreset,
           from: draftFromDate,
           to: draftToDate,
-          eco: selectedEco,
-          ecoName: selectedEcoName,
+          eco,
+          ecoName,
         })
       );
     } catch {
       // ignore
     }
-  }, [draftDatePreset, draftFromDate, draftRated, draftSpeeds, draftToDate, selectedEco, selectedEcoName]);
+  }, [draftDatePreset, draftFromDate, draftRated, draftSpeeds, draftToDate]);
 
   useEffect(() => {
     if (!draftFiltersHydrated) return;
@@ -1037,10 +1061,6 @@ export function PlayBoardModes({ initialFen }: Props) {
   // Simulation right sidebar state
   const [simRightTab, setSimRightTab] = useState<SimulationRightTab>("filters");
   const [opponentPlaysColor, setOpponentPlaysColor] = useState<"white" | "black">("black");
-
-  // ECO opening filter state
-  const [selectedEco, setSelectedEco] = useState<string | null>(openingEcoParam || null);
-  const [selectedEcoName, setSelectedEcoName] = useState<string | null>(openingNameParam || null);
 
   // Sync opponentPlaysColor with stored playerSide on mount to avoid mismatch
   // BUT skip if URL param already set the color (URL param takes priority)
@@ -2493,7 +2513,7 @@ export function PlayBoardModes({ initialFen }: Props) {
             opponentColor={opponentPlaysColor === "white" ? "w" : "b"}
             selectedEco={selectedEco}
             selectedEcoName={selectedEcoName}
-            onSelect={(eco: string | null, name: string | null) => { setSelectedEco(eco); setSelectedEcoName(name); }}
+            onSelect={onEcoSelect}
           />
         }
         actions={
@@ -3215,7 +3235,7 @@ export function PlayBoardModes({ initialFen }: Props) {
               }}
               selectedEco={selectedEco}
               selectedEcoName={selectedEcoName}
-              onEcoSelect={(eco: string | null, name: string | null) => { setSelectedEco(eco); setSelectedEcoName(name); }}
+              onEcoSelect={onEcoSelect}
               platform={activeOpponent?.platform ?? "lichess"}
               mode={opponentMode}
               setMode={setOpponentMode}

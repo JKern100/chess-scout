@@ -571,9 +571,10 @@ export function AnalysisBoard(props: Props) {
   const isOppToMove = state.game.turn() === opponentColor;
 
   const nextMoveList = useMemo(() => {
-    // When we have refined data from date filter, use it instead of all-time stats
-    if (hasRefinedData && refinementState.refinedMoves && refinementState.refinedMoves.length > 0) {
-      const refinedMoves = refinementState.refinedMoves;
+    // When refinement is complete, always use refined data (even if empty — means no games match filters for this position).
+    // Falling back to server data would show unfiltered results, defeating the purpose of ECO/date filters.
+    if (hasRefinedData) {
+      const refinedMoves = refinementState.refinedMoves ?? [];
       const total = refinedMoves.reduce((sum, m) => sum + m.count, 0);
       
       // Transform MoveStats to MoveRow format, converting UCI to SAN
