@@ -14,6 +14,7 @@ import {
   type MoveStats,
   type RefinementProgress,
 } from '@/lib/analysis/dateFilterService';
+import { repopulateIndexedDBFromServer } from '@/lib/analysis/cacheRepopulate';
 
 export interface RefinementState {
   status: 'idle' | 'checking' | 'refining' | 'complete' | 'unavailable' | 'cancelled' | 'error';
@@ -63,6 +64,7 @@ export function useDateFilterRefinement(
   const [visitorId, setVisitorId] = useState<string | null>(null);
   const abortRef = useRef(false);
   const lastParamsRef = useRef<string>('');
+  const repopulatingRef = useRef(false);
   
   const {
     platform,
@@ -137,12 +139,58 @@ export function useDateFilterRefinement(
     }
     
     if (!cacheInfo.hasCachedData) {
-      setState(prev => ({
-        ...prev,
-        status: 'unavailable',
-        error: 'No cached data available. Re-import opponent to enable date filtering.',
-      }));
-      return;
+      // Auto-repopulate IndexedDB from server-side game data
+      // This handles the case where IndexedDB was cleared (e.g. schema upgrade)
+      if (!repopulatingRef.current) {
+        repopulatingRef.current = true;
+        setState(prev => ({ ...prev, status: 'refining', error: null,
+          progress: { phase: 'loading', gamesLoaded: 0, gamesTotal: 0 },
+        }));
+        try {
+          const ok = await repopulateIndexedDBFromServer({
+            visitorId,
+            platform,
+            opponent,
+            onProgress: (p) => {
+              if (abortRef.current) return;
+              setState(prev => ({ ...prev,
+                progress: { phase: p.phase === 'complete' ? 'building' : 'loading', gamesLoaded: p.gamesProcessed, gamesTotal: p.gamesTotal },
+              }));
+            },
+          });
+          repopulatingRef.current = false;
+          if (abortRef.current) {
+            setState(prev => ({ ...prev, status: 'cancelled' }));
+            return;
+          }
+          if (ok) {
+            // Cache is now populated — fall through to run refinement below
+          } else {
+            setState(prev => ({
+              ...prev,
+              status: 'unavailable',
+              error: 'No game data found for this opponent.',
+            }));
+            return;
+          }
+        } catch {
+          repopulatingRef.current = false;
+          setState(prev => ({
+            ...prev,
+            status: 'unavailable',
+            error: 'Failed to rebuild local cache from server data.',
+          }));
+          return;
+        }
+      } else {
+        // Already repopulating in another call — wait
+        setState(prev => ({
+          ...prev,
+          status: 'unavailable',
+          error: 'Rebuilding local cache…',
+        }));
+        return;
+      }
     }
     
     setState(prev => ({ ...prev, status: 'refining' }));
