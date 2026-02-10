@@ -60,7 +60,7 @@ type Props = {
   engineDepth?: number;
   isSyntheticMode?: boolean;
   syntheticGamesCount?: number;
-  onFilteredMovesChange?: (data: { total: number; moves: Array<{ uci: string; san: string | null; played_count: number; win: number; loss: number; draw: number }> }) => void;
+  onFilteredMovesChange?: (data: { total: number; moves: Array<{ uci: string; san: string | null; played_count: number; win: number; loss: number; draw: number }> } | null) => void;
 };
 
 type MoveRow = {
@@ -615,10 +615,16 @@ export function AnalysisBoard(props: Props) {
     return { total: opponentStats.totalCountAgainst, moves: opponentStats.movesAgainst as MoveRow[] };
   }, [opponentStats, isOppToMove, hasRefinedData, refinementState.refinedMoves, state.fen]);
 
-  // Propagate filtered moves to parent for arrow rendering
+  // Propagate filtered moves to parent for arrow rendering — only when refinement is complete
+  // so arrows don't accidentally use unfiltered server data passed through this callback.
   useEffect(() => {
-    onFilteredMovesChange?.({ total: nextMoveList.total, moves: nextMoveList.moves });
-  }, [nextMoveList, onFilteredMovesChange]);
+    if (hasRefinedData) {
+      onFilteredMovesChange?.({ total: nextMoveList.total, moves: nextMoveList.moves });
+    } else {
+      // No refined data yet — tell arrows to fall back to server data
+      onFilteredMovesChange?.(null);
+    }
+  }, [nextMoveList, onFilteredMovesChange, hasRefinedData]);
 
   const visibleMovesKey = useMemo(() => {
     return nextMoveList.moves

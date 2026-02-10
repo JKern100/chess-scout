@@ -1651,7 +1651,7 @@ export function PlayBoardModes({ initialFen }: Props) {
   const [analysisStats, setAnalysisStats] = useState<Stats | null>(null);
   const [analysisStatsBusy, setAnalysisStatsBusy] = useState(false);
   const [analysisFilteredMoves, setAnalysisFilteredMoves] = useState<{ total: number; moves: Array<{ uci: string; san: string | null; played_count: number; win: number; loss: number; draw: number }> } | null>(null);
-  const onFilteredMovesChange = useCallback((data: { total: number; moves: Array<{ uci: string; san: string | null; played_count: number; win: number; loss: number; draw: number }> }) => {
+  const onFilteredMovesChange = useCallback((data: { total: number; moves: Array<{ uci: string; san: string | null; played_count: number; win: number; loss: number; draw: number }> } | null) => {
     setAnalysisFilteredMoves(data);
   }, []);
   const [analysisRightTab, setAnalysisRightTab] = useState<AnalysisRightTab>("stats");
@@ -3026,9 +3026,11 @@ export function PlayBoardModes({ initialFen }: Props) {
         let total: number;
         let top: Array<{ uci: string; san?: string | null; played_count: number }>;
         if (analysisFilteredMoves && analysisFilteredMoves.moves.length > 0) {
+          console.log("[Arrows] Using filtered moves:", analysisFilteredMoves);
           total = analysisFilteredMoves.total;
           top = analysisFilteredMoves.moves.slice(0, TOP_N);
         } else if (analysisStats) {
+          console.log("[Arrows] Falling back to raw stats (filtered moves not available)");
           const userColor = state.playerSide === "white" ? "w" : "b";
           const opponentColor = userColor === "w" ? "b" : "w";
           const isOppToMove = state.game.turn() === opponentColor;

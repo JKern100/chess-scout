@@ -237,7 +237,7 @@ export function GlobalNavBar() {
           <div className="flex items-center gap-6">
             <Link href="/dashboard" className="flex items-center gap-1.5">
               <span className="text-sm font-semibold text-zinc-900">ChessScout</span>
-              <span className="text-sm font-normal text-zinc-700">V1.01</span>
+              <span className="text-sm font-normal text-zinc-700">V1.02</span>
               <span className="text-sm italic text-zinc-500">Beta</span>
             </Link>
 
