@@ -3220,6 +3220,7 @@ export function PlayBoardModes({ initialFen }: Props) {
               filterOpeningName={analysisAppliedFilters.ecoName}
               isSyntheticMode={isSyntheticMode}
               syntheticGamesCount={syntheticGamesCount}
+              onFilteredMovesChange={onFilteredMovesChange}
             />
           );
         }
@@ -3302,6 +3303,7 @@ function AnalysisRightSidebar(props: {
   state: ChessBoardCoreState;
   savedLineId: string | null;
   shouldHydrateSavedLine: boolean;
+  onFilteredMovesChange?: (data: { total: number; moves: Array<{ uci: string; san: string | null; played_count: number; win: number; loss: number; draw: number }> } | null) => void;
   showSavedLinePopup: (msg: string) => void;
   analysisFiltersPanel: React.ReactNode;
   opponentPlaysColor: "white" | "black";
@@ -3374,6 +3376,7 @@ function AnalysisRightSidebar(props: {
     state,
     savedLineId,
     shouldHydrateSavedLine,
+    onFilteredMovesChange,
     showSavedLinePopup,
     analysisFiltersPanel,
     opponentPlaysColor,
