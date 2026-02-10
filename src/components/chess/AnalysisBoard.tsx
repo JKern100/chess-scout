@@ -60,6 +60,7 @@ type Props = {
   engineDepth?: number;
   isSyntheticMode?: boolean;
   syntheticGamesCount?: number;
+  onFilteredMovesChange?: (data: { total: number; moves: Array<{ uci: string; san: string | null; played_count: number; win: number; loss: number; draw: number }> }) => void;
 };
 
 type MoveRow = {
@@ -219,6 +220,7 @@ export function AnalysisBoard(props: Props) {
     engineDepth = 18,
     isSyntheticMode = false,
     syntheticGamesCount,
+    onFilteredMovesChange,
   } = props;
   
   // Compute position key for refinement
@@ -612,6 +614,11 @@ export function AnalysisBoard(props: Props) {
     if (isOppToMove) return { total: opponentStats.totalCountOpponent, moves: opponentStats.movesOpponent as MoveRow[] };
     return { total: opponentStats.totalCountAgainst, moves: opponentStats.movesAgainst as MoveRow[] };
   }, [opponentStats, isOppToMove, hasRefinedData, refinementState.refinedMoves, state.fen]);
+
+  // Propagate filtered moves to parent for arrow rendering
+  useEffect(() => {
+    onFilteredMovesChange?.({ total: nextMoveList.total, moves: nextMoveList.moves });
+  }, [nextMoveList, onFilteredMovesChange]);
 
   const visibleMovesKey = useMemo(() => {
     return nextMoveList.moves

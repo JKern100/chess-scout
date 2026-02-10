@@ -1650,6 +1650,10 @@ export function PlayBoardModes({ initialFen }: Props) {
   const [analysisEngineBestSan, setAnalysisEngineBestSan] = useState<string | null>(null);
   const [analysisStats, setAnalysisStats] = useState<Stats | null>(null);
   const [analysisStatsBusy, setAnalysisStatsBusy] = useState(false);
+  const [analysisFilteredMoves, setAnalysisFilteredMoves] = useState<{ total: number; moves: Array<{ uci: string; san: string | null; played_count: number; win: number; loss: number; draw: number }> } | null>(null);
+  const onFilteredMovesChange = useCallback((data: { total: number; moves: Array<{ uci: string; san: string | null; played_count: number; win: number; loss: number; draw: number }> }) => {
+    setAnalysisFilteredMoves(data);
+  }, []);
   const [analysisRightTab, setAnalysisRightTab] = useState<AnalysisRightTab>("stats");
   const [syntheticGamesCount, setSyntheticGamesCount] = useState<number | undefined>(undefined);
 
@@ -2966,17 +2970,25 @@ export function PlayBoardModes({ initialFen }: Props) {
 
         const trimmed = opponentUsername.trim();
         if (!trimmed) return null;
-        if (!analysisStats) return null;
 
-        const userColor = state.playerSide === "white" ? "w" : "b";
-        const opponentColor = userColor === "w" ? "b" : "w";
-        const isOppToMove = state.game.turn() === opponentColor;
+        // Use filtered moves from AnalysisBoard when available; fall back to raw server stats
+        let total: number;
+        let top: Array<{ uci: string; played_count: number }>;
+        if (analysisFilteredMoves && analysisFilteredMoves.moves.length > 0) {
+          total = analysisFilteredMoves.total;
+          top = analysisFilteredMoves.moves.slice(0, 8);
+        } else if (analysisStats) {
+          const userColor = state.playerSide === "white" ? "w" : "b";
+          const opponentColor = userColor === "w" ? "b" : "w";
+          const isOppToMove = state.game.turn() === opponentColor;
+          total = isOppToMove ? analysisStats.totalCountOpponent : analysisStats.totalCountAgainst;
+          const moves = isOppToMove ? analysisStats.movesOpponent : analysisStats.movesAgainst;
+          top = (moves ?? []).slice(0, 8);
+        } else {
+          return null;
+        }
 
-        const total = isOppToMove ? analysisStats.totalCountOpponent : analysisStats.totalCountAgainst;
         if (!Number.isFinite(total) || total <= 0) return null;
-
-        const moves = isOppToMove ? analysisStats.movesOpponent : analysisStats.movesAgainst;
-        const top = (moves ?? []).slice(0, 8);
         if (top.length === 0) return null;
 
         const mostCommon = String(top[0]?.uci ?? "");
@@ -3006,20 +3018,28 @@ export function PlayBoardModes({ initialFen }: Props) {
         }
         const trimmed = opponentUsername.trim();
         if (!trimmed) return [];
-        if (!analysisStats) return [];
 
         const TOP_N = 8;
         const MIN_OPACITY = 0.15;
 
-        const userColor = state.playerSide === "white" ? "w" : "b";
-        const opponentColor = userColor === "w" ? "b" : "w";
-        const isOppToMove = state.game.turn() === opponentColor;
+        // Use filtered moves from AnalysisBoard when available; fall back to raw server stats
+        let total: number;
+        let top: Array<{ uci: string; san?: string | null; played_count: number }>;
+        if (analysisFilteredMoves && analysisFilteredMoves.moves.length > 0) {
+          total = analysisFilteredMoves.total;
+          top = analysisFilteredMoves.moves.slice(0, TOP_N);
+        } else if (analysisStats) {
+          const userColor = state.playerSide === "white" ? "w" : "b";
+          const opponentColor = userColor === "w" ? "b" : "w";
+          const isOppToMove = state.game.turn() === opponentColor;
+          total = isOppToMove ? analysisStats.totalCountOpponent : analysisStats.totalCountAgainst;
+          const moves = isOppToMove ? analysisStats.movesOpponent : analysisStats.movesAgainst;
+          top = (moves ?? []).slice(0, TOP_N);
+        } else {
+          return [];
+        }
 
-        const total = isOppToMove ? analysisStats.totalCountOpponent : analysisStats.totalCountAgainst;
         if (!Number.isFinite(total) || total <= 0) return [];
-
-        const moves = isOppToMove ? analysisStats.movesOpponent : analysisStats.movesAgainst;
-        const top = (moves ?? []).slice(0, TOP_N);
         if (top.length === 0) return [];
 
         const maxFreq = Math.max(
@@ -3716,6 +3736,7 @@ function AnalysisRightSidebar(props: {
               filterOpeningName={filterOpeningName}
               isSyntheticMode={isSyntheticMode}
               syntheticGamesCount={syntheticGamesCount}
+              onFilteredMovesChange={onFilteredMovesChange}
             />
           </div>
 
